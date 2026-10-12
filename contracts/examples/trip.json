@@ -1,0 +1,13 @@
+{
+  "tripId": "T-001",
+  "routeId": "R-007",
+  "routeVersion": 3,
+  "travellerId": "U-042",
+  "date": "2026-10-12",
+  "status": "active",
+  "startedAt": "2026-10-12T08:00:00Z",
+  "endedAt": null,
+  "currentStepIndex": 2,
+  "planVersion": 1,
+  "override": null
+}

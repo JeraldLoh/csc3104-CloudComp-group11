@@ -1,0 +1,19 @@
+{
+  "requestId": "T-001#17",
+  "riskLevel": "normal",
+  "checkin": {
+    "tripId": "T-001",
+    "travellerId": "U-042",
+    "seq": 17,
+    "timestamp": "2026-10-12T08:15:30Z",
+    "lat": 1.4052,
+    "lng": 103.9024,
+    "accuracyM": 12,
+    "speedMps": 1.3,
+    "headingDeg": 85,
+    "stepIndex": 2,
+    "routeVersion": 3,
+    "batteryPct": 64,
+    "status": "active"
+  }
+}

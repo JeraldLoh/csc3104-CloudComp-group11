@@ -1,0 +1,15 @@
+{
+  "disruptionId": "D-NEL-20261012-0805",
+  "source": "lta-datamall",
+  "tripId": "T-001",
+  "travellerId": "U-042",
+  "affectedStepIndex": 4,
+  "mode": "train",
+  "line": "NEL",
+  "affectedStations": [
+    "Punggol",
+    "Sengkang"
+  ],
+  "message": "No train service between Punggol and Sengkang",
+  "detectedAt": "2026-10-12T08:05:12Z"
+}

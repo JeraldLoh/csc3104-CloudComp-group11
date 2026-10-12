@@ -1,0 +1,9 @@
+{
+  "requestId": "T-001#17",
+  "detectorId": "route-corridor",
+  "verdict": "problem",
+  "problemType": "off_route",
+  "confidence": 0.85,
+  "reason": "180 m from planned route (limit 100 m)",
+  "latencyMs": 14
+}

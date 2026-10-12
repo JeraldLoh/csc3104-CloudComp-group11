@@ -1,0 +1,96 @@
+{
+  "routeId": "R-007",
+  "travellerId": "U-042",
+  "caregiverId": "G-003",
+  "name": "Home to Clinic",
+  "version": 3,
+  "approved": true,
+  "origin": {
+    "name": "Home",
+    "safeLocationId": "L-001",
+    "lat": 1.404,
+    "lng": 103.901
+  },
+  "destination": {
+    "name": "Clinic",
+    "safeLocationId": "L-004",
+    "lat": 1.392,
+    "lng": 103.895
+  },
+  "steps": [
+    {
+      "stepIndex": 0,
+      "mode": "walk",
+      "instruction": "Walk 200 m to Bus Stop 65009",
+      "easyRead": "Walk to the bus stop near the playground.",
+      "from": {
+        "name": "Home",
+        "code": null,
+        "lat": 1.404,
+        "lng": 103.901
+      },
+      "to": {
+        "name": "Punggol Int",
+        "code": "65009",
+        "lat": 1.4052,
+        "lng": 103.9024
+      },
+      "line": null,
+      "expectedDurationS": 240,
+      "underground": false,
+      "photoKey": "media/R-007/step0.jpg",
+      "audioKey": "media/R-007/step0.mp3",
+      "backup": null
+    },
+    {
+      "stepIndex": 1,
+      "mode": "bus",
+      "instruction": "Take bus 190 to Stop 65221 (6 stops)",
+      "easyRead": "Get on bus number 190. Tap your card.",
+      "from": {
+        "name": "Punggol Int",
+        "code": "65009",
+        "lat": 1.4052,
+        "lng": 103.9024
+      },
+      "to": {
+        "name": "Opp Block 221",
+        "code": "65221",
+        "lat": 1.3935,
+        "lng": 103.8962
+      },
+      "line": "190",
+      "expectedDurationS": 900,
+      "underground": false,
+      "photoKey": "media/R-007/step1.jpg",
+      "audioKey": "media/R-007/step1.mp3",
+      "backup": {
+        "instruction": "If bus 190 does not come in 20 minutes, take bus 83 from the same stop.",
+        "line": "83"
+      }
+    }
+  ],
+  "path": [
+    [
+      1.404,
+      103.901
+    ],
+    [
+      1.4052,
+      103.9024
+    ],
+    [
+      1.399,
+      103.899
+    ],
+    [
+      1.3935,
+      103.8962
+    ],
+    [
+      1.392,
+      103.895
+    ]
+  ],
+  "updatedAt": "2026-10-10T14:00:00Z"
+}
