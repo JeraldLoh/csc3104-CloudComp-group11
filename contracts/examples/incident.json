@@ -1,0 +1,23 @@
+{
+  "incidentId": "U-042#T-001#off_route#2",
+  "travellerId": "U-042",
+  "tripId": "T-001",
+  "stepIndex": 2,
+  "problemType": "off_route",
+  "severity": "normal",
+  "state": "open",
+  "escalationLevel": 0,
+  "detectionCount": 3,
+  "confidence": 0.81,
+  "lastLocation": {
+    "lat": 1.4052,
+    "lng": 103.9024
+  },
+  "batteryPct": 64,
+  "notifiedChannels": [
+    "sse"
+  ],
+  "acknowledgedBy": null,
+  "createdAt": "2026-10-12T08:15:31Z",
+  "updatedAt": "2026-10-12T08:15:51Z"
+}
