@@ -1,0 +1,6 @@
+namespace: csc3104
+resources:
+  - namespace.yaml
+  - redis.yaml
+  - localstack.yaml
+  - fastapi.yaml
