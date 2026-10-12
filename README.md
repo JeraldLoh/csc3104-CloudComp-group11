@@ -1,6 +1,6 @@
 # csc3104-CloudComp-group11
 
-## Run locally with Docker Compose
+## Run locally with Docker Compose (Onboarding)
 
 The local stack consists of:
 
@@ -93,3 +93,73 @@ containers are stopped. To also remove that volume and its data, run:
 ```powershell
 docker compose down --volumes
 ```
+
+## Run locally with Kubernetes (kind - k8s in docker for S3 & SQS testing before EKS deployment)
+
+### Prerequisites
+
+- Docker Desktop installed and running.
+- `kubectl`(https://kubernetes.io/docs/tasks/tools/) and [kind](https://kind.sigs.k8s.io/docs/user/quick-start) installed.
+- A LocalStack auth token. (https://app.localstack.cloud/getting-started)
+
+Build the FastAPI image and create a local kind cluster. The cluster only needs
+to be created once:
+
+```powershell
+docker build -t cloud-fastapi:local .
+kind create cluster --name csc3104-local
+kind load docker-image cloud-fastapi:local --name csc3104-local
+```
+
+Create `.env` in the project root with your LocalStack token. The `*.env`
+pattern in `.gitignore` keeps this file out of Git:
+
+```dotenv
+LOCALSTACK_AUTH_TOKEN=your-localstack-auth-token
+```
+
+Create the namespace, then create the Kubernetes Secret directly from `.env`.
+Do not put the token in a YAML manifest or commit the `.env` file:
+
+```powershell
+kubectl apply -f k8s/base/namespace.yaml
+kubectl create secret generic localstack-auth --from-env-file=.env -n csc3104
+kubectl apply -k k8s/base
+```
+
+The Kustomize base deploys FastAPI (2 replicas), Redis (with a 1 GiB
+PersistentVolumeClaim), and LocalStack with S3 and SQS enabled. Wait for the
+pods to become ready:
+
+```powershell
+kubectl get pods -n csc3104 -w
+```
+
+Press `Ctrl+C` after the pods are ready. In separate terminals, forward the
+FastAPI and LocalStack services:
+
+```powershell
+kubectl port-forward svc/cloud-fastapi 8000:8000 -n csc3104
+```
+
+```powershell
+kubectl port-forward svc/cloud-localstack 4566:4566 -n csc3104
+```
+
+Verify the API from another terminal:
+
+```powershell
+curl.exe http://localhost:8000/health
+curl.exe http://localhost:8000/
+```
+
+Check Redis and LocalStack from their pods:
+
+```powershell
+kubectl exec -n csc3104 deploy/cloud-redis -- redis-cli ping
+kubectl exec -n csc3104 deploy/cloud-localstack -- curl -s http://localhost:4566/_localstack/health
+```
+
+Redis should respond with `PONG`; LocalStack should return a JSON health
+report. The LocalStack port-forward also makes its endpoint available at
+`http://localhost:4566`.

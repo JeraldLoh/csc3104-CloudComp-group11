@@ -1,2 +1,27 @@
-*.env
-*.venv
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Logs and temporary files
+*.log
+*.tmp
+*.swp
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Node.js
+node_modules/
+dist/
+
+# Common build output
+build/

@@ -1,9 +1,7 @@
 name: csc3104
-
 services:
-
   cloud-fastapi:
-    image: cloud-fastapi:latest
+    image: cloud-fastapi:local
     build: .
     ports:
       - "8000:8000"
@@ -18,7 +16,6 @@ services:
         condition: service_healthy
       cloud-localstack:
         condition: service_healthy
-
   cloud-redis:
     image: redis:latest
     ports:
@@ -31,7 +28,6 @@ services:
     volumes:
       - cloud-redis-data:/data
     command: ["redis-server", "--appendonly", "yes"]
-
   cloud-localstack:
     image: localstack/localstack:latest
     ports:
@@ -45,6 +41,5 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
-
 volumes:
   cloud-redis-data:
