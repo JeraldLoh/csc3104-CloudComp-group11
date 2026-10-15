@@ -11,6 +11,8 @@ import { isOnline, netsim, withNetsim } from "../lib/netsim";
 import { loadPack, type LoadedPack } from "../lib/pack";
 import { DEMO_PACK, DemoWalker } from "../lib/demo";
 import { batteryPct, startBatteryWatch } from "../lib/battery";
+import { downloadMedia, forgetTrip, requestPersistentStorage, type DownloadProgress } from "../lib/offline";
+import { appShell } from "../lib/sw-register";
 import type { Session } from "../types";
 
 export type Phase = "loading" | "no-pack" | "ready" | "travelling" | "arrived";
@@ -34,6 +36,8 @@ export interface CareRoute {
   helpAskedAt: number | null;
   offlineSim: boolean;
   outboxDropped: number;
+  /** Is everything needed for this trip stored on the phone? */
+  offline: { appShell: boolean; media: DownloadProgress | null; persisted: boolean | null };
   start(): Promise<void>;
   next(): Promise<void>;
   back(): Promise<void>;
@@ -60,6 +64,9 @@ export function useCareRoute(session: Session, opts: { demo: boolean }): CareRou
   const [fix, setFix] = useState<Fix | null>(null);
   const [helpAskedAt, setHelpAskedAt] = useState<number | null>(null);
   const [offlineSim, setOfflineSimState] = useState(netsim.offline);
+  const [media, setMedia] = useState<DownloadProgress | null>(null);
+  const [shellReady, setShellReady] = useState(appShell.ready);
+  const [persisted, setPersisted] = useState<boolean | null>(null);
 
   const startTracking = useCallback((e: Engine, pack: LoadedPack) => {
     e.tracker.start();
@@ -107,7 +114,27 @@ export function useCareRoute(session: Session, opts: { demo: boolean }): CareRou
           void requests.retryNow();
         }
       }));
-      const onOnline = () => void requests.retryNow();
+      cleanups.push(appShell.onChange(setShellReady));
+      // Download photos/audio; called again when signal returns, fetching only what's missing.
+      let downloading = false;
+      let lastMedia: DownloadProgress | null = null;
+      const fetchMedia = async (p: LoadedPack) => {
+        if (downloading || disposed) return;
+        if (lastMedia && lastMedia.finished && lastMedia.failed.length === 0) return;
+        downloading = true;
+        try {
+          lastMedia = await downloadMedia(session.tripId, p.pack, p.baseUrl, (m) => !disposed && setMedia(m));
+        } finally {
+          downloading = false;
+        }
+      };
+      let currentPack: LoadedPack | null = null;
+      const retryMedia = () => currentPack && void fetchMedia(currentPack);
+      cleanups.push(netsim.onChange((off) => !off && retryMedia()));
+      const onOnline = () => {
+        void requests.retryNow();
+        retryMedia();
+      };
       window.addEventListener("online", onOnline);
       cleanups.push(() => window.removeEventListener("online", onOnline));
 
@@ -117,6 +144,9 @@ export function useCareRoute(session: Session, opts: { demo: boolean }): CareRou
       if (!pack) return setPhase("no-pack");
       packRef.routeVersion = pack.pack.routeVersion;
       setLoaded(pack);
+      currentPack = pack;
+      void requestPersistentStorage().then((ok) => !disposed && setPersisted(ok));
+      void fetchMedia(pack);
 
       const savedStep = (await getMeta<number>(db, metaKeys.stepIndex(session.tripId))) ?? 0;
       const started = await getMeta<"travelling" | "arrived">(db, metaKeys.tripStarted(session.tripId));
@@ -191,12 +221,16 @@ export function useCareRoute(session: Session, opts: { demo: boolean }): CareRou
     stopTracking(e);
     await setMeta(e.db, metaKeys.tripStarted(session.tripId), "arrived");
     setPhase("arrived");
+    // The photos aren't needed any more; free the space (and don't keep pictures of the
+    // traveller's route on the phone longer than necessary).
+    void forgetTrip(session.tripId);
     void e.requests.add("trip end", `/api/trips/${encodeURIComponent(session.tripId)}/end`, {});
   }, [session.tripId, stopTracking]);
 
   return {
     phase, loaded, stepIndex, sender, requests, problem, fix, helpAskedAt, offlineSim,
     outboxDropped: engine.current?.outbox.dropped ?? 0,
+    offline: { appShell: shellReady, media, persisted },
     start, next, back, askForHelp, finish,
     closeHelp: () => setHelpAskedAt(null),
     setOfflineSim: (on) => netsim.set(on),

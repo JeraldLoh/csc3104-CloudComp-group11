@@ -1,9 +1,33 @@
 import { useEffect, useRef, useState } from "react";
 import { Pictogram } from "./Pictogram";
 import { mediaUrl, type LoadedPack } from "../lib/pack";
+import { storedMediaUrl } from "../lib/offline";
 import type { RoutePackStep } from "../types";
 
 const MODE_NAME: Record<string, string> = { walk: "Walk", bus: "Bus", train: "Train" };
+
+/** The stored copy of a photo/audio file if it's on the phone (works with no signal), else the network URL. */
+function useStoredMedia(tripId: string, url: string | null): string | null {
+  const [src, setSrc] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    let objectUrl: string | null = null;
+    setSrc(null);
+    if (!url) return;
+    storedMediaUrl(tripId, url)
+      .then((s) => {
+        if (s.startsWith("blob:")) objectUrl = s;
+        if (alive) setSrc(s);
+        else if (objectUrl) URL.revokeObjectURL(objectUrl);
+      })
+      .catch(() => alive && setSrc(url));
+    return () => {
+      alive = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [tripId, url]);
+  return src;
+}
 
 /** Reads the step aloud: the recorded audio if the pack has it, otherwise the phone's voice. */
 function useListen(text: string, audioSrc: string | null) {
@@ -37,11 +61,12 @@ function useListen(text: string, audioSrc: string | null) {
   return { play, speaking, canListen };
 }
 
-export function StepCard({ step, loaded, index, total }: { step: RoutePackStep; loaded: LoadedPack; index: number; total: number }) {
-  const photo = mediaUrl(loaded, step.photoUrl);
+export function StepCard({ step, loaded, index, total, tripId }: { step: RoutePackStep; loaded: LoadedPack; index: number; total: number; tripId: string }) {
+  const photo = useStoredMedia(tripId, mediaUrl(loaded, step.photoUrl));
+  const audio = useStoredMedia(tripId, mediaUrl(loaded, step.audioUrl));
   const [photoOk, setPhotoOk] = useState(true);
   useEffect(() => setPhotoOk(true), [photo]);
-  const { play, speaking, canListen } = useListen(step.easyRead, mediaUrl(loaded, step.audioUrl));
+  const { play, speaking, canListen } = useListen(step.easyRead, audio);
   const mode = MODE_NAME[step.mode] ? step.mode : "walk";
 
   return (

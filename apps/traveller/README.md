@@ -37,7 +37,7 @@ to Amplify (which gives https).
 ## Tests
 
 ```powershell
-npm test          # 54 tests: outbox, sender, tracker, request queue, HTTP layer
+npm test          # 74 tests: outbox, sender, tracker, request queue, HTTP layer, offline
 npm run typecheck
 ```
 
@@ -72,6 +72,28 @@ GPS (watchPosition) ──► latest position
 | Phone locked / app in background | One check-in with `status: "backgrounded"` goes out with `keepalive` as the page hides, so the Heartbeat Monitor knows silence is expected. |
 | Help pressed with no signal | The request is queued and retried, goes before anything else waiting, and can't be blocked by another failing request. The **Call Sam** button is there straight away and becomes the main action once the request has failed. |
 
+## Working with no signal (issue 2.4)
+
+| What | How it's kept on the phone |
+|---|---|
+| The app itself | A service worker (built by `vite-plugin-pwa`/Workbox) stores every built file. Opening the app with no signal shows the app, not the browser's offline page. Production builds only, so try it with `npm run build` then `npm run preview` (port 4173). |
+| The route pack | IndexedDB. Loaded network-first so a route the caregiver changed is picked up, but **only replaced by a pack that passes `validatePack()`**: a cut-off or broken download can never overwrite a good saved pack. |
+| Photos and audio | Downloaded into Cache Storage as soon as the trip opens, before the traveller sets off. Shown from there as `blob:` URLs, so they work with no signal. |
+| Unsent check-ins | The outbox (see above). |
+
+Details that matter:
+
+- **Ready before leaving.** The start screen says "Your trip is saved. It works without signal." once everything is stored. It never blocks starting: the steps are text and work regardless, and a missing photo just shows the pictogram.
+- **Only what's missing is downloaded again** when signal returns, so a flaky connection gets there in the end.
+- **A Wi-Fi login page is never stored as a photo.** Public Wi-Fi often answers every request with its own HTML page and status 200; only image and audio responses are stored.
+- **A download cut off half-way is never stored.** The whole file is read before it's saved.
+- **Signed S3 links.** Each request gets a new signature, but the stored file is found by its address without the signature.
+- **Route changes.** After the caregiver edits the route, photos the new route doesn't use are removed, but only once the new set is complete, so an old photo can still help in the meantime.
+- **The browser is asked not to clear our storage** when the phone is low on space (`navigator.storage.persist()`).
+- **App updates never interrupt a journey.** A new version waits until every tab of the app is closed.
+- **After arriving,** the trip's photos are deleted to free space and not keep pictures of the route longer than needed.
+- **Layout.** The steps scroll in their own area above the Help bar, so a tap meant for "I've done this step" can never land on Help.
+
 ## Files
 
 | File | |
@@ -82,6 +104,8 @@ GPS (watchPosition) ──► latest position
 | `src/lib/requests.ts` | durable queue for help, trip start, trip end |
 | `src/lib/api.ts` | HTTP, timeouts, sorting responses into ok / invalid / unauthorized / retry |
 | `src/lib/pack.ts` | loads and saves the route pack |
+| `src/lib/offline.ts` | validates packs, downloads photos/audio, serves stored copies |
+| `src/lib/sw-register.ts` | registers the service worker |
 | `src/lib/demo.ts`, `netsim.ts` | demo route, pretend GPS, pretend no signal |
 | `src/app/useCareRoute.ts` | wires it all together for the screens |
 | `src/App.tsx`, `src/components/` | the screens |
@@ -96,6 +120,6 @@ and nothing else, and the Help button never moves. Status messages are calm and 
 
 ## Not done yet
 
-- Offline photos/audio and the service worker: issue 2.4.
+- The pack builder (backend half of 2.4): waiting to agree the interface with the Journey Service owner.
 - Login: issue 1.5. `HttpTransport` already takes a `getToken` function for it.
 - Hosting: Amplify (per the proposal). Set `CORS_ORIGINS` on the Check-in Service to the Amplify URL.

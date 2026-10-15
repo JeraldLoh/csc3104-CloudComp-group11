@@ -64,6 +64,7 @@ function Journey({ session, demo, debug }: { session: Session; demo: boolean; de
           <p className="lead">Your trip has {pack.steps.length} steps.</p>
           {first && <p>First: {first.easyRead}</p>}
           <p className="note">While you travel, {caregiver} can see where you are. Your phone will ask to use your location.</p>
+          <OfflineReadiness app={app} />
           <button className="btn btn--primary" onClick={() => void app.start()}>Start my trip</button>
         </div>
         {debugPanel}
@@ -108,7 +109,7 @@ function Journey({ session, demo, debug }: { session: Session; demo: boolean; de
       {app.problem === "location-unavailable" && (
         <p className="banner" role="alert">Your phone can't find where you are. Keep going and follow the steps.</p>
       )}
-      <StepCard step={step} loaded={app.loaded} index={app.stepIndex} total={pack.steps.length} />
+      <StepCard step={step} loaded={app.loaded} index={app.stepIndex} total={pack.steps.length} tripId={session.tripId} />
       <div className="actions">
         <button className="btn btn--primary" onClick={() => void (isLast ? app.finish() : app.next())}>
           {isLast ? "I've arrived" : "I've done this step"}
@@ -125,6 +126,33 @@ function Journey({ session, demo, debug }: { session: Session; demo: boolean; de
   );
 }
 
+/**
+ * Before setting off: is the trip on the phone, so it keeps working with no signal?
+ * Never blocks starting; the steps are text and work regardless.
+ */
+function OfflineReadiness({ app }: { app: ReturnType<typeof useCareRoute> }) {
+  const m = app.offline.media;
+  if (!m || !m.finished) {
+    return (
+      <p className="ready ready--working" role="status">
+        Saving your trip to this phone{m && m.total > 0 ? ` (${m.done} of ${m.total} pictures)` : ""}…
+      </p>
+    );
+  }
+  if (m.failed.length > 0) {
+    return (
+      <p className="ready ready--partial" role="status">
+        Some pictures didn't save. Your steps will still work without signal.
+      </p>
+    );
+  }
+  return (
+    <p className="ready ready--done" role="status">
+      <Tick size={22} /> Your trip is saved. It works without signal.
+    </p>
+  );
+}
+
 function HelpIcon() {
   return (
     <svg width="28" height="28" viewBox="0 0 24 24" aria-hidden fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
@@ -135,9 +163,9 @@ function HelpIcon() {
   );
 }
 
-function Tick() {
+function Tick({ size = 88 }: { size?: number }) {
   return (
-    <svg className="tick" width="88" height="88" viewBox="0 0 48 48" aria-hidden>
+    <svg className="tick" width={size} height={size} viewBox="0 0 48 48" aria-hidden>
       <circle cx="24" cy="24" r="22" fill="currentColor" />
       <path d="M14 25l7 7 13-15" fill="none" stroke="#fff" strokeWidth="4.5" strokeLinecap="round" strokeLinejoin="round" />
     </svg>

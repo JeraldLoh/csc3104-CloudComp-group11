@@ -25,6 +25,9 @@ export function DebugPanel({ app }: { app: CareRoute }) {
     ["Other requests waiting", app.requests?.pending.map((r) => `${r.label} (${r.attempts})`).join(", ") || "none"],
     ["Position", app.fix ? `${app.fix.lat}, ${app.fix.lng} ±${app.fix.accuracyM ?? "?"} m` : "none yet"],
     ["Step index", app.stepIndex],
+    ["App stored offline", app.offline.appShell ? "yes" : "no (dev server or first visit)"],
+    ["Trip media stored", app.offline.media ? `${app.offline.media.done}/${app.offline.media.total}${app.offline.media.failed.length ? `, ${app.offline.media.failed.length} failed` : ""}` : "-"],
+    ["Persistent storage", app.offline.persisted === null ? "-" : app.offline.persisted ? "granted" : "not granted"],
   ];
   return (
     <details className="debug" open>
