@@ -1,0 +1,52 @@
+# Check-in Service (Member 2, issue 2.3). Add "- checkin-service.yaml" to kustomization.yaml.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: checkin-service
+  namespace: csc3104
+  labels: { app: checkin-service }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: checkin-service }
+  template:
+    metadata:
+      labels: { app: checkin-service }
+    spec:
+      containers:
+        - name: checkin-service
+          image: checkin-service:local
+          imagePullPolicy: IfNotPresent   # kind: use the image loaded with `kind load`
+          ports: [{ containerPort: 8000 }]
+          env:
+            - { name: REDIS_URL, value: "redis://cloud-redis:6379/0" }
+            - { name: AWS_ENDPOINT_URL, value: "http://cloud-localstack:4566" }   # remove on EKS
+            - { name: AWS_ACCESS_KEY_ID, value: "csc3104" }                       # remove on EKS (use IAM role)
+            - { name: AWS_SECRET_ACCESS_KEY, value: "csc3104" }                   # remove on EKS
+            - { name: AWS_DEFAULT_REGION, value: "ap-southeast-1" }
+            - { name: CREATE_RESOURCES, value: "true" }                           # local only; false on EKS
+          resources:
+            # Requests are needed for the Horizontal Pod Autoscaler (issue 3.4) to work.
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+          # Ready = Redis, DynamoDB and SQS reachable. Not ready -> no traffic, but not restarted.
+          readinessProbe:
+            httpGet: { path: /ready, port: 8000 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          # Alive = process responds. Deliberately doesn't check dependencies, so a Redis
+          # outage doesn't make Kubernetes restart every replica at once.
+          livenessProbe:
+            httpGet: { path: /health, port: 8000 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: checkin-service
+  namespace: csc3104
+spec:
+  type: ClusterIP
+  selector: { app: checkin-service }
+  ports: [{ port: 8000, targetPort: 8000 }]

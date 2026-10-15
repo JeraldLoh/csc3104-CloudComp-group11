@@ -1,0 +1,27 @@
+# Adds the Check-in Service to Jerald's compose.yaml without editing it.
+# From the repo root:
+#   docker compose -f compose.yaml -f services/checkin-service/compose.checkin.yaml up --build -d
+# (Paths here are relative to the repo root, because compose.yaml is the first file.)
+services:
+  checkin-service:
+    image: checkin-service:local
+    build: services/checkin-service
+    ports:
+      - "8001:8000"
+    environment:
+      REDIS_URL: redis://cloud-redis:6379/0
+      AWS_ENDPOINT_URL: http://cloud-localstack:4566
+      AWS_ACCESS_KEY_ID: csc3104
+      AWS_SECRET_ACCESS_KEY: csc3104
+      AWS_DEFAULT_REGION: ap-southeast-1
+      CREATE_RESOURCES: "true"
+    depends_on:
+      cloud-redis:
+        condition: service_healthy
+      cloud-localstack:
+        condition: service_healthy
+
+  cloud-localstack:
+    environment:
+      # compose.yaml only starts s3,sqs; this service also needs DynamoDB.
+      SERVICES: s3,sqs,dynamodb

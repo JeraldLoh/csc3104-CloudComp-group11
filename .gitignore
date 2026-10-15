@@ -25,3 +25,6 @@ dist/
 
 # Common build output
 build/
+.venv/
+__pycache__/
+.pytest_cache/
