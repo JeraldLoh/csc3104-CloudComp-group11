@@ -22,7 +22,11 @@ Open **http://localhost:5173/?demo=1&debug=1**.
 - `?demo=1` uses a sample route and a pretend GPS that walks along it, so it works on
   a laptop and before the Journey Service (6.1) exists.
 - `?debug=1` shows the debug panel: outbox size, sent, duplicates, retries, last error,
-  plus a **Pretend no signal** switch for demos.
+  route version, offline storage, plus three demo controls:
+  - **Pretend no signal**: check-ins pile up in the outbox, then go as one batch when switched off.
+  - **Change route** (during a trip): pretends the caregiver changed the route (bus 190 → bus 83).
+  - **Reset demo**: forgets the demo trip on this device and goes back to "Hi Alex". Only works
+    with `?demo=1`, so a real trip (which may hold unsent check-ins) can never be wiped.
 - A real trip link looks like `/?trip=T-001&traveller=U-042` (until login, issue 1.5).
 
 The dev server forwards `/api/checkins` to the Check-in Service on `localhost:8001`, so start
