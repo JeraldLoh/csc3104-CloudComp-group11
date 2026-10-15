@@ -25,6 +25,21 @@ export const DEMO_PACK: RoutePack = {
   generatedAt: "2026-10-10T14:05:00Z",
 };
 
+/** The same trip after the caregiver changed it: bus 190 replaced by bus 83 (debug panel button). */
+export const DEMO_PACK_CHANGED: RoutePack = {
+  ...DEMO_PACK,
+  packVersion: "R-007-v4",
+  routeVersion: 4,
+  steps: DEMO_PACK.steps.map((s) =>
+    s.stepIndex === 1
+      ? { ...s, easyRead: "Get on bus number 83. Tap your card.", photoUrl: "demo-media/step1-bus83.svg", backup: null }
+      : s.stepIndex === 2
+        ? { ...s, easyRead: "Stay on the bus. Get off after 5 stops, at Block 221." }
+        : s,
+  ),
+  generatedAt: "2026-10-16T08:20:00Z",
+};
+
 /** Moves along the pack's path, a little each call. */
 export class DemoWalker {
   private t = 0;

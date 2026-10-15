@@ -9,6 +9,7 @@
 //                                    keep it and try again later (the server is
 //                                    idempotent, so repeats are safe)
 import type { CheckinAck, CheckinBatch, Checkin } from "../types";
+import { API_BASE } from "../config";
 
 export type SendResult =
   | { kind: "ok"; body: unknown }
@@ -44,7 +45,7 @@ export class HttpTransport implements Transport {
   private fetchImpl: typeof fetch;
 
   constructor(o: HttpTransportOptions = {}) {
-    this.baseUrl = o.baseUrl ?? "";
+    this.baseUrl = o.baseUrl ?? API_BASE;
     this.timeoutMs = o.timeoutMs ?? 8000;
     this.getToken = o.getToken ?? (() => null);
     this.fetchImpl = o.fetchImpl ?? ((...args) => fetch(...args));

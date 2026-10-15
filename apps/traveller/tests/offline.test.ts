@@ -1,5 +1,5 @@
-import { cacheKey, downloadMedia, forgetTrip, mediaUrls, PackError, storedMediaUrl, validatePack, mediaCacheName } from "../src/lib/offline";
-import { loadPack } from "../src/lib/pack";
+import { cacheKey, entryKey, downloadMedia, forgetTrip, mediaUrls, PackError, storedMediaUrl, validatePack, mediaCacheName } from "../src/lib/offline";
+import { checkForNewPack, loadPack } from "../src/lib/pack";
 import { getMeta, metaKeys, setMeta } from "../src/lib/db";
 import { DEMO_PACK } from "../src/lib/demo";
 import { freshDb } from "./helpers";
@@ -133,30 +133,43 @@ describe("downloadMedia", () => {
     expect((await caches.open(mediaCacheName("T-001"))).store.size).toBe(0);
   });
 
-  it("after a route change, removes old photos only once the new set is complete", async () => {
+  it("after a route change, never shows a photo from the old version, even at the same address", async () => {
     const caches = new FakeCacheStorage();
     const cs = caches as unknown as CacheStorage;
-    await downloadMedia("T-001", pack(["old.jpg", "same.jpg"]), BASE, undefined, { caches: cs, fetchImpl: fakeFetch(() => img()) });
+    const v3 = { ...pack(["bus.jpg"]), packVersion: "R-007-v3" };
+    const v4 = { ...pack(["bus.jpg"]), packVersion: "R-007-v4" }; // caregiver replaced the photo at the same address
+    await downloadMedia("T-001", v3, BASE, undefined, { caches: cs, fetchImpl: fakeFetch(() => img("bus 190")) });
 
-    // New version, but one new photo fails: keep everything, the old photo may still help.
-    const failing = fakeFetch((u) => (u.endsWith("new.jpg") ? new Response("", { status: 503 }) : img()));
-    await downloadMedia("T-001", pack(["new.jpg", "same.jpg"]), BASE, undefined, { caches: cs, fetchImpl: failing, retries: 0 });
+    // v4 not downloaded yet (no signal): the v3 photo must NOT be offered for v4.
+    expect(await storedMediaUrl("T-001", `${BASE}bus.jpg`, "R-007-v4", { caches: cs })).toBe(`${BASE}bus.jpg`);
+
+    await downloadMedia("T-001", v4, BASE, undefined, { caches: cs, fetchImpl: fakeFetch(() => img("bus 83")) });
+    const stored = await (await caches.open(mediaCacheName("T-001"))).match(entryKey(`${BASE}bus.jpg`, "R-007-v4"));
+    expect(await stored!.text()).toBe("bus 83");
+  });
+
+  it("removes the old version's files only once the new version is complete", async () => {
+    const caches = new FakeCacheStorage();
+    const cs = caches as unknown as CacheStorage;
     const cache = await caches.open(mediaCacheName("T-001"));
-    expect([...cache.store.keys()].map((k) => k.split("/").pop()).sort()).toEqual(["old.jpg", "same.jpg"]);
-
-    // Signal back, new photo arrives: now the unused old one goes.
-    await downloadMedia("T-001", pack(["new.jpg", "same.jpg"]), BASE, undefined, { caches: cs, fetchImpl: fakeFetch(() => img()) });
-    expect([...cache.store.keys()].map((k) => k.split("/").pop()).sort()).toEqual(["new.jpg", "same.jpg"]);
+    await downloadMedia("T-001", { ...pack(["a.jpg"]), packVersion: "v3" }, BASE, undefined, { caches: cs, fetchImpl: fakeFetch(() => img()) });
+    const failing = fakeFetch(() => new Response("", { status: 503 }));
+    await downloadMedia("T-001", { ...pack(["a.jpg", "b.jpg"]), packVersion: "v4" }, BASE, undefined, { caches: cs, fetchImpl: failing, retries: 0 });
+    expect(cache.store.size).toBe(1); // v3 kept while v4 is incomplete
+    await downloadMedia("T-001", { ...pack(["a.jpg", "b.jpg"]), packVersion: "v4" }, BASE, undefined, { caches: cs, fetchImpl: fakeFetch(() => img()) });
+    expect([...cache.store.keys()].every((k) => k.includes("careroute-version=v4"))).toBe(true);
+    expect(cache.store.size).toBe(2);
   });
 
   it("serves the stored copy even when the link's signature has changed, and forgets it after the trip", async () => {
     const caches = new FakeCacheStorage();
     const cs = caches as unknown as CacheStorage;
-    await downloadMedia("T-001", pack(["a.jpg?sig=1"]), BASE, undefined, { caches: cs, fetchImpl: fakeFetch(() => img()) });
-    const url = await storedMediaUrl("T-001", `${BASE}a.jpg?sig=2`, { caches: cs });
+    const p = pack(["a.jpg?sig=1"]);
+    await downloadMedia("T-001", p, BASE, undefined, { caches: cs, fetchImpl: fakeFetch(() => img()) });
+    const url = await storedMediaUrl("T-001", `${BASE}a.jpg?sig=2`, p.packVersion, { caches: cs });
     expect(url.startsWith("blob:")).toBe(true);
     await forgetTrip("T-001", { caches: cs });
-    expect(await storedMediaUrl("T-001", `${BASE}a.jpg?sig=2`, { caches: cs })).toBe(`${BASE}a.jpg?sig=2`);
+    expect(await storedMediaUrl("T-001", `${BASE}a.jpg?sig=2`, p.packVersion, { caches: cs })).toBe(`${BASE}a.jpg?sig=2`);
   });
 });
 
@@ -194,5 +207,40 @@ describe("demo pack", () => {
     const db = await freshDb();
     const r = await loadPack(db, "T-001", { demo: DEMO_PACK });
     expect(mediaUrls(r!.pack, r!.baseUrl)).toHaveLength(4);
+  });
+});
+
+describe("checkForNewPack", () => {
+  const ok = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+  const V4 = { ...DEMO_PACK, packVersion: "R-007-v4", routeVersion: 4 };
+
+  it("same version: asks only for the tiny link, downloads nothing", async () => {
+    const db = await freshDb();
+    const fetchImpl = fakeFetch(() => ok({ packUrl: BASE + "pack.json", packVersion: "R-007-v3" }));
+    expect(await checkForNewPack(db, "T-001", "R-007-v3", { fetchImpl })).toBeNull();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("new version: downloads, validates and saves it", async () => {
+    const db = await freshDb();
+    const fetchImpl = fakeFetch((u) => (u.includes("/api/trips/") ? ok({ packUrl: BASE + "v4.json", packVersion: "R-007-v4" }) : ok(V4)));
+    const r = await checkForNewPack(db, "T-001", "R-007-v3", { fetchImpl });
+    expect(r?.pack.packVersion).toBe("R-007-v4");
+    const saved = await getMeta<{ pack: RoutePack }>(db, metaKeys.pack("T-001"));
+    expect(saved?.pack.packVersion).toBe("R-007-v4");
+  });
+
+  it("broken new version: keeps the current one", async () => {
+    const db = await freshDb();
+    await setMeta(db, metaKeys.pack("T-001"), { pack: DEMO_PACK, baseUrl: BASE });
+    const fetchImpl = fakeFetch((u) => (u.includes("/api/trips/") ? ok({ packUrl: BASE + "v4.json", packVersion: "R-007-v4" }) : ok({ ...V4, steps: [] })));
+    expect(await checkForNewPack(db, "T-001", "R-007-v3", { fetchImpl })).toBeNull();
+    expect((await getMeta<{ pack: RoutePack }>(db, metaKeys.pack("T-001")))?.pack.packVersion).toBe("R-007-v3");
+  });
+
+  it("no signal: no change, no error", async () => {
+    const db = await freshDb();
+    const fetchImpl = fakeFetch(() => Promise.reject(new TypeError("Failed to fetch")));
+    expect(await checkForNewPack(db, "T-001", "R-007-v3", { fetchImpl })).toBeNull();
   });
 });

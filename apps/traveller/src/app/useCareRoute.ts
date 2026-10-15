@@ -8,8 +8,9 @@ import { RequestQueue, type RequestQueueState } from "../lib/requests";
 import { Tracker, type Fix, type TrackerProblem } from "../lib/tracker";
 import { HttpTransport } from "../lib/api";
 import { isOnline, netsim, withNetsim } from "../lib/netsim";
-import { loadPack, type LoadedPack } from "../lib/pack";
-import { DEMO_PACK, DemoWalker } from "../lib/demo";
+import { checkForNewPack, loadPack, type LoadedPack } from "../lib/pack";
+import { DEMO_PACK, DEMO_PACK_CHANGED, DemoWalker } from "../lib/demo";
+import { ScreenWakeLock, type WakeLockState } from "../lib/wakelock";
 import { batteryPct, startBatteryWatch } from "../lib/battery";
 import { downloadMedia, forgetTrip, requestPersistentStorage, type DownloadProgress } from "../lib/offline";
 import { appShell } from "../lib/sw-register";
@@ -23,7 +24,12 @@ interface Engine {
   sender: Sender;
   requests: RequestQueue;
   tracker: Tracker;
+  wake: ScreenWakeLock;
+  applyPack: (p: LoadedPack, announce: boolean) => void;
 }
+
+/** How often to ask whether the caregiver has changed the route. */
+const UPDATE_CHECK_MS = 60_000;
 
 export interface CareRoute {
   phase: Phase;
@@ -38,6 +44,12 @@ export interface CareRoute {
   outboxDropped: number;
   /** Is everything needed for this trip stored on the phone? */
   offline: { appShell: boolean; media: DownloadProgress | null; persisted: boolean | null };
+  /** Set when a newer version of the route arrived during the trip. */
+  routeChangedAt: number | null;
+  dismissRouteChange(): void;
+  wakeLock: WakeLockState;
+  /** Demo only: pretend the caregiver changed the route. */
+  simulateRouteChange(): void;
   start(): Promise<void>;
   next(): Promise<void>;
   back(): Promise<void>;
@@ -67,9 +79,12 @@ export function useCareRoute(session: Session, opts: { demo: boolean }): CareRou
   const [media, setMedia] = useState<DownloadProgress | null>(null);
   const [shellReady, setShellReady] = useState(appShell.ready);
   const [persisted, setPersisted] = useState<boolean | null>(null);
+  const [routeChangedAt, setRouteChangedAt] = useState<number | null>(null);
+  const [wakeLock, setWakeLock] = useState<WakeLockState>("off");
 
   const startTracking = useCallback((e: Engine, pack: LoadedPack) => {
     e.tracker.start();
+    void e.wake.enable();
     if (opts.demo) {
       const walker = new DemoWalker(pack.pack.path);
       e.tracker.acceptFix(walker.next(Date.now()));
@@ -79,6 +94,7 @@ export function useCareRoute(session: Session, opts: { demo: boolean }): CareRou
 
   const stopTracking = useCallback((e: Engine) => {
     e.tracker.stop();
+    void e.wake.disable();
     if (demoTimer.current) clearInterval(demoTimer.current);
     demoTimer.current = null;
   }, []);
@@ -104,8 +120,7 @@ export function useCareRoute(session: Session, opts: { demo: boolean }): CareRou
         onProblem: (p) => setProblem(opts.demo && p === "location-unavailable" ? null : p),
         onFix: setFix,
       });
-      const e: Engine = { db, outbox, sender, requests, tracker };
-      engine.current = e;
+      const wake = new ScreenWakeLock(undefined, (st) => !disposed && setWakeLock(st));
       cleanups.push(sender.subscribe(setSender), requests.subscribe(setRequests));
       cleanups.push(netsim.onChange((off) => {
         setOfflineSimState(off);
@@ -115,38 +130,84 @@ export function useCareRoute(session: Session, opts: { demo: boolean }): CareRou
         }
       }));
       cleanups.push(appShell.onChange(setShellReady));
-      // Download photos/audio; called again when signal returns, fetching only what's missing.
-      let downloading = false;
-      let lastMedia: DownloadProgress | null = null;
+      // Download photos/audio; called again when signal returns (fetching only what's
+      // missing) and when a new route version arrives. If a download is already running,
+      // the newest request is remembered and done straight after it.
+      let mediaRunning = false;
+      let mediaWanted: LoadedPack | null = null;
+      let mediaDoneFor: string | null = null; // packVersion fully downloaded
       const fetchMedia = async (p: LoadedPack) => {
-        if (downloading || disposed) return;
-        if (lastMedia && lastMedia.finished && lastMedia.failed.length === 0) return;
-        downloading = true;
+        mediaWanted = p;
+        if (mediaRunning) return;
+        mediaRunning = true;
         try {
-          lastMedia = await downloadMedia(session.tripId, p.pack, p.baseUrl, (m) => !disposed && setMedia(m));
+          while (mediaWanted && !disposed) {
+            const target: LoadedPack = mediaWanted;
+            mediaWanted = null;
+            if (mediaDoneFor === target.pack.packVersion) continue;
+            const r = await downloadMedia(session.tripId, target.pack, target.baseUrl, (m) => !disposed && setMedia(m));
+            if (r.failed.length === 0) mediaDoneFor = target.pack.packVersion;
+          }
         } finally {
-          downloading = false;
+          mediaRunning = false;
         }
       };
+
       let currentPack: LoadedPack | null = null;
-      const retryMedia = () => currentPack && void fetchMedia(currentPack);
-      cleanups.push(netsim.onChange((off) => !off && retryMedia()));
-      const onOnline = () => {
-        void requests.retryNow();
-        retryMedia();
+      /** Switch to a (new) version of the route. */
+      const applyPack = (p: LoadedPack, announce: boolean) => {
+        currentPack = p;
+        packRef.routeVersion = p.pack.routeVersion; // check-ins now report the new version
+        setLoaded(p);
+        const last = p.pack.steps.length - 1;
+        if (stepRef.current > last) {
+          stepRef.current = last;
+          setStepIndex(last);
+        }
+        void fetchMedia(p);
+        if (announce) {
+          setRouteChangedAt(Date.now());
+          void tracker.checkInNow(); // detectors should judge against the new route at once
+        }
       };
-      window.addEventListener("online", onOnline);
-      cleanups.push(() => window.removeEventListener("online", onOnline));
+
+      // Has the caregiver changed the route? Cheap check every minute, and straight away
+      // when signal comes back or the traveller returns to the app.
+      let checking = false;
+      const checkForUpdate = async () => {
+        if (opts.demo || checking || !currentPack || disposed) return;
+        checking = true;
+        try {
+          const newer = await checkForNewPack(db, session.tripId, currentPack.pack.packVersion);
+          if (newer && !disposed) applyPack(newer, true);
+        } finally {
+          checking = false;
+        }
+      };
+      const updateTimer = setInterval(() => void checkForUpdate(), UPDATE_CHECK_MS);
+      cleanups.push(() => clearInterval(updateTimer));
+
+      const signalBack = () => {
+        void requests.retryNow();
+        if (currentPack) void fetchMedia(currentPack);
+        void checkForUpdate();
+      };
+      cleanups.push(netsim.onChange((off) => !off && signalBack()));
+      window.addEventListener("online", signalBack);
+      cleanups.push(() => window.removeEventListener("online", signalBack));
+      const onShown = () => document.visibilityState === "visible" && void checkForUpdate();
+      document.addEventListener("visibilitychange", onShown);
+      cleanups.push(() => document.removeEventListener("visibilitychange", onShown));
+
+      const e: Engine = { db, outbox, sender, requests, tracker, wake, applyPack };
+      engine.current = e;
 
       await setMeta(db, metaKeys.session, session);
       const pack = await loadPack(db, session.tripId, { demo: opts.demo ? DEMO_PACK : undefined });
       if (disposed) return;
       if (!pack) return setPhase("no-pack");
-      packRef.routeVersion = pack.pack.routeVersion;
-      setLoaded(pack);
-      currentPack = pack;
+      applyPack(pack, false);
       void requestPersistentStorage().then((ok) => !disposed && setPersisted(ok));
-      void fetchMedia(pack);
 
       const savedStep = (await getMeta<number>(db, metaKeys.stepIndex(session.tripId))) ?? 0;
       const started = await getMeta<"travelling" | "arrived">(db, metaKeys.tripStarted(session.tripId));
@@ -231,6 +292,14 @@ export function useCareRoute(session: Session, opts: { demo: boolean }): CareRou
     phase, loaded, stepIndex, sender, requests, problem, fix, helpAskedAt, offlineSim,
     outboxDropped: engine.current?.outbox.dropped ?? 0,
     offline: { appShell: shellReady, media, persisted },
+    routeChangedAt,
+    dismissRouteChange: () => setRouteChangedAt(null),
+    wakeLock,
+    simulateRouteChange: () => {
+      const e = engine.current;
+      if (!opts.demo || !e || !loaded) return; // never replace a real trip's route
+      e.applyPack({ ...loaded, pack: DEMO_PACK_CHANGED, source: "network" }, true);
+    },
     start, next, back, askForHelp, finish,
     closeHelp: () => setHelpAskedAt(null),
     setOfflineSim: (on) => netsim.set(on),

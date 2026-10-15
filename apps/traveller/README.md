@@ -37,7 +37,7 @@ to Amplify (which gives https).
 ## Tests
 
 ```powershell
-npm test          # 74 tests: outbox, sender, tracker, request queue, HTTP layer, offline
+npm test          # 84 tests: outbox, sender, tracker, request queue, HTTP, offline, route updates, wake lock
 npm run typecheck
 ```
 
@@ -90,9 +90,50 @@ Details that matter:
 - **Signed S3 links.** Each request gets a new signature, but the stored file is found by its address without the signature.
 - **Route changes.** After the caregiver edits the route, photos the new route doesn't use are removed, but only once the new set is complete, so an old photo can still help in the meantime.
 - **The browser is asked not to clear our storage** when the phone is low on space (`navigator.storage.persist()`).
+- **Route changes reach the phone mid-trip.** Every minute, and straight away when signal
+  returns or the traveller comes back to the app, it asks the Journey Service for the current
+  `packVersion` (a tiny request). Only if the version changed is the new pack downloaded,
+  validated and switched to. The traveller sees "Your trip has changed. Read this step again.",
+  the screen scrolls to it, and the next check-in reports the new `routeVersion`, so the
+  detectors judge against the new route at once. Try it with **Change route** in the debug panel.
+- **Photos are stored per route version.** A photo is only shown next to the instructions of the
+  version it was downloaded for: after a change, an old picture of bus 190 can never appear next
+  to "Get on bus 83". Until the new photo has downloaded, the network copy or the pictogram is shown.
 - **App updates never interrupt a journey.** A new version waits until every tab of the app is closed.
 - **After arriving,** the trip's photos are deleted to free space and not keep pictures of the route longer than needed.
 - **Layout.** The steps scroll in their own area above the Help bar, so a tap meant for "I've done this step" can never land on Help.
+
+## Keeping the screen on (issue 2.2)
+
+During a trip the app asks the browser to keep the screen on (Screen Wake Lock API). If the
+screen turned off, the browser would treat the app as backgrounded and slow or stop GPS and
+check-ins, and the traveller would have to unlock the phone to see the next step. The browser
+drops the lock whenever the app is hidden, so it's requested again each time the app comes back,
+and released on arrival. It costs some battery; check-ins carry `batteryPct`. Shown as
+"Screen kept on" in the debug panel. (Headless test browsers always refuse it, so check it in
+real Chrome.)
+
+## Hosting on Amplify (issue 2.1)
+
+`amplify.yml` and `customHttp.yml` at the repo root are already set up for this folder.
+
+1. AWS console → **Amplify** → **Create new app** → **GitHub** → this repository and branch.
+2. Tick **My app is a monorepo** and enter `apps/traveller`. Amplify picks up `amplify.yml`.
+3. Deploy. You get an `https://….amplifyapp.com` address, which also gives the phone GPS access
+   (browsers only allow GPS on https).
+4. **Rewrites and redirects** (in the app's settings), add, in this order:
+   - `/api/<*>` → `https://<load balancer address>/api/<*>`, type **200 (Rewrite)**. Amplify
+     only proxies to **https** addresses, so the load balancer needs an HTTPS listener
+     (an ACM certificate). Same origin, so no CORS needed.
+   - The single-page app rule from the Amplify docs, so `/?trip=…` links always load the app:
+     source `</^[^.]+$|\.(?!(css|gif|ico|jpg|js|png|txt|svg|woff|woff2|ttf|map|json|webp|webmanifest)$)([^.]+$)/>`,
+     target `/index.html`, type **200 (Rewrite)**.
+5. If the load balancer has no HTTPS yet: instead of the `/api` rewrite, set the environment
+   variable `VITE_API_BASE` to the load balancer's address, redeploy, and set `CORS_ORIGINS` on the
+   Check-in Service to the Amplify address.
+
+`customHttp.yml` stops browsers caching `sw.js` and `index.html` (otherwise phones would keep an
+old version of the app) and lets the hashed files in `/assets` be cached for a year.
 
 ## Files
 
@@ -106,6 +147,8 @@ Details that matter:
 | `src/lib/pack.ts` | loads and saves the route pack |
 | `src/lib/offline.ts` | validates packs, downloads photos/audio, serves stored copies |
 | `src/lib/sw-register.ts` | registers the service worker |
+| `src/lib/wakelock.ts` | keeps the screen on during a trip |
+| `src/config.ts` | API address (`VITE_API_BASE`) |
 | `src/lib/demo.ts`, `netsim.ts` | demo route, pretend GPS, pretend no signal |
 | `src/app/useCareRoute.ts` | wires it all together for the screens |
 | `src/App.tsx`, `src/components/` | the screens |
@@ -122,4 +165,4 @@ and nothing else, and the Help button never moves. Status messages are calm and 
 
 - The pack builder (backend half of 2.4): waiting to agree the interface with the Journey Service owner.
 - Login: issue 1.5. `HttpTransport` already takes a `getToken` function for it.
-- Hosting: Amplify (per the proposal). Set `CORS_ORIGINS` on the Check-in Service to the Amplify URL.
+- Actually deploying to Amplify needs the team's AWS account (steps above).

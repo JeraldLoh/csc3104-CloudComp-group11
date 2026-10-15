@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { useCareRoute } from "./app/useCareRoute";
 import { readFlags, readSession } from "./app/session";
 import { ConnectionStatus } from "./components/ConnectionStatus";
@@ -34,6 +34,11 @@ function Screen({ children, footer }: { children: React.ReactNode; footer?: Reac
 
 function Journey({ session, demo, debug }: { session: Session; demo: boolean; debug: boolean }) {
   const app = useCareRoute(session, { demo });
+  // When the route changes mid-trip, bring the "Your trip has changed" notice and the
+  // new instruction into view, even if the traveller had scrolled down.
+  useEffect(() => {
+    if (app.routeChangedAt !== null) document.querySelector(".app__main")?.scrollTo({ top: 0, behavior: "smooth" });
+  }, [app.routeChangedAt]);
   const pack = app.loaded?.pack;
   const caregiver = pack?.caregiver.name ?? "your caregiver";
   const debugPanel = debug ? <DebugPanel app={app} /> : null;
@@ -108,6 +113,12 @@ function Journey({ session, demo, debug }: { session: Session; demo: boolean; de
       )}
       {app.problem === "location-unavailable" && (
         <p className="banner" role="alert">Your phone can't find where you are. Keep going and follow the steps.</p>
+      )}
+      {app.routeChangedAt !== null && (
+        <div className="banner banner--changed" role="alert">
+          <p>Your trip has changed. Read this step again.</p>
+          <button className="btn btn--quiet" onClick={app.dismissRouteChange}>OK</button>
+        </div>
       )}
       <StepCard step={step} loaded={app.loaded} index={app.stepIndex} total={pack.steps.length} tripId={session.tripId} />
       <div className="actions">

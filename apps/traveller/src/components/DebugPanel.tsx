@@ -27,6 +27,8 @@ export function DebugPanel({ app }: { app: CareRoute }) {
     ["Step index", app.stepIndex],
     ["App stored offline", app.offline.appShell ? "yes" : "no (dev server or first visit)"],
     ["Trip media stored", app.offline.media ? `${app.offline.media.done}/${app.offline.media.total}${app.offline.media.failed.length ? `, ${app.offline.media.failed.length} failed` : ""}` : "-"],
+    ["Route version", app.loaded ? `${app.loaded.pack.packVersion} (${app.loaded.source})` : "-"],
+    ["Screen kept on", app.wakeLock],
     ["Persistent storage", app.offline.persisted === null ? "-" : app.offline.persisted ? "granted" : "not granted"],
   ];
   return (
@@ -45,6 +47,7 @@ export function DebugPanel({ app }: { app: CareRoute }) {
           <input type="checkbox" checked={app.offlineSim} onChange={(e) => app.setOfflineSim(e.target.checked)} /> Pretend no signal
         </label>
         <button onClick={() => void app.checkInNow()}>Check in now</button>
+        <button onClick={app.simulateRouteChange}>Change route</button>
       </div>
     </details>
   );

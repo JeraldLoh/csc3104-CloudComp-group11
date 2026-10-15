@@ -7,14 +7,14 @@ import type { RoutePackStep } from "../types";
 const MODE_NAME: Record<string, string> = { walk: "Walk", bus: "Bus", train: "Train" };
 
 /** The stored copy of a photo/audio file if it's on the phone (works with no signal), else the network URL. */
-function useStoredMedia(tripId: string, url: string | null): string | null {
+function useStoredMedia(tripId: string, url: string | null, packVersion: string): string | null {
   const [src, setSrc] = useState<string | null>(null);
   useEffect(() => {
     let alive = true;
     let objectUrl: string | null = null;
     setSrc(null);
     if (!url) return;
-    storedMediaUrl(tripId, url)
+    storedMediaUrl(tripId, url, packVersion)
       .then((s) => {
         if (s.startsWith("blob:")) objectUrl = s;
         if (alive) setSrc(s);
@@ -25,7 +25,7 @@ function useStoredMedia(tripId: string, url: string | null): string | null {
       alive = false;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [tripId, url]);
+  }, [tripId, url, packVersion]);
   return src;
 }
 
@@ -62,8 +62,9 @@ function useListen(text: string, audioSrc: string | null) {
 }
 
 export function StepCard({ step, loaded, index, total, tripId }: { step: RoutePackStep; loaded: LoadedPack; index: number; total: number; tripId: string }) {
-  const photo = useStoredMedia(tripId, mediaUrl(loaded, step.photoUrl));
-  const audio = useStoredMedia(tripId, mediaUrl(loaded, step.audioUrl));
+  const v = loaded.pack.packVersion;
+  const photo = useStoredMedia(tripId, mediaUrl(loaded, step.photoUrl), v);
+  const audio = useStoredMedia(tripId, mediaUrl(loaded, step.audioUrl), v);
   const [photoOk, setPhotoOk] = useState(true);
   useEffect(() => setPhotoOk(true), [photo]);
   const { play, speaking, canListen } = useListen(step.easyRead, audio);

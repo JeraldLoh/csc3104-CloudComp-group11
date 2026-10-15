@@ -133,7 +133,7 @@ h1 { font-size: 1.75rem; line-height: 1.2; font-weight: 700; }
 .sign__progress li.now { background: #fff; }
 .sign__body { display: flex; flex-direction: column; gap: 14px; padding: 20px 18px 10px; }
 /* Capped so the instruction and the main button stay on screen on a normal-sized phone. */
-.sign__photo { width: 100%; aspect-ratio: 16 / 10; max-height: 26dvh; object-fit: cover; border-radius: 12px; background: var(--paper); }
+.sign__photo { width: 100%; aspect-ratio: 16 / 10; max-height: 26dvh; object-fit: contain; border-radius: 12px; background: var(--paper); }
 .sign__text { font-size: 1.6rem; line-height: 1.28; font-weight: 700; }
 .sign__backup {
   font-size: 1rem;
@@ -188,7 +188,7 @@ h1 { font-size: 1.75rem; line-height: 1.2; font-weight: 700; }
 .debug dl div { display: flex; justify-content: space-between; gap: 12px; }
 .debug dt { color: var(--ink-soft); }
 .debug dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
-.debug__actions { display: flex; gap: 12px; align-items: center; justify-content: space-between; }
+.debug__actions { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; justify-content: space-between; }
 .debug__actions button { font: inherit; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--paper); }
 
 @media (prefers-reduced-motion: reduce) {
@@ -201,3 +201,7 @@ h1 { font-size: 1.75rem; line-height: 1.2; font-weight: 700; }
 .ready--done { background: #e3f3ea; color: var(--ok); font-weight: 700; }
 .ready--partial { background: #fff4e0; color: var(--wait); }
 .ready .tick { flex: none; }
+
+/* Route changed during the trip: noticeable, calm, and easy to dismiss. */
+.banner--changed { display: flex; align-items: center; justify-content: space-between; gap: 12px; background: #e7eefb; border-left-color: var(--primary); font-weight: 700; }
+.banner--changed .btn--quiet { width: auto; min-height: 44px; padding: 0 12px; }

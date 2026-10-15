@@ -7,8 +7,11 @@
 //                       passes validatePack(), so a cut-off or corrupt download can never
 //                       overwrite a good one
 //   photos and audio    downloaded into Cache Storage before the trip starts, one cache
-//                       per trip, keyed by URL without its query string (S3 signed links
-//                       change on every request, but the file behind them doesn't)
+//                       per trip, stored per route version: a photo is only ever shown
+//                       next to the instructions of the version it was downloaded for.
+//                       (If the caregiver changes the route, an old photo of bus 190 must
+//                       never appear next to a new "Get on bus 83".) Keyed by URL without
+//                       its query string, because S3 signed links change on every request.
 //   the app itself      the service worker (sw-register.ts)
 //
 // Downloads happen in the background and never block "Start my trip": instructions are
@@ -22,6 +25,13 @@ export const cacheKey = (url: string) => {
   const u = new URL(url, typeof location !== "undefined" ? location.href : "http://localhost/");
   u.search = "";
   u.hash = "";
+  return u.href;
+};
+
+/** Where a file is stored: its address (no signature) plus the route version it belongs to. */
+export const entryKey = (url: string, packVersion: string) => {
+  const u = new URL(cacheKey(url));
+  u.searchParams.set("careroute-version", packVersion);
   return u.href;
 };
 
@@ -110,7 +120,7 @@ export async function downloadMedia(
   onProgress({ ...progress });
 
   for (const url of urls) {
-    const key = cacheKey(url);
+    const key = entryKey(url, pack.packVersion);
     if (await cache.match(key)) {
       progress.done++;
       onProgress({ ...progress });
@@ -134,19 +144,20 @@ export async function downloadMedia(
   }
 
   if (progress.failed.length === 0) {
-    const keep = new Set(urls.map(cacheKey));
-    for (const req of await cache.keys()) if (!keep.has(cacheKey(req.url))) await cache.delete(req);
+    // This version is complete: files from older versions of the route can go.
+    const keep = new Set(urls.map((u) => entryKey(u, pack.packVersion)));
+    for (const req of await cache.keys()) if (!keep.has(req.url)) await cache.delete(req);
   }
   progress.finished = true;
   onProgress({ ...progress });
   return progress;
 }
 
-/** A URL the page can show: the stored copy if there is one, otherwise the network URL. */
-export async function storedMediaUrl(tripId: string, url: string, deps: { caches?: CacheStorage } = {}): Promise<string> {
+/** A URL the page can show: the stored copy for this route version if there is one, otherwise the network URL. */
+export async function storedMediaUrl(tripId: string, url: string, packVersion: string, deps: { caches?: CacheStorage } = {}): Promise<string> {
   const cacheStorage = deps.caches ?? globalThis.caches;
   if (!cacheStorage) return url;
-  const hit = await (await cacheStorage.open(mediaCacheName(tripId))).match(cacheKey(url));
+  const hit = await (await cacheStorage.open(mediaCacheName(tripId))).match(entryKey(url, packVersion));
   if (!hit) return url;
   return URL.createObjectURL(await hit.blob());
 }
