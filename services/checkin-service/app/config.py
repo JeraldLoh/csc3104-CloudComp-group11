@@ -31,6 +31,10 @@ class Settings:
     # Create the table and queues on startup. For local development only;
     # in AWS they are created once with infra/create_resources.py.
     create_resources: bool = field(default_factory=lambda: _bool("CREATE_RESOURCES", False))
+    # Web addresses allowed to call this API from a browser (CORS), comma-separated,
+    # e.g. "https://main.xxxx.amplifyapp.com". Not needed when the app's dev server proxies /api.
+    cors_origins: tuple[str, ...] = field(default_factory=lambda: tuple(
+        o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()))
     # Login (Cognito, issue 1.5) isn't built yet. When true, a Bearer token is required.
     auth_required: bool = field(default_factory=lambda: _bool("AUTH_REQUIRED", False))
 

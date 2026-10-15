@@ -1,0 +1,189 @@
+/* CareRoute traveller app.
+   Modelled on public-transport wayfinding signs: each step is one sign, coloured by how
+   you travel, with one instruction in large, highly legible type. Red means Help and
+   nothing else. Built for people who find busy screens hard: one thing at a time,
+   big targets, plain words, the Help button always in the same place. */
+
+:root {
+  --paper: #eef2f5;      /* cool signage white */
+  --card: #ffffff;
+  --ink: #10213a;        /* deep transit navy */
+  --ink-soft: #3d4f68;
+  --line: #c9d3dd;
+  --primary: #1d4ed8;
+  --primary-press: #1e3fae;
+  --help: #c81e1e;
+  --help-press: #a11616;
+  --ok: #127a4b;
+  --wait: #a35a06;
+  --focus: #f59e0b;
+  --walk: #0e6f86;
+  --bus: #17673a;
+  --train: #6b21a8;
+  --radius: 18px;
+  font-family: "Atkinson Hyperlegible", system-ui, sans-serif;
+  font-size: 20px;
+  line-height: 1.45;
+  color: var(--ink);
+  background: var(--paper);
+  -webkit-text-size-adjust: 100%;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100dvh; background: var(--paper); }
+h1, h2, p { margin: 0; }
+h1 { font-size: 1.75rem; line-height: 1.2; font-weight: 700; }
+
+.app { min-height: 100dvh; display: flex; flex-direction: column; }
+.app__main {
+  flex: 1;
+  width: 100%;
+  max-width: 30rem;
+  margin: 0 auto;
+  padding: max(16px, env(safe-area-inset-top)) 16px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.app__footer {
+  position: sticky;
+  bottom: 0;
+  padding: 12px 16px max(12px, env(safe-area-inset-bottom));
+  background: linear-gradient(to top, var(--paper) 70%, transparent);
+}
+.app__footer .btn { max-width: 30rem; margin: 0 auto; }
+
+/* ---- Buttons: big, full width, one clear verb ---- */
+.btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 64px;
+  padding: 14px 20px;
+  border: 0;
+  border-radius: 16px;
+  font: inherit;
+  font-size: 1.15rem;
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.btn--primary { background: var(--primary); color: #fff; }
+.btn--primary:active { background: var(--primary-press); }
+.btn--help { background: var(--help); color: #fff; min-height: 72px; font-size: 1.35rem; }
+.btn--help:active { background: var(--help-press); }
+.btn--secondary { background: var(--card); color: var(--ink); border: 2px solid var(--ink); }
+.btn--quiet { background: transparent; color: var(--primary); min-height: 52px; font-size: 1rem; }
+.btn:focus-visible, a:focus-visible, summary:focus-visible, input:focus-visible {
+  outline: 4px solid var(--focus);
+  outline-offset: 3px;
+}
+
+/* ---- Connection line ---- */
+.status { display: flex; align-items: center; gap: 10px; font-size: 0.9rem; color: var(--ink-soft); }
+.status__dot { width: 12px; height: 12px; border-radius: 50%; flex: none; background: var(--ok); }
+.status--catching-up .status__dot { background: var(--primary); animation: pulse 1.2s ease-in-out infinite; }
+.status--offline { color: var(--wait); font-weight: 700; }
+.status--offline .status__dot { background: var(--wait); }
+.status--login { color: var(--help); font-weight: 700; }
+.status--login .status__dot { background: var(--help); }
+@keyframes pulse { 50% { opacity: 0.3; } }
+
+.banner {
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: #fff4e0;
+  border-left: 6px solid var(--wait);
+  font-size: 0.95rem;
+}
+
+/* ---- The step sign ---- */
+.sign {
+  --band: var(--walk);
+  --band-ink: var(--walk);
+  background: var(--card);
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: 0 1px 0 var(--line), 0 8px 24px -16px rgba(16, 33, 58, 0.45);
+}
+.sign--bus { --band: var(--bus); --band-ink: var(--bus); }
+.sign--train { --band: var(--train); --band-ink: var(--train); }
+.sign__band {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+  background: var(--band);
+  color: #fff;
+}
+.sign__mode { font-size: 1.5rem; font-weight: 700; }
+.sign__count { margin-left: auto; font-size: 0.95rem; opacity: 0.9; }
+.sign__progress { display: flex; gap: 4px; margin: 0; padding: 0 18px; list-style: none; background: var(--band); }
+.sign__progress li { flex: 1; height: 6px; border-radius: 3px 3px 0 0; background: rgba(255, 255, 255, 0.28); }
+.sign__progress li.done { background: rgba(255, 255, 255, 0.7); }
+.sign__progress li.now { background: #fff; }
+.sign__body { display: flex; flex-direction: column; gap: 14px; padding: 20px 18px 10px; }
+.sign__photo { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 12px; background: var(--paper); }
+.sign__text { font-size: 1.6rem; line-height: 1.28; font-weight: 700; }
+.sign__backup {
+  font-size: 1rem;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--paper);
+  color: var(--ink-soft);
+}
+.sign__body .btn--quiet { justify-content: flex-start; padding-left: 0; width: auto; }
+
+.actions { display: flex; flex-direction: column; gap: 4px; }
+
+/* ---- Simple full-screen messages ---- */
+.message { display: flex; flex-direction: column; gap: 16px; padding-top: 12vh; }
+.lead { font-size: 1.3rem; }
+.note { font-size: 1rem; color: var(--ink-soft); }
+.message .btn { margin-top: 8px; }
+.message--arrived { align-items: flex-start; }
+.tick { color: var(--ok); }
+
+/* ---- Help sheet ---- */
+.sheet {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  background: rgba(16, 33, 58, 0.55);
+  z-index: 10;
+  outline: none;
+}
+.sheet__panel {
+  width: 100%;
+  max-width: 30rem;
+  margin: 0 auto;
+  padding: 28px 18px max(18px, env(safe-area-inset-bottom));
+  border-radius: 24px 24px 0 0;
+  background: var(--card);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  border-top: 8px solid var(--help);
+  animation: rise 0.18s ease-out;
+}
+.sheet__title { font-size: 1.6rem; line-height: 1.2; }
+.sheet__text { font-size: 1.15rem; }
+@keyframes rise { from { transform: translateY(24px); opacity: 0; } }
+
+/* ---- Debug panel (team only) ---- */
+.debug { margin-top: 8px; font-size: 0.75rem; background: #fff; border: 1px dashed var(--line); border-radius: 12px; padding: 8px 12px; }
+.debug summary { cursor: pointer; font-weight: 700; }
+.debug dl { display: grid; gap: 2px; margin: 8px 0; }
+.debug dl div { display: flex; justify-content: space-between; gap: 12px; }
+.debug dt { color: var(--ink-soft); }
+.debug dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+.debug__actions { display: flex; gap: 12px; align-items: center; justify-content: space-between; }
+.debug__actions button { font: inherit; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--paper); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}

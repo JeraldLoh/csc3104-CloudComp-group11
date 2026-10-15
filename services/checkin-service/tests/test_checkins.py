@@ -252,3 +252,19 @@ def test_concurrent_retries_and_out_of_order_arrivals(env):
     assert env.r.hget("trip:T-001:context", "stepIndex") == b"59"
     seqs = [json.loads(x)["seq"] for x in env.r.lrange("trip:T-001:recent", 0, -1)]
     assert seqs == list(range(59, 49, -1))
+
+
+# ---------- CORS (app hosted on a different origin, e.g. Amplify) ----------
+
+def test_cors_allows_configured_origin_only(env):
+    import dataclasses
+    s = dataclasses.replace(Settings(), cors_origins=("https://app.example",))
+    app = create_app(service=env.service, s=s)
+    with TestClient(app) as c:
+        ok = c.options("/api/checkins", headers={
+            "Origin": "https://app.example", "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type"})
+        assert ok.headers.get("access-control-allow-origin") == "https://app.example"
+        bad = c.options("/api/checkins", headers={
+            "Origin": "https://evil.example", "Access-Control-Request-Method": "POST"})
+        assert bad.headers.get("access-control-allow-origin") is None

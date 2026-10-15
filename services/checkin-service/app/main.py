@@ -13,6 +13,7 @@ import boto3
 import redis
 from fastapi import Depends, FastAPI, Header, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -59,6 +60,14 @@ def create_app(service: CheckinService | None = None, s: Settings = default_sett
         yield
 
     app = FastAPI(title="CareRoute Check-in Service", lifespan=lifespan)
+    if s.cors_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=list(s.cors_origins),
+            allow_methods=["GET", "POST"],
+            allow_headers=["Content-Type", "Authorization"],
+            max_age=600,
+        )
 
     def require_token(authorization: str | None = Header(default=None)) -> None:
         # TODO(issue 1.5): verify the Cognito JWT and check the traveller owns this trip.

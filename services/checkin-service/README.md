@@ -101,6 +101,7 @@ so they'd distort the gap distribution. When a buffered batch arrives, `lastseen
 | `MAX_FUTURE_SKEW_S` | `300` | reject timestamps further in the future than this |
 | `CREATE_RESOURCES` | `false` | create the table and queues on startup (local only) |
 | `AUTH_REQUIRED` | `false` | require a Bearer token |
+| `CORS_ORIGINS` | empty | web addresses allowed to call from a browser, comma-separated (e.g. the Amplify URL). Not needed locally: the app's dev server proxies `/api`. |
 
 For real AWS, create the table and queues once: `python -m infra.create_resources`.
 
