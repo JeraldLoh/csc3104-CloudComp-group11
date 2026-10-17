@@ -10,7 +10,7 @@ services:
       AWS_ENDPOINT_URL: http://cloud-localstack:4566
       AWS_ACCESS_KEY_ID: csc3104
       AWS_SECRET_ACCESS_KEY: csc3104
-      AWS_DEFAULT_REGION: ap_southeast-1
+      AWS_DEFAULT_REGION: ap-southeast-1
     depends_on:
       cloud-redis:
         condition: service_healthy
@@ -33,8 +33,8 @@ services:
     ports:
       - "127.0.0.1:4566:4566"
     environment:
-      SERVICES: s3,sqs
-      AWS_DEFAULT_REGION: ap_southeast-1
+      SERVICES: s3,sqs,dynamodb,cloudwatch,logs
+      AWS_DEFAULT_REGION: ap-southeast-1
       LOCALSTACK_AUTH_TOKEN: ${LOCALSTACK_AUTH_TOKEN:?Set LOCALSTACK_AUTH_TOKEN in .env}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://cloud-localstack:4566/_localstack/health"]
