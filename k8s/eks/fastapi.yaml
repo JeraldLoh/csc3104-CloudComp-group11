@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloud-fastapi
+  namespace: csc3104
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: cloud-fastapi }
+  template:
+    metadata:
+      labels: { app: cloud-fastapi }
+    spec:
+      serviceAccountName: cloud-fastapi   # IRSA: AWS credentials come from this account's IAM role
+      containers:
+        - name: cloud-fastapi
+          # Replaced by the `images:` block in kustomization.yaml (ECR URI + tag)
+          image: cloud-fastapi:local
+          ports: [{ containerPort: 8000 }]
+          env:
+            - name: REDIS_URL
+              # TODO: ElastiCache endpoint from the stack's RedisEndpoint output
+              value: "redis://<REDIS_ENDPOINT>:6379/0"
+            - name: AWS_DEFAULT_REGION
+              value: "ap-southeast-1"
+            # No AWS_ENDPOINT_URL and no access keys: boto3 uses real AWS + the IRSA role
+          # Fargate sizes the pod from requests, so set them explicitly
+          resources:
+            requests: { cpu: 250m, memory: 512Mi }
+            limits: { cpu: 250m, memory: 512Mi }
+          readinessProbe:
+            httpGet: { path: /health, port: 8000 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /health, port: 8000 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cloud-fastapi
+  namespace: csc3104
+spec:
+  type: ClusterIP
+  selector: { app: cloud-fastapi }
+  ports: [{ port: 8000, targetPort: 8000 }]

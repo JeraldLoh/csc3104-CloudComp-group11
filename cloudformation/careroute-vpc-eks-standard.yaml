@@ -1,0 +1,517 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  CareRoute network and compute baseline for a standard AWS account.
+  VPC (2 AZs, public + private subnets, IGW, 1 NAT), S3 and DynamoDB gateway
+  endpoints, security groups, ElastiCache Redis in the private subnets, and an
+  EKS cluster running on Fargate or on a managed node group. Creates its own
+  IAM roles and the IAM OIDC provider needed for IRSA (per-service roles).
+  Deploy with CAPABILITY_IAM acknowledged.
+
+Parameters:
+  ClusterName:
+    Type: String
+    Default: csc3104
+    Description: EKS cluster name. Also used in the subnet discovery tags.
+  ComputeMode:
+    Type: String
+    Default: fargate
+    AllowedValues: [fargate, nodegroup]
+    Description: >
+      fargate = Fargate profiles (private subnets only).
+      nodegroup = fallback managed node group on EC2 if Fargate is blocked in the lab.
+  AppNamespace:
+    Type: String
+    Default: csc3104
+    Description: Kubernetes namespace scheduled onto Fargate.
+  AppPort:
+    Type: Number
+    Default: 8000
+    Description: Port the API service listens on (ALB to pods).
+  ServiceAccountName:
+    Type: String
+    Default: cloud-fastapi
+    Description: Kubernetes service account allowed to assume the API role (IRSA).
+  ResourcePrefix:
+    Type: String
+    Default: csc3104
+    Description: >
+      The API role may only touch S3 buckets, SQS queues and DynamoDB tables
+      whose names start with this prefix (e.g. csc3104-checkins).
+  RedisNodeType:
+    Type: String
+    Default: cache.t3.micro
+  NodeInstanceType:
+    Type: String
+    Default: t3.medium
+    Description: Only used when ComputeMode is nodegroup.
+
+Conditions:
+  UseFargate: !Equals [!Ref ComputeMode, fargate]
+  UseNodeGroup: !Equals [!Ref ComputeMode, nodegroup]
+
+Resources:
+  # ------------------------------- VPC ---------------------------------
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: careroute-vpc
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: careroute-igw
+
+  IgwAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref InternetGateway
+
+  # ------------------------------ Subnets ------------------------------
+  PublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: 10.0.0.0/24
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub careroute-subnet-public1-${AWS::Region}a
+        - Key: kubernetes.io/role/elb
+          Value: "1"
+        - Key: !Sub kubernetes.io/cluster/${ClusterName}
+          Value: shared
+
+  PublicSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: 10.0.1.0/24
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub careroute-subnet-public2-${AWS::Region}b
+        - Key: kubernetes.io/role/elb
+          Value: "1"
+        - Key: !Sub kubernetes.io/cluster/${ClusterName}
+          Value: shared
+
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: 10.0.10.0/24
+      Tags:
+        - Key: Name
+          Value: !Sub careroute-subnet-private1-${AWS::Region}a
+        - Key: kubernetes.io/role/internal-elb
+          Value: "1"
+        - Key: !Sub kubernetes.io/cluster/${ClusterName}
+          Value: shared
+
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: 10.0.11.0/24
+      Tags:
+        - Key: Name
+          Value: !Sub careroute-subnet-private2-${AWS::Region}b
+        - Key: kubernetes.io/role/internal-elb
+          Value: "1"
+        - Key: !Sub kubernetes.io/cluster/${ClusterName}
+          Value: shared
+
+  # ---------------------------- Routing --------------------------------
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: careroute-rtb-public
+
+  PublicDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: IgwAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetARouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetA
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnetBRouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetB
+      RouteTableId: !Ref PublicRouteTable
+
+  # One NAT gateway (in AZ A) to save Learner Lab credits.
+  # For AZ-level resilience, add a second EIP + NAT in PublicSubnetB
+  # and a second private route table for PrivateSubnetB.
+  NatEip:
+    Type: AWS::EC2::EIP
+    DependsOn: IgwAttachment
+    Properties:
+      Domain: vpc
+
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatEip.AllocationId
+      SubnetId: !Ref PublicSubnetA
+      Tags:
+        - Key: Name
+          Value: !Sub careroute-nat-public1-${AWS::Region}a
+
+  PrivateRouteTable1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub careroute-rtb-private1-${AWS::Region}a
+
+  PrivateRouteTable2:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub careroute-rtb-private2-${AWS::Region}b
+
+  PrivateDefaultRoute1:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable1
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+
+  PrivateDefaultRoute2:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable2
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+
+  PrivateSubnetARouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetA
+      RouteTableId: !Ref PrivateRouteTable1
+
+  PrivateSubnetBRouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetB
+      RouteTableId: !Ref PrivateRouteTable2
+
+  # ------------------------ Gateway endpoints ---------------------------
+  S3Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref Vpc
+      VpcEndpointType: Gateway
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.s3
+      RouteTableIds:
+        - !Ref PrivateRouteTable1
+        - !Ref PrivateRouteTable2
+
+  DynamoDbEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref Vpc
+      VpcEndpointType: Gateway
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.dynamodb
+      RouteTableIds:
+        - !Ref PrivateRouteTable1
+        - !Ref PrivateRouteTable2
+
+  # ------------------------ Security groups ---------------------------
+  AlbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Load balancer - HTTP/HTTPS from the internet
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: csc3104-alb-sg
+
+  RedisSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ElastiCache Redis - reachable only from the EKS cluster security group
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: csc3104-redis-sg
+
+  # Fargate pods use the EKS cluster security group, so the rules below
+  # reference it instead of a custom pod security group.
+  ClusterFromAlbIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !GetAtt EksCluster.ClusterSecurityGroupId
+      IpProtocol: tcp
+      FromPort: !Ref AppPort
+      ToPort: !Ref AppPort
+      SourceSecurityGroupId: !Ref AlbSecurityGroup
+      Description: ALB to API service
+
+  RedisFromClusterIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref RedisSecurityGroup
+      IpProtocol: tcp
+      FromPort: 6379
+      ToPort: 6379
+      SourceSecurityGroupId: !GetAtt EksCluster.ClusterSecurityGroupId
+      Description: EKS pods to Redis
+
+  # ------------------------ ElastiCache ---------------------------
+  RedisSubnetGroup:
+    Type: AWS::ElastiCache::SubnetGroup
+    Properties:
+      Description: Private subnets for Redis
+      SubnetIds:
+        - !Ref PrivateSubnetA
+        - !Ref PrivateSubnetB
+
+  RedisCluster:
+    Type: AWS::ElastiCache::CacheCluster
+    Properties:
+      Engine: redis
+      CacheNodeType: !Ref RedisNodeType
+      NumCacheNodes: 1
+      CacheSubnetGroupName: !Ref RedisSubnetGroup
+      VpcSecurityGroupIds:
+        - !Ref RedisSecurityGroup
+
+  # ------------------------------ IAM ---------------------------------
+  ClusterRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: eks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AmazonEKSClusterPolicy
+
+  FargatePodExecutionRole:
+    Type: AWS::IAM::Role
+    Condition: UseFargate
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: eks-fargate-pods.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              ArnLike:
+                aws:SourceArn: !Sub arn:${AWS::Partition}:eks:${AWS::Region}:${AWS::AccountId}:fargateprofile/${ClusterName}/*
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AmazonEKSFargatePodExecutionRolePolicy
+
+  NodeRole:
+    Type: AWS::IAM::Role
+    Condition: UseNodeGroup
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AmazonEKSWorkerNodePolicy
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AmazonEKS_CNI_Policy
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+
+  # ------------------------------ EKS ---------------------------------
+  # Kubernetes version is omitted so EKS applies its current default.
+  EksCluster:
+    Type: AWS::EKS::Cluster
+    Properties:
+      Name: !Ref ClusterName
+      RoleArn: !GetAtt ClusterRole.Arn
+      ResourcesVpcConfig:
+        SubnetIds:
+          - !Ref PublicSubnetA
+          - !Ref PublicSubnetB
+          - !Ref PrivateSubnetA
+          - !Ref PrivateSubnetB
+        EndpointPublicAccess: true
+        EndpointPrivateAccess: true
+      AccessConfig:
+        AuthenticationMode: API_AND_CONFIG_MAP
+        BootstrapClusterCreatorAdminPermissions: true
+
+  FargateProfileKubeSystem:
+    Type: AWS::EKS::FargateProfile
+    Condition: UseFargate
+    Properties:
+      ClusterName: !Ref EksCluster
+      FargateProfileName: kube-system
+      PodExecutionRoleArn: !GetAtt FargatePodExecutionRole.Arn
+      Subnets:
+        - !Ref PrivateSubnetA
+        - !Ref PrivateSubnetB
+      Selectors:
+        - Namespace: kube-system
+
+  # EKS creates Fargate profiles one at a time, hence the DependsOn.
+  FargateProfileApp:
+    Type: AWS::EKS::FargateProfile
+    Condition: UseFargate
+    DependsOn: FargateProfileKubeSystem
+    Properties:
+      ClusterName: !Ref EksCluster
+      FargateProfileName: careroute-app
+      PodExecutionRoleArn: !GetAtt FargatePodExecutionRole.Arn
+      Subnets:
+        - !Ref PrivateSubnetA
+        - !Ref PrivateSubnetB
+      Selectors:
+        - Namespace: !Ref AppNamespace
+
+  # CoreDNS must be told to run on Fargate in a Fargate-only cluster.
+  CoreDnsAddon:
+    Type: AWS::EKS::Addon
+    Condition: UseFargate
+    DependsOn: FargateProfileKubeSystem
+    Properties:
+      ClusterName: !Ref EksCluster
+      AddonName: coredns
+      ConfigurationValues: '{"computeType":"Fargate"}'
+      ResolveConflicts: OVERWRITE
+
+  NodeGroup:
+    Type: AWS::EKS::Nodegroup
+    Condition: UseNodeGroup
+    Properties:
+      ClusterName: !Ref EksCluster
+      NodegroupName: careroute-nodes
+      NodeRole: !GetAtt NodeRole.Arn
+      Subnets:
+        - !Ref PrivateSubnetA
+        - !Ref PrivateSubnetB
+      InstanceTypes:
+        - !Ref NodeInstanceType
+      AmiType: AL2023_x86_64_STANDARD
+      ScalingConfig:
+        MinSize: 2
+        DesiredSize: 2
+        MaxSize: 4
+
+  # IRSA: lets pods assume IAM roles through service accounts. Fargate pods
+  # need this (EKS Pod Identity is not supported on Fargate). Use it for the
+  # AWS Load Balancer Controller and one least-privilege role per microservice.
+  OidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Properties:
+      Url: !GetAtt EksCluster.OpenIdConnectIssuerUrl
+      ClientIdList:
+        - sts.amazonaws.com
+
+  ApiRepository:
+    Type: AWS::ECR::Repository
+    DeletionPolicy: Delete
+    Properties:
+      RepositoryName: cloud-fastapi
+      EmptyOnDelete: true
+
+  # IRSA role assumed by the cloud-fastapi service account (replaces the
+  # hardcoded LocalStack keys). Scoped to resources named <ResourcePrefix>-*.
+  ApiServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument: !Sub
+        - |
+          {
+            "Version": "2012-10-17",
+            "Statement": [{
+              "Effect": "Allow",
+              "Principal": {"Federated": "${ProviderArn}"},
+              "Action": "sts:AssumeRoleWithWebIdentity",
+              "Condition": {"StringEquals": {
+                "${Issuer}:sub": "system:serviceaccount:${AppNamespace}:${ServiceAccountName}",
+                "${Issuer}:aud": "sts.amazonaws.com"
+              }}
+            }]
+          }
+        - ProviderArn: !Ref OidcProvider
+          Issuer: !Select [1, !Split ["https://", !GetAtt EksCluster.OpenIdConnectIssuerUrl]]
+      Policies:
+        - PolicyName: careroute-api-access
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [s3:GetObject, s3:PutObject, s3:DeleteObject, s3:ListBucket]
+                Resource:
+                  - !Sub arn:${AWS::Partition}:s3:::${ResourcePrefix}-*
+                  - !Sub arn:${AWS::Partition}:s3:::${ResourcePrefix}-*/*
+              - Effect: Allow
+                Action: [sqs:SendMessage, sqs:ReceiveMessage, sqs:DeleteMessage, sqs:GetQueueAttributes, sqs:GetQueueUrl]
+                Resource: !Sub arn:${AWS::Partition}:sqs:${AWS::Region}:${AWS::AccountId}:${ResourcePrefix}-*
+              - Effect: Allow
+                Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem, dynamodb:DeleteItem, dynamodb:Query, dynamodb:Scan, dynamodb:BatchGetItem, dynamodb:BatchWriteItem]
+                Resource:
+                  - !Sub arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ResourcePrefix}-*
+                  - !Sub arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ResourcePrefix}-*/index/*
+
+Outputs:
+  ApiServiceRoleArn:
+    Value: !GetAtt ApiServiceRole.Arn
+  EcrRepositoryUri:
+    Value: !GetAtt ApiRepository.RepositoryUri
+  OidcProviderArn:
+    Value: !Ref OidcProvider
+  VpcId:
+    Value: !Ref Vpc
+  PublicSubnetIds:
+    Value: !Join [",", [!Ref PublicSubnetA, !Ref PublicSubnetB]]
+  PrivateSubnetIds:
+    Value: !Join [",", [!Ref PrivateSubnetA, !Ref PrivateSubnetB]]
+  AlbSecurityGroupId:
+    Value: !Ref AlbSecurityGroup
+  ClusterSecurityGroupId:
+    Value: !GetAtt EksCluster.ClusterSecurityGroupId
+  EksClusterName:
+    Value: !Ref EksCluster
+  EksEndpoint:
+    Value: !GetAtt EksCluster.Endpoint
+  RedisEndpoint:
+    Value: !GetAtt RedisCluster.RedisEndpoint.Address

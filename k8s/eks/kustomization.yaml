@@ -1,0 +1,11 @@
+namespace: csc3104
+resources:
+  - namespace.yaml
+  - serviceaccount.yaml
+  - fastapi.yaml
+  - ingress.yaml
+images:
+  - name: cloud-fastapi
+    # TODO: EcrRepositoryUri output from the stack, and the tag you pushed
+    newName: <ACCOUNT_ID>.dkr.ecr.ap-southeast-1.amazonaws.com/cloud-fastapi
+    newTag: v1
