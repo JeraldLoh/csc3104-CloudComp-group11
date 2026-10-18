@@ -1,0 +1,17 @@
+{
+  "reportId": "T-001#hb#2026-10-12T08:22:00Z",
+  "source": "heartbeat",
+  "travellerId": "U-042",
+  "tripId": "T-001",
+  "stepIndex": 2,
+  "problemType": "no_response",
+  "confidence": null,
+  "phi": 8.4,
+  "lastSeenAt": "2026-10-12T08:16:10Z",
+  "location": {
+    "lat": 1.4058,
+    "lng": 103.9039
+  },
+  "batteryPct": 63,
+  "timestamp": "2026-10-12T08:22:00Z"
+}
