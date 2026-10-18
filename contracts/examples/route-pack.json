@@ -1,0 +1,58 @@
+{
+  "packVersion": "R-007-v3",
+  "routeId": "R-007",
+  "routeVersion": 3,
+  "travellerName": "Alex",
+  "steps": [
+    {
+      "stepIndex": 0,
+      "mode": "walk",
+      "easyRead": "Walk to the bus stop near the playground.",
+      "lat": 1.4052,
+      "lng": 103.9024,
+      "underground": false,
+      "photoUrl": "media/R-007/step0.jpg",
+      "audioUrl": "media/R-007/step0.mp3",
+      "backup": null
+    },
+    {
+      "stepIndex": 1,
+      "mode": "bus",
+      "easyRead": "Get on bus number 190. Tap your card.",
+      "lat": 1.3935,
+      "lng": 103.8962,
+      "underground": false,
+      "photoUrl": "media/R-007/step1.jpg",
+      "audioUrl": "media/R-007/step1.mp3",
+      "backup": "If bus 190 does not come in 20 minutes, take bus 83 from the same stop."
+    }
+  ],
+  "path": [
+    [
+      1.404,
+      103.901
+    ],
+    [
+      1.4052,
+      103.9024
+    ],
+    [
+      1.3935,
+      103.8962
+    ],
+    [
+      1.392,
+      103.895
+    ]
+  ],
+  "caregiver": {
+    "name": "Sam",
+    "phone": "+65 9xxx xxxx"
+  },
+  "messages": {
+    "somethingChanged": "Something has changed. Stay where you are. Your caregiver has been told.",
+    "offRoute": "You may be going the wrong way. Stop and look at the next picture.",
+    "help": "Press the big red button if you need help."
+  },
+  "generatedAt": "2026-10-10T14:05:00Z"
+}

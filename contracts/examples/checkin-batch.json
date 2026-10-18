@@ -1,0 +1,34 @@
+{
+  "tripId": "T-001",
+  "travellerId": "U-042",
+  "checkins": [
+    {
+      "seq": 18,
+      "timestamp": "2026-10-12T08:15:40Z",
+      "lat": 1.4055,
+      "lng": 103.9031,
+      "accuracyM": 15,
+      "speedMps": null,
+      "headingDeg": null,
+      "stepIndex": 2,
+      "routeVersion": 3,
+      "batteryPct": 64,
+      "status": "active",
+      "bufferedOffline": true
+    },
+    {
+      "seq": 19,
+      "timestamp": "2026-10-12T08:15:50Z",
+      "lat": 1.4058,
+      "lng": 103.9039,
+      "accuracyM": 14,
+      "speedMps": null,
+      "headingDeg": null,
+      "stepIndex": 2,
+      "routeVersion": 3,
+      "batteryPct": 63,
+      "status": "active",
+      "bufferedOffline": true
+    }
+  ]
+}

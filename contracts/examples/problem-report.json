@@ -1,0 +1,38 @@
+{
+  "reportId": "T-001#17",
+  "source": "aggregator",
+  "travellerId": "U-042",
+  "tripId": "T-001",
+  "stepIndex": 2,
+  "problemType": "off_route",
+  "confidence": 0.81,
+  "detectorsUsed": 4,
+  "votes": [
+    {
+      "detectorId": "route-corridor",
+      "verdict": "problem",
+      "confidence": 0.85
+    },
+    {
+      "detectorId": "heading-speed",
+      "verdict": "problem",
+      "confidence": 0.78
+    },
+    {
+      "detectorId": "dwell-time",
+      "verdict": "normal",
+      "confidence": 0.6
+    },
+    {
+      "detectorId": "ml-anomaly",
+      "verdict": "problem",
+      "confidence": 0.7
+    }
+  ],
+  "location": {
+    "lat": 1.4052,
+    "lng": 103.9024
+  },
+  "batteryPct": 64,
+  "timestamp": "2026-10-12T08:15:31Z"
+}
