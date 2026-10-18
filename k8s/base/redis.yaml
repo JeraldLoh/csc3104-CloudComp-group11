@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloud-redis
+  namespace: csc3104
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: cloud-redis }
+  template:
+    metadata:
+      labels: { app: cloud-redis }
+    spec:
+      containers:
+        - name: redis
+          image: redis:latest
+          command: ["redis-server", "--appendonly", "yes"]
+          ports: [{ containerPort: 6379 }]
+          readinessProbe:
+            exec: { command: ["redis-cli", "ping"] }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+      volumes:
+        - name: redis-data
+          persistentVolumeClaim:
+            claimName: cloud-redis-pvc
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cloud-redis-pvc
+  namespace: csc3104
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests: { storage: 1Gi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cloud-redis
+  namespace: csc3104
+spec:
+  selector: { app: cloud-redis }
+  ports: [{ port: 6379, targetPort: 6379 }]
