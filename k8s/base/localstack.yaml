@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloud-localstack
+  namespace: csc3104
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: cloud-localstack }
+  template:
+    metadata:
+      labels: { app: cloud-localstack }
+    spec:
+      containers:
+        - name: localstack
+          image: localstack/localstack:latest
+          ports: [{ containerPort: 4566 }]
+          env:
+            - name: SERVICES
+              value: "s3,sqs"
+            - name: AWS_DEFAULT_REGION
+              value: "ap-southeast-1"
+            - name: LOCALSTACK_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: localstack-auth
+                  key: LOCALSTACK_AUTH_TOKEN
+          readinessProbe:
+            httpGet: { path: /_localstack/health, port: 4566 }
+            initialDelaySeconds: 10
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cloud-localstack
+  namespace: csc3104
+spec:
+  selector: { app: cloud-localstack }
+  ports: [{ port: 4566, targetPort: 4566 }]

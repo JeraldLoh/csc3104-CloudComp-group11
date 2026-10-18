@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloud-fastapi
+  namespace: csc3104
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: cloud-fastapi }
+  template:
+    metadata:
+      labels: { app: cloud-fastapi }
+    spec:
+      containers:
+        - name: cloud-fastapi
+          image: cloud-fastapi:local
+          imagePullPolicy: IfNotPresent   # important for kind - don't try to pull from a registry
+          ports: [{ containerPort: 8000 }]
+          env:
+            - name: REDIS_URL
+              value: "redis://cloud-redis:6379/0"
+            - name: AWS_ENDPOINT_URL
+              value: "http://cloud-localstack:4566"
+            - name: AWS_ACCESS_KEY_ID
+              value: "csc3104"
+            - name: AWS_SECRET_ACCESS_KEY
+              value: "csc3104"
+            - name: AWS_DEFAULT_REGION
+              value: "ap-southeast-1"
+          readinessProbe:
+            httpGet: { path: /health, port: 8000 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /health, port: 8000 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cloud-fastapi
+  namespace: csc3104
+spec:
+  type: ClusterIP
+  selector: { app: cloud-fastapi }
+  ports: [{ port: 8000, targetPort: 8000 }]
