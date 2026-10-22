@@ -2,6 +2,7 @@ namespace: csc3104
 resources:
   - namespace.yaml
   - serviceaccount.yaml
+  - aws-logging.yaml
   - fastapi.yaml
   - ingress.yaml
 images:
