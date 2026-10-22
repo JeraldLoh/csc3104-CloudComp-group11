@@ -1,109 +1,228 @@
 # csc3104-CloudComp-group11
 
-## Run locally with Docker Compose (Onboarding)
+## Architecture
 
-The local stack consists of:
+The system runs on AWS in `ap-southeast-1` (Singapore). A VPC spans two Availability Zones with public and private subnets. The public subnets hold the Application Load Balancer and a NAT gateway. The private subnets hold an EKS Fargate cluster running the microservices and an ElastiCache Redis instance for low-latency caching.
 
-- **FastAPI** at `http://localhost:8000`
-- **Redis** at `localhost:6379`
-- **LocalStack** at `http://localhost:4566`, with S3 and SQS enabled
+Infrastructure is defined as code in `cloudformation/careroute-vpc-eks-standard.yaml`. It creates the VPC, subnets, internet gateway, NAT gateway, S3 and DynamoDB gateway endpoints, security groups, ElastiCache Redis, IAM roles, the EKS cluster with Fargate profiles, and an ECR repository.
+
+## Prerequisites
+
+- [AWS CLI v2](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) configured with credentials (`aws configure`)
+- [kubectl](https://kubernetes.io/docs/tasks/tools/)
+- [Helm](https://helm.sh/docs/intro/install/) (`winget install -e --id Helm.Helm`)
+- [eksctl](https://eksctl.io/installation/) (`winget install -e --id eksctl.eksctl`)
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed and running
+
+## Deploy the infrastructure
+
+### 1. Deploy the CloudFormation stack
+
+Open the AWS Console, go to CloudFormation, and create a stack from
+`cloudformation/careroute-vpc-eks-standard.yaml`. Set `ClusterName` to `csc3104`,
+`ComputeMode` to `fargate`, and `AppPort` to `8000`. Tick the IAM acknowledgement box.
+
+Alternatively, deploy from the CLI:
+
+```powershell
+aws cloudformation create-stack `
+  --stack-name csc3104-careroute-1 `
+  --template-body file://cloudformation/careroute-vpc-eks-standard.yaml `
+  --parameters ParameterKey=ClusterName,ParameterValue=csc3104 `
+               ParameterKey=ComputeMode,ParameterValue=fargate `
+               ParameterKey=AppPort,ParameterValue=8000 `
+  --capabilities CAPABILITY_IAM `
+  --region ap-southeast-1
+```
+
+Wait for the stack to reach `CREATE_COMPLETE` (15–25 minutes):
+
+```powershell
+aws cloudformation wait stack-create-complete --stack-name csc3104-careroute-1 --region ap-southeast-1
+```
+
+### 2. Collect the stack outputs
+
+```powershell
+aws cloudformation describe-stacks --stack-name csc3104-careroute-1 --region ap-southeast-1 --query "Stacks[0].Outputs" --output table
+```
+
+Note the following values for later steps:
+
+| Output | Used in |
+|---|---|
+| `EcrRepositoryUri` | `k8s/eks/kustomization.yaml` |
+| `ApiServiceRoleArn` | `k8s/eks/serviceaccount.yaml` |
+| `RedisEndpoint` | `k8s/eks/fastapi.yaml` |
+| `AlbSecurityGroupId` | `k8s/eks/ingress.yaml` |
+| `VpcId` | Helm install of the load balancer controller |
+
+### 3. Connect kubectl to the cluster
+
+```powershell
+aws eks update-kubeconfig --region ap-southeast-1 --name csc3104
+kubectl get pods -A
+```
+
+### 4. Install the AWS Load Balancer Controller
+
+Look up the current chart and app version:
+
+```powershell
+helm repo add eks https://aws.github.io/eks-charts
+helm repo update eks
+helm search repo eks/aws-load-balancer-controller
+```
+
+Download the IAM policy matching the app version shown above:
+
+```powershell
+curl.exe -o iam_policy.json https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/<APP_VERSION>/docs/install/iam_policy.json
+aws iam create-policy `
+  --policy-name AWSLoadBalancerControllerIAMPolicy `
+  --policy-document file://iam_policy.json
+```
+
+Create the controller's service account and IAM role:
+
+```powershell
+eksctl create iamserviceaccount `
+  --cluster csc3104 `
+  --namespace kube-system `
+  --name aws-load-balancer-controller `
+  --attach-policy-arn arn:aws:iam::<ACCOUNT_ID>:policy/AWSLoadBalancerControllerIAMPolicy `
+  --override-existing-serviceaccounts `
+  --region ap-southeast-1 `
+  --approve
+```
+
+Install the Helm chart with the `VpcId` output from step 2:
+
+```powershell
+helm install aws-load-balancer-controller eks/aws-load-balancer-controller `
+  -n kube-system `
+  --set clusterName=csc3104 `
+  --set serviceAccount.create=false `
+  --set serviceAccount.name=aws-load-balancer-controller `
+  --set region=ap-southeast-1 `
+  --set vpcId=<VPC_ID> `
+  --version <CHART_VERSION>
+```
+
+Verify the controller is running (should show `2/2` ready after 1–2 minutes):
+
+```powershell
+kubectl get deployment -n kube-system aws-load-balancer-controller
+```
+
+## Deploy the application
+
+### 1. Build and push the image
+
+```powershell
+$ECR = "<ACCOUNT_ID>.dkr.ecr.ap-southeast-1.amazonaws.com"
+aws ecr get-login-password --region ap-southeast-1 | docker login --username AWS --password-stdin $ECR
+docker build --platform linux/amd64 -t "$ECR/cloud-fastapi:v1" .
+docker push "$ECR/cloud-fastapi:v1"
+```
+
+### 2. Create the AWS resources
+
+```powershell
+aws s3 mb s3://csc3104-files-<ACCOUNT_ID> --region ap-southeast-1
+aws sqs create-queue --queue-name csc3104-checkins --region ap-southeast-1
+```
+
+### 3. Fill in the placeholders
+
+Update the following files in `k8s/eks/` with the stack outputs:
+
+| File | Placeholder | Value |
+|---|---|---|
+| `kustomization.yaml` | `<ACCOUNT_ID>...` under `newName` | `EcrRepositoryUri` output |
+| `serviceaccount.yaml` | role ARN | `ApiServiceRoleArn` output |
+| `fastapi.yaml` | `<REDIS_ENDPOINT>` | `RedisEndpoint` output |
+| `ingress.yaml` | `sg-REPLACE_ME` | `AlbSecurityGroupId` output |
+
+### 4. Apply the manifests
+
+```powershell
+kubectl apply -k k8s/eks
+kubectl get pods -n csc3104 -w
+```
+
+Fargate pods take 1–2 minutes to start. Press `Ctrl+C` once both replicas show `1/1 Running`.
+
+### 5. Verify
+
+Test through the ALB:
+
+```powershell
+kubectl get ingress -n csc3104
+curl.exe http://<ALB_ADDRESS>/health
+```
+
+The ALB address appears within a few minutes. The health endpoint should return
+`{"status":"ok"}`.
+
+To confirm the IRSA role is wired up:
+
+```powershell
+kubectl exec -n csc3104 deploy/cloud-fastapi -- env | findstr AWS_
+```
+
+You should see `AWS_ROLE_ARN` and `AWS_WEB_IDENTITY_TOKEN_FILE`.
+
+## Updating the application
+
+Push a new image tag, update `newTag` in `k8s/eks/kustomization.yaml`, and reapply:
+
+```powershell
+docker build --platform linux/amd64 -t "$ECR/cloud-fastapi:v2" .
+docker push "$ECR/cloud-fastapi:v2"
+kubectl apply -k k8s/eks
+```
+
+## Teardown
+
+Delete resources in this order to avoid orphaned infrastructure:
+
+```powershell
+# 1. Remove Kubernetes resources (deletes the ALB)
+kubectl delete -k k8s/eks
+
+# 2. Uninstall the load balancer controller
+helm uninstall aws-load-balancer-controller -n kube-system
+eksctl delete iamserviceaccount --cluster csc3104 --namespace kube-system --name aws-load-balancer-controller --region ap-southeast-1
+
+# 3. Wait a few minutes for the ALB and its network interfaces to be deleted
+
+# 4. Delete the CloudFormation stack (removes VPC, EKS, Redis, IAM roles, ECR)
+aws cloudformation delete-stack --stack-name csc3104-careroute-1 --region ap-southeast-1
+aws cloudformation wait stack-delete-complete --stack-name csc3104-careroute-1 --region ap-southeast-1
+v
+# 5. Clean up resources created outside the stack
+aws s3 rb s3://csc3104-files-<ACCOUNT_ID> --force --region ap-southeast-1
+aws sqs delete-queue --queue-url <QUEUE_URL> --region ap-southeast-1
+aws iam delete-policy --policy-arn arn:aws:iam::<ACCOUNT_ID>:policy/AWSLoadBalancerControllerIAMPolicy
+```
+
+Verify nothing is still billing by checking the EC2, EKS, ElastiCache, NAT
+gateways, and Elastic IPs pages in the `ap-southeast-1` region.
+
+## Run locally with kind
+
+For local development without AWS costs, use the manifests in `k8s/local/`.
+These use LocalStack to emulate S3, SQS and DynamoDB, and run Redis as a pod
+instead of ElastiCache.
 
 ### Prerequisites
 
-- Docker Desktop installed and running, with Docker Compose available.
-- A LocalStack auth token. Obtain one from your LocalStack account.
+- Docker Desktop installed and running
+- [kubectl](https://kubernetes.io/docs/tasks/tools/) and [kind](https://kind.sigs.k8s.io/docs/user/quick-start) installed
+- A [LocalStack auth token](https://app.localstack.cloud/getting-started)
 
-### Configure the LocalStack token
-
-From the project root, create a `.env` file next to `compose.yaml` containing:
-
-```dotenv
-LOCALSTACK_AUTH_TOKEN=your-localstack-auth-token
-```
-
-Replace the example value with your token. Compose will report an error if the token is
-missing.
-
-### Start the application
-
-In PowerShell, open the project directory and run:
-
-```powershell
-docker compose up --build -d
-```
-
-The first run builds the FastAPI image and downloads the Redis and LocalStack
-images. FastAPI waits for Redis and LocalStack to pass their healthchecks before
-starting.
-
-Check service status:
-
-```powershell
-docker compose ps
-```
-
-### Verify the services
-
-Check the FastAPI health endpoint and root route:
-
-```powershell
-curl.exe http://localhost:8000/health
-curl.exe http://localhost:8000/
-```
-
-The health endpoint should return `{"status":"ok"}`. Interactive API docs are
-available at `http://localhost:8000/docs`.
-
-Check Redis from inside its container:
-
-```powershell
-docker compose exec cloud-redis redis-cli ping
-```
-
-It should respond with `PONG`.
-
-Check LocalStack from the host:
-
-```powershell
-curl.exe -f http://localhost:4566/_localstack/health
-```
-
-The endpoint should return an HTTP success response and a JSON health report.
-You can also inspect startup logs for any service:
-
-```powershell
-docker compose logs -f cloud-fastapi
-docker compose logs -f cloud-redis
-docker compose logs -f cloud-localstack
-```
-
-Press `Ctrl+C` to stop following logs.
-
-### Stop the application
-
-Stop and remove the containers and Compose network:
-
-```powershell
-docker compose down
-```
-
-Redis data is stored in the `cloud-redis-data` named volume and remains when
-containers are stopped. To also remove that volume and its data, run:
-
-```powershell
-docker compose down --volumes
-```
-
-## Run locally with Kubernetes (kind - k8s in docker for S3 & SQS testing before EKS deployment)
-
-### Prerequisites
-
-- Docker Desktop installed and running.
-- `kubectl`(https://kubernetes.io/docs/tasks/tools/) and [kind](https://kind.sigs.k8s.io/docs/user/quick-start) installed.
-- A LocalStack auth token. (https://app.localstack.cloud/getting-started)
-
-Build the FastAPI image and create a local kind cluster. The cluster only needs
-to be created once:
+### Setup
 
 ```powershell
 docker build -t cloud-fastapi:local .
@@ -111,55 +230,36 @@ kind create cluster --name csc3104-local
 kind load docker-image cloud-fastapi:local --name csc3104-local
 ```
 
-Create `.env` in the project root with your LocalStack token. The `*.env`
-pattern in `.gitignore` keeps this file out of Git:
+Create `.env` in the project root with your LocalStack token (the `*.env`
+pattern in `.gitignore` keeps it out of Git):
 
 ```dotenv
 LOCALSTACK_AUTH_TOKEN=your-localstack-auth-token
 ```
 
-Create the namespace, then create the Kubernetes Secret directly from `.env`.
-Do not put the token in a YAML manifest or commit the `.env` file:
+### Deploy
 
 ```powershell
-kubectl apply -f k8s/base/namespace.yaml
+kubectl apply -f k8s/local/namespace.yaml
 kubectl create secret generic localstack-auth --from-env-file=.env -n csc3104
-kubectl apply -k k8s/base
-```
-
-The Kustomize base deploys FastAPI (2 replicas), Redis (with a 1 GiB
-PersistentVolumeClaim), and LocalStack with S3 and SQS enabled. Wait for the
-pods to become ready:
-
-```powershell
+kubectl apply -k k8s/local
 kubectl get pods -n csc3104 -w
 ```
 
-Press `Ctrl+C` after the pods are ready. In separate terminals, forward the
-FastAPI and LocalStack services:
+### Verify
+
+In separate terminals:
 
 ```powershell
 kubectl port-forward svc/cloud-fastapi 8000:8000 -n csc3104
 ```
 
 ```powershell
-kubectl port-forward svc/cloud-localstack 4566:4566 -n csc3104
-```
-
-Verify the API from another terminal:
-
-```powershell
 curl.exe http://localhost:8000/health
-curl.exe http://localhost:8000/
 ```
 
-Check Redis and LocalStack from their pods:
+### Stop
 
 ```powershell
-kubectl exec -n csc3104 deploy/cloud-redis -- redis-cli ping
-kubectl exec -n csc3104 deploy/cloud-localstack -- curl -s http://localhost:4566/_localstack/health
+kind delete cluster --name csc3104-local
 ```
-
-Redis should respond with `PONG`; LocalStack should return a JSON health
-report. The LocalStack port-forward also makes its endpoint available at
-`http://localhost:4566`.

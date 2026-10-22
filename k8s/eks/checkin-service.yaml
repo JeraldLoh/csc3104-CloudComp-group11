@@ -1,0 +1,114 @@
+# Check-in Service (Member 2, issue 2.3) on EKS Fargate.
+# Needs the platform stack AND services/checkin-service/infra/checkin-stack.yaml deployed.
+# Fill in the three <...> placeholders (see services/checkin-service/README.md, "Deploy to AWS").
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: checkin-service
+  namespace: csc3104
+  annotations:
+    # TODO: CheckinServiceRoleArn output of the checkin-service stack.
+    # This service's own least-privilege role (IRSA): its table and queue only.
+    eks.amazonaws.com/role-arn: arn:aws:iam::<ACCOUNT_ID>:role/<CHECKIN_SERVICE_ROLE>
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: checkin-service
+  namespace: csc3104
+  labels: { app: checkin-service }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: checkin-service }
+  template:
+    metadata:
+      labels: { app: checkin-service }
+    spec:
+      serviceAccountName: checkin-service
+      # Put the two replicas in different Availability Zones where possible, so losing
+      # one zone doesn't take the service down.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: { app: checkin-service }
+      containers:
+        - name: checkin-service
+          # Replaced by the `images:` block in kustomization.yaml (ECR URI + tag)
+          image: checkin-service:local
+          ports: [{ containerPort: 8000 }]
+          env:
+            - name: REDIS_URL
+              # TODO: RedisEndpoint output of the platform stack
+              value: "redis://<REDIS_ENDPOINT>:6379/0"
+            - { name: AWS_DEFAULT_REGION, value: "ap-southeast-1" }
+            - { name: CHECKINS_TABLE, value: "careroute-checkins" }
+            - { name: CHECKINS_QUEUE, value: "careroute-checkins" }
+            - { name: CREATE_RESOURCES, value: "false" }   # the stack creates them; the role can't
+            # No AWS_ENDPOINT_URL and no access keys: boto3 uses real AWS + the IRSA role.
+            # If the app calls the API from another address (not via the Amplify /api rewrite),
+            # set CORS_ORIGINS to the app's https address.
+          # Fargate sizes the pod from requests (minimum 0.25 vCPU / 0.5 GB), so set them to that.
+          resources:
+            requests: { cpu: 250m, memory: 512Mi }
+            limits: { cpu: 250m, memory: 512Mi }
+          readinessProbe:
+            httpGet: { path: /ready, port: 8000 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /health, port: 8000 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: checkin-service
+  namespace: csc3104
+spec:
+  type: ClusterIP
+  selector: { app: checkin-service }
+  ports: [{ port: 8000, targetPort: 8000 }]
+---
+# Keep at least one replica running during voluntary disruptions (e.g. Fargate patching).
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: checkin-service
+  namespace: csc3104
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app: checkin-service }
+---
+# Shares the team's single ALB (IngressGroup "careroute") instead of creating a new one.
+# Rules run lowest group.order first; the catch-all "/" (k8s/eks/ingress.yaml) is 1000,
+# so this specific path must be lower. Each service in the group needs a unique number.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: checkin-service
+  namespace: csc3104
+  annotations:
+    alb.ingress.kubernetes.io/group.name: careroute
+    alb.ingress.kubernetes.io/group.order: "20"
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip        # required for Fargate
+    # TODO: AlbSecurityGroupId output of the platform stack (same value as ingress.yaml)
+    alb.ingress.kubernetes.io/security-groups: sg-REPLACE_ME
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+    alb.ingress.kubernetes.io/healthcheck-path: /ready
+spec:
+  ingressClassName: alb
+  rules:
+    - http:
+        paths:
+          - path: /api/checkins       # also matches /api/checkins/batch
+            pathType: Prefix
+            backend:
+              service:
+                name: checkin-service
+                port: { number: 8000 }

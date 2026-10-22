@@ -1,4 +1,8 @@
-# Check-in Service (Member 2, issue 2.3). Add "- checkin-service.yaml" to kustomization.yaml.
+# Check-in Service (Member 2, issue 2.3) on the local kind cluster.
+# Uses LocalStack (DynamoDB + SQS) and the Redis pod; creates its own table and queues on start.
+# Build and load the image first:
+#   docker build -t checkin-service:local services/checkin-service
+#   kind load docker-image checkin-service:local --name csc3104-local
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -20,13 +24,12 @@ spec:
           ports: [{ containerPort: 8000 }]
           env:
             - { name: REDIS_URL, value: "redis://cloud-redis:6379/0" }
-            - { name: AWS_ENDPOINT_URL, value: "http://cloud-localstack:4566" }   # remove on EKS
-            - { name: AWS_ACCESS_KEY_ID, value: "csc3104" }                       # remove on EKS (use IAM role)
-            - { name: AWS_SECRET_ACCESS_KEY, value: "csc3104" }                   # remove on EKS
+            - { name: AWS_ENDPOINT_URL, value: "http://cloud-localstack:4566" }
+            - { name: AWS_ACCESS_KEY_ID, value: "csc3104" }
+            - { name: AWS_SECRET_ACCESS_KEY, value: "csc3104" }
             - { name: AWS_DEFAULT_REGION, value: "ap-southeast-1" }
-            - { name: CREATE_RESOURCES, value: "true" }                           # local only; false on EKS
+            - { name: CREATE_RESOURCES, value: "true" }   # local only; on EKS the stack creates them
           resources:
-            # Requests are needed for the Horizontal Pod Autoscaler (issue 3.4) to work.
             requests: { cpu: 100m, memory: 128Mi }
             limits: { cpu: 500m, memory: 256Mi }
           # Ready = Redis, DynamoDB and SQS reachable. Not ready -> no traffic, but not restarted.

@@ -126,15 +126,25 @@ real Chrome.)
 3. Deploy. You get an `https://….amplifyapp.com` address, which also gives the phone GPS access
    (browsers only allow GPS on https).
 4. **Rewrites and redirects** (in the app's settings), add, in this order:
-   - `/api/<*>` → `https://<load balancer address>/api/<*>`, type **200 (Rewrite)**. Amplify
-     only proxies to **https** addresses, so the load balancer needs an HTTPS listener
-     (an ACM certificate). Same origin, so no CORS needed.
+   - `/api/<*>` → `https://<API address>/api/<*>`, type **200 (Rewrite)**. Same origin for the
+     browser, so no CORS needed.
    - The single-page app rule from the Amplify docs, so `/?trip=…` links always load the app:
      source `</^[^.]+$|\.(?!(css|gif|ico|jpg|js|png|txt|svg|woff|woff2|ttf|map|json|webp|webmanifest)$)([^.]+$)/>`,
      target `/index.html`, type **200 (Rewrite)**.
-5. If the load balancer has no HTTPS yet: instead of the `/api` rewrite, set the environment
-   variable `VITE_API_BASE` to the load balancer's address, redeploy, and set `CORS_ORIGINS` on the
-   Check-in Service to the Amplify address.
+
+**The API address must be https.** The Amplify page is https, and browsers block an https page
+from calling an `http://` address ("mixed content"); Amplify's rewrite also only forwards to https.
+The team's load balancer currently listens on HTTP only (`k8s/eks/ingress.yaml`), so it needs
+HTTPS in front of it first. Two ways:
+
+- **CloudFront in front of the load balancer** (no domain needed): a distribution with the ALB as
+  an HTTP origin gives an `https://xxxx.cloudfront.net` address with AWS's own certificate. It
+  must allow all methods (POST), have caching disabled, and forward the viewer's headers
+  (`Authorization`, `Content-Type`). Use that address in the rewrite above.
+- **An HTTPS listener on the ALB:** needs a domain name the team controls and an ACM certificate.
+
+Alternatively, set `VITE_API_BASE` to the https API address at build time (Amplify environment
+variable) and `CORS_ORIGINS` on the services to the Amplify address; it still has to be https.
 
 `customHttp.yml` stops browsers caching `sw.js` and `index.html` (otherwise phones would keep an
 old version of the app) and lets the hashed files in `/assets` be cached for a year.

@@ -1,0 +1,18 @@
+{
+  "event": "incident.opened",
+  "incident": {
+    "incidentId": "U-042#T-001#off_route#2",
+    "travellerId": "U-042",
+    "travellerName": "Alex",
+    "problemType": "off_route",
+    "severity": "normal",
+    "state": "open",
+    "message": "Alex may have gone off route near Punggol.",
+    "lastLocation": {
+      "lat": 1.4052,
+      "lng": 103.9024
+    },
+    "createdAt": "2026-10-12T08:15:31Z"
+  },
+  "sentAt": "2026-10-12T08:15:32Z"
+}

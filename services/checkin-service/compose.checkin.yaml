@@ -22,11 +22,9 @@ services:
         condition: service_healthy
 
   cloud-localstack:
-    environment:
-      # compose.yaml only starts s3,sqs; this service also needs DynamoDB.
-      SERVICES: s3,sqs,dynamodb
-    # Newer LocalStack images don't include curl, so compose.yaml's health check
-    # can never pass. Check with Python instead, and allow time for startup.
+    # compose.yaml's health check runs curl, which newer LocalStack images don't include,
+    # so it never passes and nothing that waits for LocalStack starts. Check with Python
+    # instead, and allow time for startup. (Remove once compose.yaml is fixed.)
     healthcheck:
       test: python3 -c "import urllib.request as u; u.urlopen('http://localhost:4566/_localstack/health', timeout=2)"
       interval: 5s

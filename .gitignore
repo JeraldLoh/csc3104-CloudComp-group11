@@ -25,6 +25,9 @@ dist/
 
 # Common build output
 build/
-.venv/
-__pycache__/
+
+# AWS
+iam_policy.json
+
+# pytest
 .pytest_cache/
