@@ -62,7 +62,8 @@ b2 = [run("E1-batch-budget-off"), run("E1-batch-budget-on")]
 if all(b2):
     pcts = [100 * (r["made"] - r["still_on_phone_at_end"] - r["lost"]) / r["made"] for r in b2]
     w(f"- **Retry storm found and fixed**: after a 5-minute outage, with no time limit on batches only "
-      f"{f(pcts[0], 0, '%')} of check-ins were acknowledged by the end; with the 1 s limit, {f(pcts[1], 0, '%')}.")
+      f"{f(pcts[0], 0, '%')} of check-ins were acknowledged to the phones by the end, although the server had stored "
+      f"{f(100 * b2[0]['stored'] / b2[0]['made'], 0, '%')}; with the 1 s limit, {f(pcts[1], 0, '%')}.")
 e2 = S.get("E2") or {}
 if e2.get("lockstep") and e2.get("full"):
     lk, fu = e2["lockstep"], e2["full"]
@@ -97,6 +98,10 @@ for key in sorted(S["E1"], key=lambda k: (int(k.split("min")[0]), k.split("-")[1
     w(f"| {minutes.replace('min', ' min')} | {app} | {mr(r['lost_pct'], 1, '%')} | {mr(r['queue_extra_copies_pct'], 1, '%')} | "
       f"{mr(r['trips_out_of_order'], 0)} | {mr(r['stuck_on_server'], 0)} | {mr(r['still_on_phone_at_end'], 0)} | {delay} | "
       f"{mr(r['requests_per_checkin'], 2)} |")
+w("\nThe delay column is measured from when the check-in was made, so it includes the outage itself. "
+  "After the signal returned, the scaled runs took longer to catch up than real time would: the 1:10 clock "
+  "also makes the catch-up load 10 times heavier for the local emulator. The full-length run below is the "
+  "realistic catch-up figure.")
 w("\n![E1](figures/e1-loss.png)\n")
 
 real = run("E1-real-5min-outbox")
@@ -104,8 +109,9 @@ if real:
     w("**Full-length check (E1-real, no time scaling, 50 phones, 10 s heartbeat, 5-minute outage):** "
       f"{real['made']} check-ins made, {real['lost']} lost, {real['stuck_on_server']} stuck, "
       f"{real['still_on_phone_at_end']} left on phones, {real['trips_out_of_order']} trips out of order, "
-      f"{f(real['queue_extra_copies_pct'], 1, '%')} extra queue copies; check-ins made offline were delivered a median "
-      f"{f(real['delay_s_outage_p50'], 0, ' s')} after they were made (max {f(real['delay_s_outage_max'], 0, ' s')}).\n")
+      f"{f(real['queue_extra_copies_pct'], 1, '%')} extra queue copies. Check-ins made offline reached the server a median "
+      f"{f(real['catchup_s_p50'], 0, ' s')} after the signal returned (max {f(real['catchup_s_max'], 0, ' s')}): the random "
+      f"backoff the phone was in when the signal came back, then one batch.\n")
 
 rs = [run("E1-restart-indexeddb"), run("E1-restart-memory")]
 if all(rs):
@@ -119,11 +125,16 @@ if all(rs):
 b = [run("E1-batch-budget-off"), run("E1-batch-budget-on")]
 if all(b):
     w("## E1-budget: the retry storm found during this evaluation\n")
-    w("| Server batch time limit | Check-ins acknowledged by the end | Left on phones | Requests |")
-    w("|---|---|---|---|")
+    w("| Server batch time limit | Stored and queued on the server | Acknowledged to the phone by the end | Left on phones | Extra queue copies | Requests |")
+    w("|---|---|---|---|---|---|")
     for label, r in zip(("none", "1 s (current design)"), b):
         acked = r["made"] - r["still_on_phone_at_end"] - r["lost"]
-        w(f"| {label} | {f(100 * acked / r['made'], 0, '%')} | {r['still_on_phone_at_end']} | {r['requests']} |")
+        w(f"| {label} | {f(100 * r['queued_unique'] / r['made'], 0, '%')} | {f(100 * acked / r['made'], 0, '%')} | "
+          f"{r['still_on_phone_at_end']} | {r['queue_extra_copies']} | {r['requests']} |")
+    w("\nWithout a limit the server did store and queue every check-in, but each big catch-up batch took longer "
+      "than the phone's timeout, so the phone gave up, resent the same batch (making duplicate work and extra queue "
+      "copies), and never heard back: a retry storm that keeps itself going. With the limit every answer comes within about a second and says how many it "
+      "handled (`processed`).")
     w("\n![E1-budget](figures/e1-retry-storm.png)\n")
 
 # ------------------------------------------------------------------ E2
@@ -153,11 +164,16 @@ if S.get("E3"):
         if v:
             w(f"| {label} | {v['stuck_peak']} | {v['stuck_end']} | "
               f"{f(v['takeover_s'] * SCALE, 0, ' s (lease 30 s)') if v['takeover_s'] is not None else '–'} |")
-    for key, label in (("off", "off"), ("on", "on"), ("on-leader-killed", "on-leader-killed")):
-        r = run(f"E3-cleanup-{label}")
+    w("")
+    for key, label in (("off", "Clean-up off"), ("on", "Clean-up on"), ("on-leader-killed", "Leader killed")):
+        r = run(f"E3-cleanup-{key}")
         if r:
-            w(f"\n- {label}: {r['made']} made, {r['lost']} lost from live phones, {r['stuck_on_server']} stuck, "
-              f"{r['queued_unique']} reached the queue, {r['still_on_phone_at_end']} left on live phones.")
+            w(f"- {label}: {r['made']} check-ins made (all stored), {r['queued_unique']} reached the queue, "
+              f"{r['stuck_on_server']} stuck; {r['lost']} lost from phones that stayed alive.")
+    w("\nThe stuck count goes up and down during a run because a check-in is briefly \"stuck\" between being stored "
+      "and being queued, and a failed queue send leaves it so until the phone retries or the clean-up task "
+      "(after 30 s) finishes it. What matters is the end: only check-ins from phones that died stay stuck, "
+      "and only without the clean-up task.")
     w("\n![E3](figures/e3-cleanup.png)\n")
 
 # ------------------------------------------------------------------ E4

@@ -66,14 +66,17 @@ def core(d) -> dict:
 
     # Delay from the phone making a check-in to the server accepting it (phone clock).
     out = d["config"].get("outages") or []
-    during, normal = [], []
+    during, normal, catchup = [], [], []
     for p in d["phones"]:
         for g in p["generated"]:
             a = p["acked"].get(str(g["seq"]))
             if a is None:
                 continue
             delay = (a - g["t"]) / 1000
-            (during if any(o["startMs"] <= g["t"] < o["endMs"] for o in out) else normal).append(delay)
+            hit = next((o for o in out if o["startMs"] <= g["t"] < o["endMs"]), None)
+            (during if hit else normal).append(delay)
+            if hit:
+                catchup.append(max(0.0, (a - hit["endMs"]) / 1000))  # time after the signal came back
 
     attempts = d["attempts"]
     return {
@@ -96,6 +99,8 @@ def core(d) -> dict:
         "delay_s_normal_p95": quantile(normal, 0.95),
         "delay_s_outage_p50": quantile(during, 0.5),
         "delay_s_outage_max": max(during) if during else None,
+        "catchup_s_p50": quantile(catchup, 0.5),
+        "catchup_s_max": max(catchup) if catchup else None,
     }
 
 
@@ -229,7 +234,8 @@ def main() -> None:
             summary["E1"].setdefault(f"{minutes}-{kind}", []).append(row)
     summary["E1"] = {k: {m: mean_range(rows, m) for m in ("lost_pct", "queue_extra_copies_pct", "trips_out_of_order",
                                                          "stuck_on_server", "still_on_phone_at_end", "requests_per_checkin",
-                                                         "delay_s_outage_p50", "delay_s_outage_max", "delay_s_normal_p95")}
+                                                         "delay_s_outage_p50", "delay_s_outage_max", "delay_s_normal_p95",
+                                                         "catchup_s_p50", "catchup_s_max")}
                      for k, rows in summary["E1"].items()}
     for v in ("lockstep", "jitter-retries", "full"):
         if (RESULTS / f"E2-{v}.json").exists():

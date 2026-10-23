@@ -105,11 +105,16 @@ def fig_e1_budget():
         ys.append(ys[-1])
         last_x = max(last_x, xs[-1])
         ax.step(xs, ys, where="post", color=colour, linestyle=style, linewidth=1.8)
-        ax.text(xs[-1], ys[-1] + (3 if d is on else -3), f"{label}: {ys[-1]:.0f}%", ha="right",
+        note = f"{label}: {ys[-1]:.0f}%"
+        if d is off:  # the paradox: the server had stored them, the phones never heard back
+            stored = len({(x["tripId"], x["seq"]) for x in d["truth"]["stored"]})
+            made = sum(len(p["generated"]) for p in d["phones"])
+            note += f"\n(yet the server had stored {100 * stored / made:.0f}%)"
+        ax.text(xs[-1], ys[-1] + (3 if d is on else -3), note, ha="right",
                 va="bottom" if d is on else "top", color=INK, fontsize=7)
     ax.set_xlim(0, last_x)
     ax.set_ylim(0, 105)
-    ax.set_xlabel("Seconds after the signal returns")
+    ax.set_xlabel("Seconds after the signal returns (real-world equivalent)")
     ax.set_ylabel("Check-ins acknowledged (%)")
     save(fig, "e1-retry-storm")
 
