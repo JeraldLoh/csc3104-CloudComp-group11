@@ -63,7 +63,9 @@ class CheckinService:
         self.state = state
         self.queue = queue
 
-    def ingest(self, c: Checkin, now: datetime | None = None) -> Outcome:
+    def ingest(self, c: Checkin, now: datetime | None = None, live: bool = True) -> Outcome:
+        """`live`: this check-in arrived on its own, in the phone's normal rhythm, so its
+        arrival counts as a heartbeat interval. Batches pass live=False (see ingest_batch)."""
         now = now or datetime.now(timezone.utc)
         result = self.store.put_new(c, received_at=iso_ms(now))
 
@@ -71,7 +73,7 @@ class CheckinService:
             metrics.CHECKINS.labels("duplicate").inc()
             return Outcome.DUPLICATE
 
-        if result.created and not c.bufferedOffline:
+        if live and result.created and not c.bufferedOffline:
             self.state.heartbeat(c.tripId, now, record_interval=True)
 
         self.finish(c)
@@ -134,7 +136,12 @@ class CheckinService:
         for c in items:
             if budget_s is not None and counts.processed > 0 and time.monotonic() - start >= budget_s:
                 break
-            counts.add(self.ingest(c, now=now))
+            # A batch means the phone was behind (offline, or waiting out a backoff); it can
+            # also hold fresh check-ins made during that wait. They all arrive at the same
+            # instant, so counting them as heartbeats would record gaps of 0 ms and distort
+            # the interval history the failure detector learns from. Only lastseen is
+            # refreshed below.
+            counts.add(self.ingest(c, now=now, live=False))
         if counts.processed:
             # The phone is reachable again. Refresh lastseen so the Heartbeat Monitor
             # stops suspecting it, but don't record the offline gap as a normal interval.

@@ -311,7 +311,7 @@ def e3(quick: bool) -> None:
     phones die at their first failure. Clean-up task off / on / on with the leader killed."""
     server = {"FAULT_SEND_FAIL_RATE": 0.2, "RECONCILE_INTERVAL_S": 0.5, "RECONCILE_GRACE_S": 2,
               "LEADER_LEASE_MS": 3000}
-    phones = base_phones(tripPrefix="T-E3", durationMs=scaled(300_000), drainMs=scaled(60_000),
+    phones = base_phones(tripPrefix="T-E3", durationMs=scaled(300_000), drainMs=scaled(180_000),
                          dieOnFailureFraction=0.3)
     run_one("E3-cleanup-off", {**phones, "tripPrefix": "T-E3off"}, replicas=2,
             server_env={**server, "RECONCILER_ENABLED": "false"}, settle_ms=8000, sample=True)

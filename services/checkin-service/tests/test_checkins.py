@@ -337,3 +337,15 @@ def test_batch_endpoint_reports_processed(env):
     batch = {"tripId": "T-001", "travellerId": "U-042", "checkins": [
         {k: v for k, v in checkin(s).items() if k not in ("tripId", "travellerId")} for s in (1, 2, 3)]}
     assert env.client.post("/api/checkins/batch", json=batch).json()["processed"] == 3
+
+
+def test_fresh_checkins_inside_a_batch_are_not_heartbeat_intervals(env):
+    """A phone catching up sends buffered AND fresh check-ins in one batch. They all
+    arrive at once, so they must not be recorded as (0 ms) heartbeat intervals."""
+    env.client.post("/api/checkins", json=checkin(1))
+    env.client.post("/api/checkins", json=checkin(2))
+    assert env.r.llen("hb:T-001:intervals") == 1
+    items = [{k: v for k, v in checkin(s, bufferedOffline=(s < 6)).items() if k not in ("tripId", "travellerId")}
+             for s in range(3, 9)]  # 3-5 buffered, 6-8 fresh
+    env.client.post("/api/checkins/batch", json={"tripId": "T-001", "travellerId": "U-042", "checkins": items})
+    assert env.r.llen("hb:T-001:intervals") == 1

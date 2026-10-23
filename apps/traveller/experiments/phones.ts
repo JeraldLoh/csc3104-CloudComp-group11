@@ -45,6 +45,9 @@ interface Config {
   persistent?: boolean; // outbox survives the restart (IndexedDB) or not (memory)
   dieOnFailureFraction?: number; // share of phones whose battery dies at their first failed send
   startTogether?: boolean; // all phones tick in step (worst case) instead of random phases
+  /** Like the AWS load balancer's health checks: a replica that refuses connections stops
+   *  getting requests this long after its first failure (default 3 s = 30 s unscaled). */
+  lbHealthCheckMs?: number;
 }
 
 interface Attempt {
@@ -83,6 +86,15 @@ function netDown(phone: number, mode?: Outage["mode"]): boolean {
   );
 }
 
+/** When each replica first refused a connection (load balancer health-check model). */
+const firstFailure = new Map<string, number>();
+
+function healthyReplicas(): string[] {
+  const after = cfg.lbHealthCheckMs ?? 3000;
+  const ok = cfg.baseUrls.filter((u) => !firstFailure.has(u) || now() - firstFailure.get(u)! < after);
+  return ok.length ? ok : cfg.baseUrls;
+}
+
 /** fetch through the simulated network, spread over the replicas like a load balancer. */
 function phoneFetch(phone: number): typeof fetch {
   return (async (path: string | URL | Request, init?: RequestInit) => {
@@ -94,8 +106,15 @@ function phoneFetch(phone: number): typeof fetch {
         sig?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
       });
     }
-    const base = cfg.baseUrls[rr++ % cfg.baseUrls.length];
-    return fetch(base + String(path), init);
+    const targets = healthyReplicas();
+    const base = targets[rr++ % targets.length];
+    try {
+      return await fetch(base + String(path), init);
+    } catch (e) {
+      // Connection refused: the replica is down. (Timeouts are AbortErrors; not counted.)
+      if ((e as Error).name !== "AbortError" && !firstFailure.has(base)) firstFailure.set(base, now());
+      throw e;
+    }
   }) as typeof fetch;
 }
 
