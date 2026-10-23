@@ -7,6 +7,8 @@
 //  * Oldest first. Up to date: a single check-in goes to /api/checkins. Behind
 //    (several waiting, or any marked buffered): they go together to
 //    /api/checkins/batch, which is one request instead of hundreds after a tunnel.
+//    A busy server may answer for only the oldest part of a batch ("processed"); the
+//    rest go in the next request, so every request finishes quickly and makes progress.
 //  * Failed sends retry with exponential backoff plus "full jitter": wait a random
 //    time between 0 and min(cap, base * 2^n). The randomness stops hundreds of phones
 //    that lost signal at the same moment (a train in a tunnel) from all retrying at
@@ -207,7 +209,10 @@ export class Sender {
     switch (r.kind) {
       case "ok": {
         const ack = asAck(r.body);
-        await this.d.outbox.remove(items);
+        // A busy server may handle only the oldest part of a batch (its time budget ran
+        // out): remove exactly those; the loop sends the rest straight away.
+        const done = ack.processed === undefined ? items : items.slice(0, Math.max(0, ack.processed));
+        await this.d.outbox.remove(done);
         this.update({
           sent: this.state.sent + ack.accepted,
           duplicates: this.state.duplicates + ack.duplicates,

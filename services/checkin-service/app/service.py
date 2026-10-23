@@ -20,6 +20,7 @@ If the phone never retries (its battery died right after a failed attempt), the 
 task (reconciler.py) finds the stuck item and finishes steps 3-5 for it instead.
 """
 import logging
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import Enum
@@ -43,15 +44,17 @@ class Outcome(str, Enum):
 class Counts:
     accepted: int = 0
     duplicates: int = 0
+    processed: int = 0   # how many of the request's check-ins (oldest first) were handled
 
     def add(self, o: Outcome) -> None:
+        self.processed += 1
         if o is Outcome.DUPLICATE:
             self.duplicates += 1
         else:
             self.accepted += 1
 
     def body(self) -> dict:
-        return {"accepted": self.accepted, "duplicates": self.duplicates}
+        return {"accepted": self.accepted, "duplicates": self.duplicates, "processed": self.processed}
 
 
 class CheckinService:
@@ -114,14 +117,25 @@ class CheckinService:
             self.state.heartbeat(c.tripId, datetime.now(timezone.utc), record_interval=False)
         return counts
 
-    def ingest_batch(self, items: list[Checkin]) -> Counts:
+    def ingest_batch(self, items: list[Checkin], budget_s: float | None = None) -> Counts:
         """Items arrive sorted oldest first. If one fails, the error propagates (503);
-        the app resends the whole batch and the ones already done count as duplicates."""
+        the app resends the whole batch and the ones already done count as duplicates.
+
+        Time budget: stop starting new items once `budget_s` has passed (always doing at
+        least one) and report how many were processed; the app removes exactly those and
+        sends the rest next. Without this, a big catch-up batch on a busy server can take
+        longer than the phone's timeout: the phone resends the same batch while the server
+        is still working on the abandoned one, and every phone does the same, so the
+        server stays busy but no phone ever gets an answer (a retry storm that sustains
+        itself). With it, every request answers in about `budget_s` and always makes progress."""
         now = datetime.now(timezone.utc)
+        start = time.monotonic()
         counts = Counts()
         for c in items:
+            if budget_s is not None and counts.processed > 0 and time.monotonic() - start >= budget_s:
+                break
             counts.add(self.ingest(c, now=now))
-        if items:
+        if counts.processed:
             # The phone is reachable again. Refresh lastseen so the Heartbeat Monitor
             # stops suspecting it, but don't record the offline gap as a normal interval.
             self.state.heartbeat(items[0].tripId, now, record_interval=False)

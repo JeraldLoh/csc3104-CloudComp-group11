@@ -264,3 +264,37 @@ describe("retryDelay", () => {
     expect(retryDelay(1, 5000, () => 0, 1000, 60_000)).toBe(5000);
   });
 });
+
+describe("partial batch answers", () => {
+  it("removes only what the server processed and sends the rest next", async () => {
+    let online = false;
+    const { outbox, transport, sender } = await setup({ online: () => online });
+    for (let i = 0; i < 10; i++) await outbox.enqueue(draft(), { offline: true });
+    let calls = 0;
+    transport.respond = (c) => {
+      calls++;
+      const n = c.kind === "batch" ? c.batch.checkins.length : 1;
+      const processed = Math.min(n, 4); // server's time budget: 4 at a time
+      return { kind: "ok", body: { accepted: processed, duplicates: 0, processed } };
+    };
+    online = true;
+    await sender.retryNow();
+    expect(calls).toBe(3); // 4 + 4 + 2
+    expect(await outbox.count()).toBe(0);
+    expect(sender.state.sent).toBe(10);
+    // Each request starts with the oldest unprocessed check-in, so what the server
+    // processed (the first 4 of each) covers all ten, once each, in order.
+    const processed = transport.calls.flatMap((c) => (c.kind === "batch" ? c.batch.checkins.slice(0, 4).map((x) => x.seq) : []));
+    expect(processed).toHaveLength(10);
+    expect(processed).toEqual([...processed].sort((a, b) => a - b));
+    expect(new Set(processed).size).toBe(10);
+  });
+
+  it("an older server without 'processed' still means everything was handled", async () => {
+    const { outbox, transport, sender } = await setup();
+    transport.respond = () => ({ kind: "ok", body: { accepted: 1, duplicates: 0 } });
+    await outbox.enqueue(draft(), { offline: false });
+    await sender.flush();
+    expect(await outbox.count()).toBe(0);
+  });
+});

@@ -104,5 +104,9 @@ export class HttpTransport implements Transport {
 
 export function asAck(body: unknown): CheckinAck {
   const b = (body ?? {}) as Partial<CheckinAck>;
-  return { accepted: b.accepted ?? 0, duplicates: b.duplicates ?? 0 };
+  return {
+    accepted: b.accepted ?? 0,
+    duplicates: b.duplicates ?? 0,
+    processed: typeof b.processed === "number" ? b.processed : undefined,
+  };
 }

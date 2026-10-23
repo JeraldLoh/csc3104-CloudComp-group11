@@ -15,6 +15,7 @@ from app import aws_resources
 from app.config import Settings
 from app.live_state import LiveState
 from app.main import create_app
+from app.models import CheckinBatch
 from app.queue import CheckinQueue
 from app.service import CheckinService
 from app.store import CheckinStore
@@ -86,7 +87,7 @@ def env():
 def test_checkin_is_stored_queued_and_visible_in_redis(env):
     res = env.client.post("/api/checkins", json=checkin(17))
     assert res.status_code == 202
-    assert res.json() == {"accepted": 1, "duplicates": 0}
+    assert res.json() == {"accepted": 1, "duplicates": 0, "processed": 1}
 
     item = env.table.get_item(Key={"tripId": "T-001", "seq": 17})["Item"]
     assert item["enqueued"] is True and "expiresAt" in item
@@ -114,7 +115,7 @@ def test_retry_of_same_seq_is_ignored(env):
     env.client.post("/api/checkins", json=checkin(17))
     res = env.client.post("/api/checkins", json=checkin(17))
     assert res.status_code == 202
-    assert res.json() == {"accepted": 0, "duplicates": 1}
+    assert res.json() == {"accepted": 0, "duplicates": 1, "processed": 1}
     assert len(env.messages()) == 1
     assert env.r.llen("trip:T-001:recent") == 1
 
@@ -132,7 +133,7 @@ def test_failure_after_storing_is_finished_by_the_retry(env, monkeypatch):
 
     monkeypatch.setattr(env.service.queue, "send", real_send)
     retry = env.client.post("/api/checkins", json=checkin(17))
-    assert retry.status_code == 202 and retry.json() == {"accepted": 1, "duplicates": 0}
+    assert retry.status_code == 202 and retry.json() == {"accepted": 1, "duplicates": 0, "processed": 1}
     assert [m["seq"] for m in env.messages()] == [17]
     assert env.table.get_item(Key={"tripId": "T-001", "seq": 17})["Item"]["enqueued"] is True
     # The heartbeat was counted once, on the first attempt.
@@ -144,7 +145,7 @@ def test_redis_down_returns_503_and_retry_recovers(env, monkeypatch):
     monkeypatch.setattr(env.service.state, "apply", lambda c: (_ for _ in ()).throw(ConnectionError("redis down")))
     assert env.client.post("/api/checkins", json=checkin(5)).status_code == 503
     monkeypatch.setattr(env.service.state, "apply", real_apply)
-    assert env.client.post("/api/checkins", json=checkin(5)).json() == {"accepted": 1, "duplicates": 0}
+    assert env.client.post("/api/checkins", json=checkin(5)).json() == {"accepted": 1, "duplicates": 0, "processed": 1}
     assert env.r.get("trip:T-001:lastseq") == b"5"
 
 
@@ -179,7 +180,7 @@ def test_batch_after_offline(env):
     }
     res = env.client.post("/api/checkins/batch", json=batch)
     assert res.status_code == 202
-    assert res.json() == {"accepted": 2, "duplicates": 1}
+    assert res.json() == {"accepted": 2, "duplicates": 1, "processed": 3}
 
     msgs = env.messages()
     assert sorted(m["seq"] for m in msgs) == [18, 19]
@@ -310,3 +311,29 @@ def test_metrics_endpoint_reports_outcomes_and_lag(env):
     assert 'checkin_checkins_total{outcome="duplicate"}' in text
     assert 'checkin_delivery_lag_seconds_count{kind="live"}' in text
     assert 'checkin_http_requests_total{path="/api/checkins",status="202"}' in text
+
+
+# ---------- time-limited batches ----------
+
+def test_batch_stops_at_its_time_budget_and_says_how_many_it_did(env):
+    """A catch-up batch on a busy server must answer before the phone's timeout,
+    so it does what fits in the budget (at least one) and reports how many."""
+    items = [{k: v for k, v in checkin(s, timestamp=ts(60 - s), bufferedOffline=True).items()
+              if k not in ("tripId", "travellerId")} for s in range(1, 11)]
+    batch = {"tripId": "T-001", "travellerId": "U-042", "checkins": items}
+    svc = env.service
+    first = svc.ingest_batch(CheckinBatch.model_validate(batch).expand(), budget_s=0)
+    assert first.body() == {"accepted": 1, "duplicates": 0, "processed": 1}   # always makes progress
+    assert [m["seq"] for m in env.messages()] == [1]                           # oldest first
+
+    # The phone sends the other nine next; with time to spare they all go through.
+    batch["checkins"] = items[1:]
+    rest = svc.ingest_batch(CheckinBatch.model_validate(batch).expand(), budget_s=5)
+    assert rest.body() == {"accepted": 9, "duplicates": 0, "processed": 9}
+    assert env.r.get("trip:T-001:lastseq") == b"10"
+
+
+def test_batch_endpoint_reports_processed(env):
+    batch = {"tripId": "T-001", "travellerId": "U-042", "checkins": [
+        {k: v for k, v in checkin(s).items() if k not in ("tripId", "travellerId")} for s in (1, 2, 3)]}
+    assert env.client.post("/api/checkins/batch", json=batch).json()["processed"] == 3

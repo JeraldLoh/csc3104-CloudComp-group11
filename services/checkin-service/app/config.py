@@ -40,6 +40,9 @@ class Settings:
     # requests until the phone gives up. Keep below the thread pool size (40).
     max_in_flight: int = field(default_factory=lambda: int(os.getenv("MAX_IN_FLIGHT", "32")))
     retry_after_s: int = field(default_factory=lambda: int(os.getenv("RETRY_AFTER_S", "2")))
+    # Batches stop starting new check-ins after this long and report how many they did
+    # (service.ingest_batch). Must stay well under the phone's request timeout (8 s).
+    batch_budget_ms: int = field(default_factory=lambda: int(os.getenv("BATCH_BUDGET_MS", "1000")))
     # Background clean-up task (reconciler.py): finishes check-ins whose phone never retried.
     reconciler_enabled: bool = field(default_factory=lambda: _bool("RECONCILER_ENABLED", True))
     reconcile_interval_s: float = field(default_factory=lambda: float(os.getenv("RECONCILE_INTERVAL_S", "15")))

@@ -31,6 +31,9 @@ export interface CheckinBatch {
 export interface CheckinAck {
   accepted: number;
   duplicates: number;
+  /** How many of the sent check-ins (oldest first) the server handled. A busy server
+   *  stops a batch after its time budget; the rest are sent next. Missing = all. */
+  processed?: number;
 }
 
 export interface RoutePackStep {

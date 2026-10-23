@@ -7,11 +7,13 @@ GET  /ready               readiness: Redis, DynamoDB and SQS are reachable
 GET  /metrics             Prometheus metrics
 """
 import logging
+import os
 import time
 from contextlib import asynccontextmanager
 
 import boto3
 import redis
+from botocore.config import Config
 from fastapi import Depends, FastAPI, Header, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,12 +30,15 @@ from .reconciler import LeaderLease, Reconciler, replica_id
 from .service import CheckinService
 from .store import CheckinStore
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("checkin")
 
 
 def build_service(s: Settings) -> CheckinService:
-    aws = dict(region_name=s.aws_region, endpoint_url=s.aws_endpoint_url)
+    # boto3 keeps 10 connections by default, but up to MAX_IN_FLIGHT requests (default 32)
+    # run at once; with too few, connections are thrown away and re-opened under load.
+    pool = Config(max_pool_connections=s.max_in_flight + 8, retries={"mode": "standard"})
+    aws = dict(region_name=s.aws_region, endpoint_url=s.aws_endpoint_url, config=pool)
     if s.create_resources:
         aws_resources.ensure_table(boto3.client("dynamodb", **aws), s.table_name)
         aws_resources.ensure_queues(boto3.client("sqs", **aws), s.queue_name)
@@ -151,7 +156,7 @@ def create_app(service: CheckinService | None = None, s: Settings = default_sett
 
     @app.post("/api/checkins/batch", status_code=202, dependencies=[Depends(require_token)])
     def post_batch(body: CheckinBatch, request: Request):
-        return request.app.state.service.ingest_batch(body.expand()).body()
+        return request.app.state.service.ingest_batch(body.expand(), budget_s=s.batch_budget_ms / 1000).body()
 
     @app.get("/health")
     def health():
