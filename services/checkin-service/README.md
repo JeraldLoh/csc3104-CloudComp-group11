@@ -10,10 +10,15 @@ Coordinator. Matches `contracts/` exactly.
 | POST | `/api/checkins/batch` | `checkin-batch.json` | `202 {"accepted": n, "duplicates": m}` |
 | GET | `/health` | | `200 {"status": "ok"}` (liveness) |
 | GET | `/ready` | | `200` if Redis, DynamoDB and SQS are reachable, else `503` (readiness) |
+| GET | `/metrics` | | Prometheus metrics (see below) |
+
+The batch answer also says how many check-ins it handled, oldest first:
+`{"accepted": 18, "duplicates": 2, "processed": 20}` (see "Time-limited batches").
 
 Errors use the contract format `{"error": {"code": ..., "message": ...}}`:
 `422 invalid_request` (bad body, fix it, don't retry), `503 unavailable` (keep it in the outbox and retry),
-`401 unauthorized` (only when `AUTH_REQUIRED=true`).
+`503 overloaded` with a `Retry-After` header (this replica is at capacity; retry after that many
+seconds), `401 unauthorized` (only when `AUTH_REQUIRED=true`).
 
 ## Run it
 
@@ -70,9 +75,67 @@ on a real Redis, set `TEST_REDIS_URL=redis://localhost:6379/15` (the tests wipe 
 5. **Mark `enqueued = true`** on the DynamoDB item.
 
 If any step fails, the app gets `503` and retries. The retry finds the item with `enqueued = false`
-and finishes steps 3 to 5, which are all safe to repeat. So no check-in is lost, and no one has to
-repair anything by hand. The trade-off is that the Coordinator can occasionally receive a check-in
-twice, which `contracts/queues.md` already tells it to ignore.
+and finishes steps 3 to 5, which are all safe to repeat. The trade-off is that the Coordinator can
+occasionally receive a check-in twice, which `contracts/queues.md` already tells it to ignore.
+
+If the phone never retries (battery died), the **background clean-up task** below finishes it.
+Either way, no check-in that reached the server is lost, and nobody repairs anything by hand.
+
+## Background clean-up task (leader-elected)
+
+Every 15 s, one replica looks for check-ins stored more than 30 s ago that never reached the queue,
+and finishes them (`app/reconciler.py`).
+
+- **Finding them cheaply.** Unfinished items carry `pending = "P"`; marking one as queued removes it.
+  The DynamoDB index `pending-index` (on `pending` + `receivedAt`) contains only items that have
+  that attribute (a *sparse index*), so it stays tiny however large the table grows, and one query
+  lists the stuck ones. The index lags the table slightly, so each item is re-read before acting.
+- **One replica at a time: a leader lease in Redis.** Each round a replica takes or renews the key
+  `lock:checkin-reconciler` (`SET NX PX 45000` to take it; a Lua compare-and-renew to keep it). The
+  holder is the leader. If it crashes, the lease expires and another replica takes over within about
+  45 s + one round; a normal shutdown deletes the key (Lua compare-and-delete) so the next replica
+  takes over at once.
+- **The lease is for efficiency, not correctness.** No lease can promise two leaders never overlap
+  (a leader frozen past its lease wakes up still believing it leads). Rather than depend on that,
+  finishing a check-in is idempotent: the Redis update only moves forward, marking it queued can be
+  repeated, and the Coordinator ignores a repeated tripId + seq. Two leaders at once cost at most a
+  duplicate queue message (Kleppmann, *How to do distributed locking*, 2016).
+- **The grace period** (30 s) leaves in-flight requests and quick phone retries to finish their own work.
+
+## Overload protection
+
+Each replica handles at most `MAX_IN_FLIGHT` (32) `/api` requests at once. Beyond that it answers
+`503 overloaded` with `Retry-After: 2` straight away, instead of queueing requests until the phone
+gives up (which would make the server do work nobody is waiting for). The app keeps the check-in,
+waits at least `Retry-After` plus a random extra, and retries. Shed requests were never stored, so
+the retry is a normal first attempt.
+
+## Time-limited batches
+
+A batch stops starting new check-ins after `BATCH_BUDGET_MS` (1 s), always doing at least one, and
+reports `processed`; the app removes exactly those and sends the rest next.
+
+This was found by the evaluation (`evaluation/RESULTS.md`, E1): after a 5-minute outage every phone
+sends its whole backlog at once. Without a limit, a busy server took longer than the phone's
+timeout for those big batches; the phones resent the same batches while the server was still
+working on the abandoned ones, so the server stayed busy but **no phone got an answer** and the
+outboxes never emptied, a retry storm that sustains itself. With the limit, every request answers
+within about a second and always makes progress.
+
+**Heartbeats and batches.** Only single, live check-ins add to `hb:{tripId}:intervals`. A batch means
+the phone was behind; it may also contain fresh check-ins made while it waited, all arriving at the
+same instant. Counting those would record 0 ms gaps and distort the failure detector's history, so
+a batch only refreshes `hb:{tripId}:lastseen`.
+
+## Metrics (`GET /metrics`, Prometheus format)
+
+| Metric | |
+|---|---|
+| `checkin_checkins_total{outcome}` | `accepted`, `recovered` (finished by a retry), `duplicate` |
+| `checkin_delivery_lag_seconds{kind}` | phone timestamp to server arrival; `live` or `buffered` |
+| `checkin_http_requests_total{path,status}`, `checkin_http_request_seconds{path}` | requests and their latency |
+| `checkin_in_flight_requests`, `checkin_shed_total` | load and requests turned away with 503 |
+| `checkin_reconciled_total`, `checkin_reconciler_leader` | clean-up work, and whether this replica leads |
 
 ## What this service writes to Redis (for M1, M3, M4)
 
@@ -80,6 +143,7 @@ twice, which `contracts/queues.md` already tells it to ignore.
 |---|---|
 | `trip:{tripId}:context` | `travellerId`, `stepIndex`, `routeVersion`, `status`. **Only ever moves forward**: a Lua script compares `seq` with `lastseq` atomically, so an older check-in (from an offline batch or a slower replica) can't overwrite newer context. Unknown values are stored as `""` (hashes can't hold null). |
 | `trip:{tripId}:lastseq` | Highest `seq` applied to context. |
+| `lock:checkin-reconciler` | Leader lease for the clean-up task (holder = pod name). New key, internal to this service. |
 | `trip:{tripId}:recent` | Last 10 check-ins as JSON, **sorted by `seq`, newest first**, even when they arrive out of order. No duplicates. |
 | `hb:{tripId}:lastseen` | When the last check-in **arrived at the server** (ISO 8601 UTC with ms, e.g. `2026-10-16T08:15:30.123Z`). Server time, not the phone's, so a wrong phone clock can't fool the heartbeat. |
 | `hb:{tripId}:intervals` | Gaps between **live** arrivals in ms, newest first, max 100. |
@@ -106,6 +170,13 @@ so they'd distort the gap distribution. When a buffered batch arrives, `lastseen
 | `MAX_FUTURE_SKEW_S` | `300` | reject timestamps further in the future than this |
 | `CREATE_RESOURCES` | `false` | create the table and queues on startup (local only) |
 | `AUTH_REQUIRED` | `false` | require a Bearer token |
+| `MAX_IN_FLIGHT` | `32` | requests handled at once per replica before shedding with 503 |
+| `RETRY_AFTER_S` | `2` | `Retry-After` sent when shedding |
+| `BATCH_BUDGET_MS` | `1000` | time limit for one batch request |
+| `RECONCILER_ENABLED` | `true` | run the clean-up task |
+| `RECONCILE_INTERVAL_S` / `RECONCILE_GRACE_S` / `RECONCILE_BATCH` | `15` / `30` / `100` | how often, how old, how many per query |
+| `LEADER_LEASE_MS` | `45000` | lease length; takeover after a crash within about this + one interval |
+| `LOG_LEVEL` | `INFO` | |
 | `CORS_ORIGINS` | empty | web addresses allowed to call from a browser, comma-separated (e.g. the Amplify URL). Not needed locally: the app's dev server proxies `/api`. |
 
 Locally the table and queues are created on startup (`CREATE_RESOURCES=true`). On AWS they
@@ -172,7 +243,8 @@ and the images in the repository.
 
 - **Least privilege per service.** The platform's `ApiServiceRole` is for `cloud-fastapi`. This
   service has its own role (IRSA, service account `checkin-service`) that can only put/get/update
-  items in its table, describe it (the `/ready` check), and send to its queue. It can't read the
+  items in its table, describe it (the `/ready` check), query its `pending-index` (the clean-up
+  task), and send to its queue. It can't read the
   queue (the Coordinator's job) or touch anything else.
 - **One load balancer for everyone.** Every service's Ingress joins the IngressGroup `careroute`,
   so they share one ALB. Rules run lowest `group.order` first: specific paths use small numbers
@@ -186,5 +258,5 @@ and the images in the repository.
 
 - **Login (waits for issue 1.5).** Tokens aren't verified yet, and there's no check that the
   traveller owns the trip. `AUTH_REQUIRED=true` only checks that a Bearer token is present.
-- **Metrics for 2.5.** Each response has an `X-Process-Time-Ms` header and each request is logged
-  with its duration. Load tests can read these.
+- **Throughput on AWS.** The evaluation runs against a local AWS emulator (about 45 check-ins/s),
+  so it measures correctness and behaviour under failure, not AWS throughput. Measure that on EKS.

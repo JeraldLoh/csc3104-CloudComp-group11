@@ -21,6 +21,7 @@ AWS_ENDPOINT_URL (default http://localhost:4566).
 """
 import argparse
 import json
+import re
 import os
 import shutil
 import subprocess
@@ -104,6 +105,19 @@ class Replicas:
                     p.kill()
         for log in self.logs:
             log.close()
+
+
+EXCEPTION_LINE = re.compile(r"^[\w.]+(Error|Exception): .*")
+
+
+def server_errors(run: str, n: int) -> dict:
+    """Exceptions in the replicas' logs, except the faults injected on purpose."""
+    found: dict[str, int] = {}
+    for i in range(n):
+        for line in (RESULTS / f"{run}.replica{i}.log").read_text(errors="replace").splitlines():
+            if EXCEPTION_LINE.match(line) and "injected fault" not in line:
+                found[line[:160]] = found.get(line[:160], 0) + 1
+    return found
 
 
 def wait_ready(url: str, timeout_s: float = 60) -> None:
@@ -229,6 +243,9 @@ def run_one(name: str, phones_cfg: dict, replicas: int = 1, server_env: dict | N
     data["replicas"] = replicas
     data["samples"] = sampler.samples if sampler else []
     data["killed"] = killed
+    data["serverErrors"] = server_errors(name, replicas)
+    if data["serverErrors"]:
+        print(f"    WARNING unexpected server errors: {data['serverErrors']}", flush=True)
     result = RESULTS / f"{name}.json"
     result.write_text(json.dumps(data))
     out_path.unlink()

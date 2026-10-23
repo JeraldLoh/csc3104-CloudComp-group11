@@ -35,23 +35,27 @@ class FaultySend:
         return self.real(checkin)
 
 
-def main() -> None:
-    rng = random.Random(int(os.getenv("FAULT_SEED", "1")))
-    fail_rate = float(os.getenv("FAULT_SEND_FAIL_RATE", "0"))
-    latency_s = float(os.getenv("FAULT_LATENCY_MS", "0")) / 1000
-
-    service = build_service(settings)
+def apply_faults(service, fail_rate: float, latency_s: float, rng: random.Random):
+    """Wrap a real CheckinService. Tested in tests/test_fault_server.py so the wrappers
+    can't silently drift from the service's method signatures."""
     if fail_rate > 0:
         service.queue.send = FaultySend(service.queue.send, fail_rate, rng)
     if latency_s > 0:
         real_ingest = service.ingest
 
-        def slow_ingest(c, now=None):
+        def slow_ingest(*args, **kwargs):
             time.sleep(latency_s)
-            return real_ingest(c, now)
+            return real_ingest(*args, **kwargs)
 
         service.ingest = slow_ingest
+    return service
 
+
+def main() -> None:
+    rng = random.Random(int(os.getenv("FAULT_SEED", "1")))
+    fail_rate = float(os.getenv("FAULT_SEND_FAIL_RATE", "0"))
+    latency_s = float(os.getenv("FAULT_LATENCY_MS", "0")) / 1000
+    service = apply_faults(build_service(settings), fail_rate, latency_s, rng)
     app = create_app(service=service, s=settings)
     uvicorn.run(app, host="127.0.0.1", port=int(os.getenv("PORT", "8000")), log_level="warning", access_log=False)
 

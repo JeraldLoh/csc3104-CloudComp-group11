@@ -59,17 +59,22 @@ GPS (watchPosition) ──► latest position
    up to date ────┼──► POST /api/checkins          (1 check-in)
    behind ────────┴──► POST /api/checkins/batch    (up to 100, oldest first)
                   │
-       202 ──► delete from outbox
+       202 ──► delete from outbox (or, for a batch, only the "processed" oldest ones;
+               the rest go in the next request)
        422 ──► drop it (a bad check-in must not block the rest), count as rejected
        401 ──► stop until login
    5xx / timeout / no network ──► keep it, mark it bufferedOffline,
                                    retry after exponential backoff with full jitter
+                                   (never sooner than the server's Retry-After)
 ```
 
 | Problem | What the app does |
 |---|---|
 | No signal (tunnel, MRT underground) | Check-ins wait in the outbox, marked `bufferedOffline`. When the signal returns they go as **one batch**, in order. |
-| Server down or slow | Same as no signal; retries back off 1 s, 2 s, 4 s … up to 60 s, at a random point in each window so thousands of phones don't retry at the same instant. |
+| Server down or slow | Same as no signal; retries back off 1 s, 2 s, 4 s … up to 60 s, at a random point in each window so thousands of phones don't retry at the same instant. The backoff is a real "not before" time: new check-ins made meanwhile wait in the outbox instead of each sending its own request, so a struggling server actually gets relief. |
+| Server overloaded | It answers `503` + `Retry-After`; the phone waits at least that long plus a random extra, so the phones it turned away don't all return in the same second. |
+| Many phones regain signal at once (a train leaves a tunnel) | The backlog is sent after a random 0-2 s delay, spreading the catch-up. Measured in `evaluation/` (E2). |
+| Big backlog, busy server | The server handles what fits in 1 s and says how many (`processed`); the phone sends the rest next. Every request finishes quickly and makes progress (`evaluation/` E1 shows what happens without this). |
 | Reply lost after the server stored it | The retry has the same `seq`; the server answers "duplicate" and nothing is stored twice. |
 | Tab closed, phone restarted | The outbox is in IndexedDB; whatever was waiting is sent when the app opens again. The trip and current step are remembered too. |
 | App storage wiped mid-trip | `seq` restarts from the current time in seconds, above every seq already sent, so new check-ins aren't mistaken for old duplicates. |
