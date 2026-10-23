@@ -133,8 +133,10 @@ export async function downloadMedia(
         if (!res.ok || !isMedia(res)) throw new Error(`HTTP ${res.status} ${res.headers.get("Content-Type") ?? ""}`);
         // Read the whole body before storing: a connection that drops halfway throws
         // here, instead of leaving a cut-off file in the cache that looks complete.
-        const body = await res.blob();
-        await cache.put(key, new Response(body, { headers: { "Content-Type": res.headers.get("Content-Type") ?? body.type } }));
+        // (Bytes rather than a Blob: same result in the browser, and Node 24's test
+        // environment can't put a Blob from one implementation into another's Response.)
+        const body = await res.arrayBuffer();
+        await cache.put(key, new Response(body, { headers: { "Content-Type": res.headers.get("Content-Type") ?? "" } }));
         stored = true;
       } catch { /* try again, then give up on this file */ }
     }
