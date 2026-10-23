@@ -50,6 +50,8 @@ export interface CareRoute {
   wakeLock: WakeLockState;
   /** Demo only: pretend the caregiver changed the route. */
   simulateRouteChange(): void;
+  /** Demo only: forget this trip on this phone and start again from "Hi Alex". */
+  resetDemo(): Promise<void>;
   start(): Promise<void>;
   next(): Promise<void>;
   back(): Promise<void>;
@@ -295,6 +297,16 @@ export function useCareRoute(session: Session, opts: { demo: boolean }): CareRou
     routeChangedAt,
     dismissRouteChange: () => setRouteChangedAt(null),
     wakeLock,
+    resetDemo: async () => {
+      const e = engine.current;
+      if (!opts.demo || !e) return; // never wipe a real trip (it may hold unsent check-ins)
+      stopTracking(e);
+      const tx = e.db.transaction(["outbox", "requests", "meta"], "readwrite");
+      await Promise.all([tx.objectStore("outbox").clear(), tx.objectStore("requests").clear(), tx.objectStore("meta").clear()]);
+      await tx.done;
+      await forgetTrip(session.tripId);
+      location.reload();
+    },
     simulateRouteChange: () => {
       const e = engine.current;
       if (!opts.demo || !e || !loaded) return; // never replace a real trip's route

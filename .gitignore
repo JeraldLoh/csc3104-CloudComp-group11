@@ -31,3 +31,6 @@ iam_policy.json
 
 # pytest
 .pytest_cache/
+
+# Redis snapshots from local test runs
+dump.rdb

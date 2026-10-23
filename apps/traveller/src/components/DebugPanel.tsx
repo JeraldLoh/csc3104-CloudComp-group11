@@ -47,7 +47,8 @@ export function DebugPanel({ app }: { app: CareRoute }) {
           <input type="checkbox" checked={app.offlineSim} onChange={(e) => app.setOfflineSim(e.target.checked)} /> Pretend no signal
         </label>
         <button onClick={() => void app.checkInNow()}>Check in now</button>
-        <button onClick={app.simulateRouteChange}>Change route</button>
+        <button onClick={app.simulateRouteChange} disabled={app.phase !== "travelling"} title="Start the trip first">Change route</button>
+        <button onClick={() => void app.resetDemo()}>Reset demo</button>
       </div>
     </details>
   );
