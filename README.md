@@ -14,6 +14,25 @@ Infrastructure is defined as code in `cloudformation/careroute-vpc-eks-standard.
 - [eksctl](https://eksctl.io/installation/) (`winget install -e --id eksctl.eksctl`)
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed and running
 
+## Automated deploy and teardown
+
+The scripts in `scripts/` run every step in the sections below, from the
+CloudFormation stack to the `/health` check, and the full teardown. Both are
+safe to re-run. `deploy` creates or updates the stack from the current template,
+so changes to the YAML are applied on the next run. `teardown` looks up S3
+buckets and ECR repositories from the live stack, so resources added to the
+template later are removed too.
+
+| | Windows (PowerShell) | macOS (bash) |
+|---|---|---|
+| Deploy | `powershell -ExecutionPolicy Bypass -File scripts\windows\deploy.ps1 -BudgetEmail you@example.com` | `bash scripts/macos/deploy.sh --email you@example.com` |
+| Teardown | `powershell -ExecutionPolicy Bypass -File scripts\windows\teardown.ps1` | `bash scripts/macos/teardown.sh` |
+
+Options: `-ImageTag` / `--tag` (default `v1`), `-StackName` / `--stack-name`,
+`-Region` / `--region`, and `-Yes` / `--yes` to skip the teardown confirmation.
+The deploy scripts fill in the `k8s/eks` placeholders in a temporary copy, so
+the committed manifests stay unchanged.
+
 ## Deploy the infrastructure
 
 ### 1. Deploy the CloudFormation stack

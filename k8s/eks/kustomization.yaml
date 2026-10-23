@@ -1,4 +1,5 @@
-namespace: csc3104
+# No top-level `namespace:` here: it would also rewrite aws-logging.yaml's
+# aws-observability resources. Each manifest sets its own namespace instead.
 resources:
   - namespace.yaml
   - serviceaccount.yaml
