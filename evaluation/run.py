@@ -274,8 +274,11 @@ def e1(quick: bool) -> None:
         for kind in ("outbox", "naive"):
             for rep in range(repeats):
                 start = scaled(120_000)
+                # Drain for at least as long as the outage: the scaled clock also multiplies
+                # the load by 10, so a long backlog needs time to go through the emulator.
                 cfg = base_phones(kind=kind, tripPrefix=f"T-E1-{minutes}m-{kind}-{rep}",
                                   durationMs=start + scaled(out_ms) + scaled(120_000),
+                                  drainMs=scaled(max(300_000, out_ms)),
                                   outages=[{"startMs": start, "endMs": start + scaled(out_ms), "mode": "silent"}])
                 run_one(f"E1-{minutes}min-{kind}-r{rep}", cfg)
     # The retry storm found while building this evaluation: the same 5-minute outage with
@@ -285,7 +288,10 @@ def e1(quick: bool) -> None:
         cfg = base_phones(tripPrefix=f"T-E1-budget-{label}", durationMs=start + scaled(out_ms) + scaled(120_000),
                           outages=[{"startMs": start, "endMs": start + scaled(out_ms), "mode": "silent"}])
         run_one(f"E1-batch-budget-{label}", cfg, server_env={"BATCH_BUDGET_MS": budget})
-    # App restarted (tab closed and reopened) in the middle of a 5-minute outage.
+
+
+def e1_restart() -> None:
+    """App restarted (tab closed and reopened) in the middle of a 5-minute outage."""
     for persistent in (True, False):
         start, out_ms = scaled(120_000), 300_000
         cfg = base_phones(tripPrefix=f"T-E1-restart-{persistent}", durationMs=start + scaled(out_ms) + scaled(120_000),
@@ -340,13 +346,13 @@ def e3(quick: bool) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("experiments", nargs="*", default=["E1", "E2", "E3"])
+    ap.add_argument("experiments", nargs="*", default=["E1", "E1-restart", "E1-real", "E2", "E3"])
     ap.add_argument("--quick", action="store_true")
     a = ap.parse_args()
     RESULTS.mkdir(parents=True, exist_ok=True)
     print(f"Redis {REDIS_URL}, AWS {AWS_ENDPOINT}")
     for e in a.experiments:
-        {"E1": lambda: e1(a.quick), "E1-real": e1_real, "E2": lambda: e2(a.quick), "E3": lambda: e3(a.quick)}[e]()
+        {"E1": lambda: e1(a.quick), "E1-restart": e1_restart, "E1-real": e1_real, "E2": lambda: e2(a.quick), "E3": lambda: e3(a.quick)}[e]()
 
 
 if __name__ == "__main__":

@@ -16,7 +16,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { openCareRouteDB, type DB } from "../src/lib/db";
 import { Outbox } from "../src/lib/outbox";
 import { Sender } from "../src/lib/sender";
-import { HttpTransport, type SendResult, type Transport } from "../src/lib/api";
+import { asAck, HttpTransport, type SendResult, type Transport } from "../src/lib/api";
 import type { Checkin, CheckinBatch } from "../src/types";
 
 interface Outage {
@@ -56,6 +56,7 @@ interface Attempt {
   phone: number;
   kind: "single" | "batch";
   n: number;
+  processed: number | null; // how many of the n the server handled (ok answers only)
   outcome: SendResult["kind"];
   reason: string | null;
 }
@@ -64,10 +65,11 @@ interface PhoneRecord {
   id: number;
   tripId: string;
   generated: { seq: number; t: number; offline: boolean }[];
-  acked: Record<number, number>; // seq -> time the server accepted it
+  acked: Record<number, number>; // seq -> time the server answered for it (accepted or duplicate)
   dead: boolean;
   restarted: boolean;
   leftInOutbox: number;
+  leftSeqs: number[]; // still in the outbox at the end: delayed, not lost
 }
 
 const cfg: Config = JSON.parse(readFileSync(process.argv[2], "utf8"));
@@ -122,11 +124,14 @@ function phoneFetch(phone: number): typeof fetch {
 class RecordingTransport implements Transport {
   constructor(private inner: Transport, private rec: PhoneRecord, private onFail: () => void) {}
   private log(t0: number, kind: Attempt["kind"], seqs: number[], r: SendResult) {
+    // A busy server may handle only the oldest part of a batch ("processed"); only those
+    // count as acknowledged, exactly as the Sender removes only those from the outbox.
+    const processed = r.kind === "ok" ? Math.min(seqs.length, Math.max(0, asAck(r.body).processed ?? seqs.length)) : null;
     attempts.push({
-      t0, t1: now(), phone: this.rec.id, kind, n: seqs.length, outcome: r.kind,
+      t0, t1: now(), phone: this.rec.id, kind, n: seqs.length, processed, outcome: r.kind,
       reason: r.kind === "retry" ? r.reason : r.kind === "invalid" ? r.message : null,
     });
-    if (r.kind === "ok") for (const s of seqs) this.rec.acked[s] ??= now();
+    if (processed !== null) for (const s of seqs.slice(0, processed)) this.rec.acked[s] ??= now();
     if (r.kind === "retry") this.onFail();
     return r;
   }
@@ -158,7 +163,7 @@ function draft(rec: PhoneRecord, i: number) {
 }
 
 async function runOutboxPhone(id: number): Promise<PhoneRecord> {
-  const rec: PhoneRecord = { id, tripId: `${cfg.tripPrefix}-${id}`, generated: [], acked: {}, dead: false, restarted: false, leftInOutbox: 0 };
+  const rec: PhoneRecord = { id, tripId: `${cfg.tripPrefix}-${id}`, generated: [], acked: {}, dead: false, restarted: false, leftInOutbox: 0, leftSeqs: [] };
   const dies = id < Math.round(cfg.phones * (cfg.dieOnFailureFraction ?? 0));
   let dbName = `phone-${cfg.name}-${id}`;
   let db: DB = await openCareRouteDB(dbName);
@@ -208,12 +213,13 @@ async function runOutboxPhone(id: number): Promise<PhoneRecord> {
     await sleep(cfg.heartbeatMs);
   }
   sender.dispose();
-  rec.leftInOutbox = await outbox.count();
+  rec.leftSeqs = (await outbox.peek(1_000_000)).map((x) => x.seq);
+  rec.leftInOutbox = rec.leftSeqs.length;
   return rec;
 }
 
 async function runNaivePhone(id: number): Promise<PhoneRecord> {
-  const rec: PhoneRecord = { id, tripId: `${cfg.tripPrefix}-${id}`, generated: [], acked: {}, dead: false, restarted: false, leftInOutbox: 0 };
+  const rec: PhoneRecord = { id, tripId: `${cfg.tripPrefix}-${id}`, generated: [], acked: {}, dead: false, restarted: false, leftInOutbox: 0, leftSeqs: [] };
   const transport = new RecordingTransport(new HttpTransport({ fetchImpl: phoneFetch(id), timeoutMs: cfg.timeoutMs }), rec, () => {});
   let seq = 0;
   await sleep(cfg.startTogether ? 0 : Math.floor(Math.random() * cfg.heartbeatMs));

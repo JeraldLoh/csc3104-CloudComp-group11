@@ -45,7 +45,10 @@ def core(d) -> dict:
     made_alive = [(p["tripId"], g["seq"]) for p in alive for g in p["generated"]]
     made_all = [(p["tripId"], g["seq"]) for p in d["phones"] for g in p["generated"]]
     left = sum(p["leftInOutbox"] for p in alive)
-    lost = [k for k in made_alive if k not in stored]
+    # Lost = made by a phone that is still alive, never stored, and no longer on the phone.
+    # Check-ins still in the outbox when the run stops are delayed, not lost (counted apart).
+    waiting = {(p["tripId"], s) for p in alive for s in p.get("leftSeqs", [])}
+    lost = [k for k in made_alive if k not in stored and k not in waiting]
 
     # Order: after the run, each trip's live context must point at its newest stored
     # check-in, and its recent list must be the newest 10, newest first.
@@ -208,12 +211,16 @@ def e4(d) -> dict:
 # ----------------------------------------------------------------------------- all
 
 def main() -> None:
-    names = sorted(Path(p).stem for p in glob.glob(str(RESULTS / "*.json")) if not p.endswith("summary.json"))
+    # Finished runs only: skip summary.json and the temporary <run>.config/.phones.json files.
+    names = sorted(Path(p).stem for p in glob.glob(str(RESULTS / "*.json")) if "." not in Path(p).stem and Path(p).stem != "summary")
     summary = {"runs": {}, "E1": {}, "E2": {}, "E3": {}}
+    summary["serverErrors"] = {}
     for n in names:
         if n.startswith("smoke"):
             continue
-        summary["runs"][n] = core(load(n))
+        d = load(n)
+        summary["runs"][n] = core(d)
+        summary["serverErrors"][n] = d.get("serverErrors", {})
 
     # E1 grouped by outage length and app kind, mean/min/max over repeats
     for n, row in summary["runs"].items():

@@ -152,27 +152,37 @@ def fig_e2(summary):
 # ----------------------------------------------------------------------------- E3
 
 def fig_e3(summary):
+    """Small multiples, one run per panel: three noisy lines on one axis are unreadable."""
     e3 = summary.get("E3") or {}
-    if not e3:
+    runs = [(k, c, st_, lab) for k, c, st_, lab in
+            (("off", BASELINE, "--", "Clean-up task off"),
+             ("on", DESIGN, "-", "Clean-up task on"),
+             ("on-leader-killed", MIDDLE, "-", "Clean-up on, leader replica killed"))
+            if e3.get(k) and e3[k]["samples"]]
+    if not runs:
         return
-    fig, ax = plt.subplots(figsize=(3.5, 2.1))
-    for key, colour, style, label in (("off", BASELINE, "--", "Clean-up off"),
-                                      ("on", DESIGN, "-", "Clean-up on"),
-                                      ("on-leader-killed", MIDDLE, ":", "Clean-up on, leader killed")):
-        v = e3.get(key)
-        if not v or not v["samples"]:
-            continue
-        xs = [s["t_s"] * SCALE for s in v["samples"]]
-        ys = [s["stuck"] for s in v["samples"]]
-        ax.plot(xs, ys, color=colour, linestyle=style, linewidth=1.5, label=label)
+    top = max(s["stuck"] for k, *_ in runs for s in e3[k]["samples"])
+    xmax = max(s["t_s"] * SCALE for k, *_ in runs for s in e3[k]["samples"])
+    fig, axes = plt.subplots(len(runs), 1, figsize=(3.5, 0.95 * len(runs) + 0.45), sharex=True, sharey=True)
+    for ax, (key, colour, style, label) in zip(axes, runs):
+        v = e3[key]
+        pts = [(s["t_s"] * SCALE, s["stuck"]) for s in v["samples"] if s["t_s"] >= 0]
+        ax.step([x for x, _ in pts], [y for _, y in pts], where="post", color=colour, linestyle=style, linewidth=1.0)
+        ax.text(0.01, 0.93, label, transform=ax.transAxes, ha="left", va="top", color=INK, fontsize=7)
+        end = pts[-1][1]
+        ax.text(0.99, 0.93, f"stuck at the end: {end}", transform=ax.transAxes, ha="right", va="top",
+                color=INK, fontsize=7, fontweight="bold" if end else "normal")
         if v.get("killed"):
             kx = v["killed"]["t_s"] * SCALE
-            ax.axvline(kx, color=INK2, linewidth=0.8)
-            ax.text(kx, ax.get_ylim()[1] * 0.98 if ax.get_ylim()[1] else 1, " leader killed", color=INK2,
-                    fontsize=6.5, va="top", ha="left")
-    ax.set_xlabel("Seconds (real-world equivalent)")
-    ax.set_ylabel("Check-ins stuck on the server")
-    ax.legend(loc="upper left", fontsize=6.5)
+            ax.axvline(kx, color=INK2, linewidth=0.8, linestyle=(0, (2, 2)))
+            took = v.get("takeover_s")
+            note = f"leader killed; new leader after {took * SCALE:.0f} s" if took is not None else "leader killed"
+            ax.text(kx + 4, 0.7, note, color=INK2, fontsize=6.5, ha="left", va="center", transform=ax.get_xaxis_transform())
+        ax.set_ylim(0, top * 1.45 + 0.5)
+        ax.set_xlim(0, xmax)
+        ax.grid(axis="x", visible=False)
+    axes[len(axes) // 2].set_ylabel("Check-ins stuck\n(stored, not queued)")
+    axes[-1].set_xlabel("Seconds (real-world equivalent)")
     save(fig, "e3-cleanup")
 
 
