@@ -245,11 +245,13 @@ def test_concurrent_retries_and_out_of_order_arrivals(env):
     sends = [s for s in range(60) for _ in range(2)]
     random.Random(7).shuffle(sends)
     with ThreadPoolExecutor(max_workers=16) as pool:
-        codes = list(pool.map(lambda s: env.client.post("/api/checkins", json=checkin(s, stepIndex=s)).status_code, sends))
+        responses = list(pool.map(lambda s: env.client.post("/api/checkins", json=checkin(s, stepIndex=s)), sends))
 
-    assert set(codes) == {202}
+    bad = [(r.status_code, r.text[:200]) for r in responses if r.status_code != 202]
+    assert not bad, f"non-202 answers: {bad[:5]}"
     msgs = env.messages()
-    assert set(m["seq"] for m in msgs) == set(range(60))   # nothing lost
+    missing = set(range(60)) - set(m["seq"] for m in msgs)
+    assert not missing, f"lost check-ins: {sorted(missing)}"   # nothing lost
     assert env.r.get("trip:T-001:lastseq") == b"59"
     assert env.r.hget("trip:T-001:context", "stepIndex") == b"59"
     seqs = [json.loads(x)["seq"] for x in env.r.lrange("trip:T-001:recent", 0, -1)]
@@ -270,3 +272,41 @@ def test_cors_allows_configured_origin_only(env):
         bad = c.options("/api/checkins", headers={
             "Origin": "https://evil.example", "Access-Control-Request-Method": "POST"})
         assert bad.headers.get("access-control-allow-origin") is None
+
+
+# ---------- overload protection and metrics ----------
+
+def test_sheds_load_with_503_and_retry_after_when_at_capacity(env, monkeypatch):
+    """With room for 2 requests at once, a burst of 8 slow ones: 2 are handled, the rest
+    are turned away straight away (not queued until the phone times out)."""
+    import threading
+    import time as _t
+    s = dataclasses.replace(Settings(), reconciler_enabled=False, max_in_flight=2, retry_after_s=3)
+    app = create_app(service=env.service, s=s)
+    real = env.service.ingest_one
+    monkeypatch.setattr(env.service, "ingest_one", lambda c: (_t.sleep(0.5), real(c))[1])
+    results = []
+    with TestClient(app) as client:
+        def send(i):
+            r = client.post("/api/checkins", json=checkin(100 + i))
+            results.append((r.status_code, r.headers.get("retry-after"), r.json()))
+        threads = [threading.Thread(target=send, args=(i,)) for i in range(8)]
+        [t.start() for t in threads]
+        [t.join() for t in threads]
+        codes = sorted(c for c, _, _ in results)
+        assert codes.count(202) == 2 and codes.count(503) == 6
+        shed = [r for r in results if r[0] == 503]
+        assert all(ra == "3" and body["error"]["code"] == "overloaded" for _, ra, body in shed)
+        # Shed check-ins were never stored, so the phone's retry is a normal first attempt.
+        assert len(env.messages()) == 2
+        metrics = client.get("/metrics").text
+        assert "checkin_shed_total" in metrics and 'checkin_checkins_total{outcome="accepted"}' in metrics
+
+
+def test_metrics_endpoint_reports_outcomes_and_lag(env):
+    env.client.post("/api/checkins", json=checkin(1))
+    env.client.post("/api/checkins", json=checkin(1))
+    text = env.client.get("/metrics").text
+    assert 'checkin_checkins_total{outcome="duplicate"}' in text
+    assert 'checkin_delivery_lag_seconds_count{kind="live"}' in text
+    assert 'checkin_http_requests_total{path="/api/checkins",status="202"}' in text

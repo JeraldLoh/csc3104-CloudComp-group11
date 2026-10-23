@@ -40,6 +40,7 @@ import uuid
 import redis
 from starlette.concurrency import run_in_threadpool
 
+from . import metrics
 from .service import CheckinService
 
 log = logging.getLogger("checkin.reconciler")
@@ -109,6 +110,7 @@ class Reconciler:
             log.warning("lease check failed: %s", e)
             self.is_leader = False
             return 0
+        metrics.LEADER.set(1 if self.is_leader else 0)
         if not self.is_leader:
             return 0
         done = 0

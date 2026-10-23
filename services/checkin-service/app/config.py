@@ -35,6 +35,11 @@ class Settings:
     # e.g. "https://main.xxxx.amplifyapp.com". Not needed when the app's dev server proxies /api.
     cors_origins: tuple[str, ...] = field(default_factory=lambda: tuple(
         o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()))
+    # Overload protection: at most this many /api requests are handled at once per replica;
+    # beyond that the replica answers 503 + Retry-After straight away instead of queueing
+    # requests until the phone gives up. Keep below the thread pool size (40).
+    max_in_flight: int = field(default_factory=lambda: int(os.getenv("MAX_IN_FLIGHT", "32")))
+    retry_after_s: int = field(default_factory=lambda: int(os.getenv("RETRY_AFTER_S", "2")))
     # Background clean-up task (reconciler.py): finishes check-ins whose phone never retried.
     reconciler_enabled: bool = field(default_factory=lambda: _bool("RECONCILER_ENABLED", True))
     reconcile_interval_s: float = field(default_factory=lambda: float(os.getenv("RECONCILE_INTERVAL_S", "15")))

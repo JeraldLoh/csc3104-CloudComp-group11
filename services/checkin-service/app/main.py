@@ -4,6 +4,7 @@ POST /api/checkins        one check-in        -> 202 {"accepted": 1, "duplicates
 POST /api/checkins/batch  check-ins buffered offline
 GET  /health              liveness: the process is up (contract endpoint)
 GET  /ready               readiness: Redis, DynamoDB and SQS are reachable
+GET  /metrics             Prometheus metrics
 """
 import logging
 import time
@@ -14,10 +15,11 @@ import redis
 from fastapi import Depends, FastAPI, Header, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from . import aws_resources
+from . import aws_resources, metrics
 from .config import Settings, settings as default_settings
 from .live_state import LiveState
 from .models import Checkin, CheckinBatch
@@ -40,6 +42,9 @@ def build_service(s: Settings) -> CheckinService:
         state=LiveState(redis.Redis.from_url(s.redis_url), s.trip_key_ttl_s, s.recent_max, s.intervals_max),
         queue=CheckinQueue(boto3.client("sqs", **aws), s.queue_name),
     )
+
+
+KNOWN_PATHS = {"/api/checkins", "/api/checkins/batch"}
 
 
 def error(status: int, code: str, message: str, details=None) -> JSONResponse:
@@ -104,14 +109,38 @@ def create_app(service: CheckinService | None = None, s: Settings = default_sett
         log.exception("check-in failed: %s", e)
         return error(503, "unavailable", "Couldn't store the check-in right now. Please retry.")
 
+    # Requests being handled right now. Only touched on the event loop thread, so a plain
+    # int is safe (no lock needed): all middleware code runs on that one thread.
+    in_flight = {"n": 0}
+
     @app.middleware("http")
-    async def timing(request: Request, call_next):
+    async def admission_and_timing(request: Request, call_next):
+        if not request.url.path.startswith("/api/"):
+            return await call_next(request)
+        # Fixed label values, so unknown URLs can't create unlimited metric series.
+        path = request.url.path if request.url.path in KNOWN_PATHS else "other"
+        # Overload protection (load shedding). Answering 503 immediately is kinder than
+        # queueing: the phone keeps the check-in in its outbox and retries after
+        # Retry-After (plus random jitter), instead of waiting until its own timeout.
+        if in_flight["n"] >= s.max_in_flight:
+            metrics.SHED.inc()
+            metrics.REQUESTS.labels(path, "503").inc()
+            resp = error(503, "overloaded", "Too many requests right now. Please retry shortly.")
+            resp.headers["Retry-After"] = str(s.retry_after_s)
+            return resp
+        in_flight["n"] += 1
+        metrics.IN_FLIGHT.set(in_flight["n"])
         start = time.perf_counter()
-        response = await call_next(request)
-        ms = (time.perf_counter() - start) * 1000
-        response.headers["X-Process-Time-Ms"] = f"{ms:.1f}"
-        if request.url.path.startswith("/api/"):
-            log.info("%s %s %d %.1fms", request.method, request.url.path, response.status_code, ms)
+        try:
+            response = await call_next(request)
+        finally:
+            in_flight["n"] -= 1
+            metrics.IN_FLIGHT.set(in_flight["n"])
+        secs = time.perf_counter() - start
+        response.headers["X-Process-Time-Ms"] = f"{secs * 1000:.1f}"
+        metrics.REQUESTS.labels(path, str(response.status_code)).inc()
+        metrics.REQUEST_SECONDS.labels(path).observe(secs)
+        log.info("%s %s %d %.1fms", request.method, request.url.path, response.status_code, secs * 1000)
         return response
 
     # Plain `def` endpoints: boto3 and redis-py are blocking, so FastAPI runs these in
@@ -127,6 +156,10 @@ def create_app(service: CheckinService | None = None, s: Settings = default_sett
     @app.get("/health")
     def health():
         return {"status": "ok"}
+
+    @app.get("/metrics")
+    def prometheus_metrics():
+        return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
     @app.get("/ready")
     def ready(request: Request):

@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 
+from . import metrics
 from .live_state import LiveState
 from .models import Checkin, iso_ms
 from .queue import CheckinQueue
@@ -64,13 +65,19 @@ class CheckinService:
         result = self.store.put_new(c, received_at=iso_ms(now))
 
         if not result.created and result.enqueued:
+            metrics.CHECKINS.labels("duplicate").inc()
             return Outcome.DUPLICATE
 
         if result.created and not c.bufferedOffline:
             self.state.heartbeat(c.tripId, now, record_interval=True)
 
         self.finish(c)
-        return Outcome.ACCEPTED if result.created else Outcome.RECOVERED
+        outcome = Outcome.ACCEPTED if result.created else Outcome.RECOVERED
+        metrics.CHECKINS.labels(outcome.value).inc()
+        if result.created:
+            lag = (now - c.timestamp).total_seconds()
+            metrics.DELIVERY_LAG.labels("buffered" if c.bufferedOffline else "live").observe(max(0.0, lag))
+        return outcome
 
     def finish(self, c: Checkin) -> None:
         """Steps 3-5. Each is safe to repeat, so a retry, the clean-up task, or both at
@@ -94,6 +101,7 @@ class CheckinService:
                 continue
             c = item_to_checkin(item)
             self.finish(c)
+            metrics.RECONCILED.inc()
             done += 1
             log.info("reconciled stuck check-in %s#%s", c.tripId, c.seq)
         return done
