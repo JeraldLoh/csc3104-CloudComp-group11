@@ -11,7 +11,15 @@
 //    time between 0 and min(cap, base * 2^n). The randomness stops hundreds of phones
 //    that lost signal at the same moment (a train in a tunnel) from all retrying at
 //    the same instant and knocking the service over again (a "thundering herd").
-//  * Coming back online, or the app returning to the foreground, retries immediately.
+//  * The backoff is a real "not before" time: while it runs, new check-ins wait in the
+//    outbox instead of each triggering its own request (otherwise the 10 s heartbeat
+//    would cap every backoff at 10 s, and a struggling server would get no relief).
+//  * If the server says how long to wait (503 + Retry-After, when it's shedding load),
+//    the phone waits at least that long, plus a random extra of up to the same again,
+//    so the phones it turned away don't all come back in the same second.
+//  * Coming back online retries after a short random delay (0-2 s): many phones regain
+//    signal at the same moment (a cell tower or train coming back), so this spreads
+//    their catch-up batches. Returning to the app retries straight away.
 import { asAck, type SendResult, type Transport } from "./api";
 import type { Outbox } from "./outbox";
 import type { OutboxItem } from "./db";
@@ -50,6 +58,18 @@ export const DEFAULTS = { maxBatch: 100, backoffBaseMs: 1000, backoffCapMs: 60_0
 export function backoffDelay(failures: number, random: () => number, baseMs: number, capMs: number): number {
   const ceiling = Math.min(capMs, baseMs * 2 ** Math.max(0, failures - 1));
   return Math.max(250, Math.floor(random() * ceiling));
+}
+
+/**
+ * How long to wait before the next attempt: the jittered exponential backoff, but never
+ * less than the server's Retry-After, which itself gets up to 100% random extra.
+ */
+export function retryDelay(
+  failures: number, retryAfterMs: number | undefined, random: () => number, baseMs: number, capMs: number,
+): number {
+  const backoff = backoffDelay(failures, random, baseMs, capMs);
+  if (!retryAfterMs) return backoff;
+  return Math.max(backoff, Math.floor(retryAfterMs * (1 + random())));
 }
 
 /** Web Locks: only one tab flushes at a time. Falls back to no lock if unsupported. */
@@ -96,9 +116,13 @@ export class Sender {
     return () => this.listeners.delete(fn);
   }
 
-  /** Ask for a flush. Safe to call as often as you like. */
+  /** Ask for a flush. Safe to call as often as you like. Waits out a running backoff. */
   flush(opts: { keepalive?: boolean } = {}): Promise<void> {
     if (opts.keepalive) this.keepaliveNext = true;
+    if (this.timer !== null) {
+      // Backing off: leave new check-ins in the outbox; the timer sends them all together.
+      return this.refreshPending();
+    }
     if (this.running) {
       this.rerun = true; // something new arrived mid-flush; go round again afterwards
       return this.running;
@@ -117,11 +141,18 @@ export class Sender {
     return this.running;
   }
 
-  /** Back online, or the app came to the front: forget the backoff and try now. */
-  retryNow(): Promise<void> {
+  /**
+   * Back online, or the app came to the front: forget the backoff and try again,
+   * either now or after a random delay of up to `jitterMs` (used on reconnect).
+   */
+  retryNow(opts: { jitterMs?: number } = {}): Promise<void> {
     this.cancelTimer();
     this.state.nextRetryAt = null;
-    return this.flush();
+    const wait = opts.jitterMs ? Math.floor(this.d.random() * opts.jitterMs) : 0;
+    if (wait <= 0) return this.flush();
+    this.schedule(wait);
+    this.update({ nextRetryAt: this.d.now() + wait });
+    return Promise.resolve();
   }
 
   /** After the traveller logs in again. */
@@ -205,16 +236,20 @@ export class Sender {
       case "retry": {
         await this.d.outbox.markBuffered(items, true);
         const failures = this.state.consecutiveFailures + 1;
-        const delay = backoffDelay(failures, this.d.random, this.d.backoffBaseMs, this.d.backoffCapMs);
-        this.cancelTimer();
-        this.timer = this.d.setTimer(() => {
-          this.timer = null;
-          void this.flush();
-        }, delay);
+        const delay = retryDelay(failures, r.retryAfterMs, this.d.random, this.d.backoffBaseMs, this.d.backoffCapMs);
+        this.schedule(delay);
         this.update({ consecutiveFailures: failures, nextRetryAt: this.d.now() + delay, lastError: r.reason });
         return false;
       }
     }
+  }
+
+  private schedule(ms: number) {
+    this.cancelTimer();
+    this.timer = this.d.setTimer(() => {
+      this.timer = null;
+      void this.flush();
+    }, ms);
   }
 
   private cancelTimer() {

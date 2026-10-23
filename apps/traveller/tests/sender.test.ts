@@ -1,4 +1,4 @@
-import { backoffDelay, Sender } from "../src/lib/sender";
+import { backoffDelay, retryDelay, Sender } from "../src/lib/sender";
 import { draft, FakeTransport, makeOutbox, ManualTimers, noLock } from "./helpers";
 
 async function setup(opts: { online?: () => boolean; random?: () => number } = {}) {
@@ -196,5 +196,71 @@ describe("backoffDelay (exponential, full jitter)", () => {
     expect(backoffDelay(5, () => 0, 1000, 60_000)).toBe(250);
     const samples = new Set(Array.from({ length: 50 }, () => backoffDelay(6, Math.random, 1000, 60_000)));
     expect(samples.size).toBeGreaterThan(40);
+  });
+});
+
+describe("backoff is respected by everything, not just the retry timer", () => {
+  it("heartbeat flushes during a backoff don't send; the timer sends everything in one batch", async () => {
+    const { outbox, transport, timers, sender } = await setup();
+    transport.respond = () => ({ kind: "retry", reason: "HTTP 503" });
+    await outbox.enqueue(draft(), { offline: false });
+    await sender.flush();
+    expect(transport.calls).toHaveLength(1);
+
+    // Three heartbeats arrive while backing off (previously each sent its own request).
+    for (let i = 0; i < 3; i++) {
+      await outbox.enqueue(draft(), { offline: false });
+      await sender.flush();
+    }
+    expect(transport.calls).toHaveLength(1);
+    expect(sender.state.pending).toBe(4);
+
+    transport.respond = (c) => ({ kind: "ok", body: { accepted: c.kind === "batch" ? c.batch.checkins.length : 1, duplicates: 0 } });
+    timers.fireAll();
+    await sender.flush();
+    expect(transport.calls).toHaveLength(2);
+    const second = transport.calls[1];
+    expect(second.kind === "batch" && second.batch.checkins.length).toBe(4);
+  });
+
+  it("waits at least the server's Retry-After, plus random extra", async () => {
+    const { outbox, transport, timers, sender } = await setup({ random: () => 0.5 });
+    transport.respond = () => ({ kind: "retry", reason: "HTTP 503", retryAfterMs: 3000 });
+    await outbox.enqueue(draft(), { offline: false });
+    await sender.flush();
+    expect(timers.pending[0].ms).toBe(4500); // max(backoff 500, 3000 x 1.5)
+  });
+
+  it("coming back online waits a short random time before sending the backlog", async () => {
+    let online = false;
+    const { outbox, transport, timers, sender } = await setup({ online: () => online, random: () => 0.25 });
+    for (let i = 0; i < 3; i++) await outbox.enqueue(draft(), { offline: true });
+    online = true;
+    await sender.retryNow({ jitterMs: 2000 });
+    expect(transport.calls).toHaveLength(0);
+    expect(timers.pending[0].ms).toBe(500);
+    timers.fireAll();
+    await sender.flush();
+    expect(transport.calls).toHaveLength(1);
+  });
+
+  it("returning to the app still retries straight away", async () => {
+    const { outbox, transport, sender } = await setup();
+    transport.respond = () => ({ kind: "retry", reason: "timed out" });
+    await outbox.enqueue(draft(), { offline: false });
+    await sender.flush();
+    transport.respond = () => ({ kind: "ok", body: { accepted: 1, duplicates: 0 } });
+    await sender.retryNow();
+    expect(transport.calls).toHaveLength(2);
+    expect(await outbox.count()).toBe(0);
+  });
+});
+
+describe("retryDelay", () => {
+  it("is the jittered backoff when the server gives no Retry-After", () => {
+    expect(retryDelay(3, undefined, () => 0.5, 1000, 60_000)).toBe(2000);
+  });
+  it("never goes below Retry-After", () => {
+    expect(retryDelay(1, 5000, () => 0, 1000, 60_000)).toBe(5000);
   });
 });

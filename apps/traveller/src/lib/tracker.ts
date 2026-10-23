@@ -27,6 +27,9 @@ export interface Fix {
   at: number;
 }
 
+/** Random delay (up to this) before sending the backlog after signal returns. */
+export const RECONNECT_JITTER_MS = 2000;
+
 export type TrackerProblem = "location-denied" | "location-unavailable" | null;
 
 export interface TrackerDeps {
@@ -111,7 +114,8 @@ export class Tracker {
       on(window, "pagehide", () => void this.checkInNow({ keepalive: true, status: "backgrounded" }));
     }
     if (typeof window !== "undefined") {
-      on(window, "online", () => void this.d.sender.retryNow());
+      // Spread reconnects: phones that regain signal together don't all send at once.
+      on(window, "online", () => void this.d.sender.retryNow({ jitterMs: RECONNECT_JITTER_MS }));
     }
   }
 

@@ -5,7 +5,7 @@ import { getMeta, metaKeys, openCareRouteDB, setMeta, type DB } from "../lib/db"
 import { Outbox } from "../lib/outbox";
 import { Sender, type SenderState } from "../lib/sender";
 import { RequestQueue, type RequestQueueState } from "../lib/requests";
-import { Tracker, type Fix, type TrackerProblem } from "../lib/tracker";
+import { RECONNECT_JITTER_MS, Tracker, type Fix, type TrackerProblem } from "../lib/tracker";
 import { HttpTransport } from "../lib/api";
 import { isOnline, netsim, withNetsim } from "../lib/netsim";
 import { checkForNewPack, loadPack, type LoadedPack } from "../lib/pack";
@@ -127,8 +127,8 @@ export function useCareRoute(session: Session, opts: { demo: boolean }): CareRou
       cleanups.push(netsim.onChange((off) => {
         setOfflineSimState(off);
         if (!off) {
-          void sender.retryNow();
-          void requests.retryNow();
+          void sender.retryNow({ jitterMs: RECONNECT_JITTER_MS });
+          void requests.retryNow(); // help etc. go straight away
         }
       }));
       cleanups.push(appShell.onChange(setShellReady));

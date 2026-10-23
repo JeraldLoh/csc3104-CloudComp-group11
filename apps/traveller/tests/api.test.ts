@@ -1,4 +1,4 @@
-import { classify, HttpTransport } from "../src/lib/api";
+import { classify, HttpTransport, parseRetryAfter } from "../src/lib/api";
 
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -53,5 +53,22 @@ describe("HttpTransport", () => {
     const fetchImpl = vi.fn().mockResolvedValue(json(202, {}));
     await new HttpTransport({ fetchImpl }).postCheckin({} as never, { keepalive: true });
     expect(fetchImpl.mock.calls[0][1].keepalive).toBe(true);
+  });
+});
+
+describe("Retry-After", () => {
+  it("parses seconds and HTTP dates, ignores nonsense, caps at 5 minutes", () => {
+    const now = Date.parse("2026-10-23T00:00:00Z");
+    expect(parseRetryAfter("2", now)).toBe(2000);
+    expect(parseRetryAfter("Fri, 23 Oct 2026 00:00:10 GMT", now)).toBe(10_000);
+    expect(parseRetryAfter("soon", now)).toBeUndefined();
+    expect(parseRetryAfter(null, now)).toBeUndefined();
+    expect(parseRetryAfter("99999", now)).toBe(300_000);
+  });
+
+  it("is passed on from a 503 so the sender can wait", async () => {
+    const res = new Response(JSON.stringify({ error: { code: "overloaded" } }), { status: 503, headers: { "Retry-After": "2" } });
+    const r = await new HttpTransport({ fetchImpl: vi.fn().mockResolvedValue(res) }).post("/x", {});
+    expect(r).toEqual({ kind: "retry", reason: "HTTP 503", retryAfterMs: 2000 });
   });
 });

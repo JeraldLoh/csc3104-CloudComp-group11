@@ -3,7 +3,7 @@
 // retry with backoff. They're safe to repeat because the server deduplicates them:
 // help becomes incident U-042#T-001#help_requested#<step> (contracts/dynamo-db-tables.md),
 // and starting an already-active trip changes nothing.
-import { backoffDelay } from "./sender";
+import { retryDelay } from "./sender";
 import type { DB, QueuedRequest } from "./db";
 import type { Transport } from "./api";
 
@@ -75,6 +75,7 @@ export class RequestQueue {
     const all = await this.db.getAll("requests");
     all.sort((a, b) => priority(a) - priority(b) || a.id! - b.id!);
     let failed = false;
+    let retryAfterMs: number | undefined;
     for (const req of all) {
       const r = await this.transport.post(req.path, req.body);
       if (r.kind === "ok" || r.kind === "invalid") {
@@ -87,6 +88,7 @@ export class RequestQueue {
         continue;
       }
       failed = true;
+      if (r.kind === "retry" && r.retryAfterMs) retryAfterMs = Math.max(retryAfterMs ?? 0, r.retryAfterMs);
       req.attempts += 1;
       await this.db.put("requests", req);
       this.update({ lastError: `${req.label}: ${r.kind === "retry" ? r.reason : "log in again"}` });
@@ -97,7 +99,7 @@ export class RequestQueue {
       return;
     }
     this.failures += 1;
-    const delay = backoffDelay(this.failures, this.opts.random ?? Math.random, this.opts.baseMs ?? 1000, this.opts.capMs ?? 30_000);
+    const delay = retryDelay(this.failures, retryAfterMs, this.opts.random ?? Math.random, this.opts.baseMs ?? 1000, this.opts.capMs ?? 30_000);
     if (this.timer) clearTimeout(this.timer);
     this.timer = setTimeout(() => {
       this.timer = null;

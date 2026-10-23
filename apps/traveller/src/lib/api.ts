@@ -15,7 +15,7 @@ export type SendResult =
   | { kind: "ok"; body: unknown }
   | { kind: "invalid"; status: number; message: string }
   | { kind: "unauthorized"; status: number }
-  | { kind: "retry"; reason: string };
+  | { kind: "retry"; reason: string; retryAfterMs?: number };
 
 export interface Transport {
   postCheckin(c: Checkin, opts?: { keepalive?: boolean }): Promise<SendResult>;
@@ -29,6 +29,15 @@ export interface HttpTransportOptions {
   /** Returns the login token once Cognito (issue 1.5) exists. */
   getToken?: () => string | null;
   fetchImpl?: typeof fetch;
+}
+
+/** Retry-After is either seconds ("2") or an HTTP date. Capped at 5 minutes. */
+export function parseRetryAfter(v: string | null, now = Date.now()): number | undefined {
+  if (!v) return undefined;
+  const secs = Number(v);
+  const ms = Number.isFinite(secs) ? secs * 1000 : Date.parse(v) - now;
+  if (!Number.isFinite(ms) || ms <= 0) return undefined;
+  return Math.min(ms, 300_000);
 }
 
 export function classify(status: number): SendResult["kind"] {
@@ -79,7 +88,9 @@ export class HttpTransport implements Transport {
       const parsed = await res.json().catch(() => null);
       if (kind === "ok") return { kind, body: parsed };
       if (kind === "unauthorized") return { kind, status: res.status };
-      if (kind === "retry") return { kind, reason: `HTTP ${res.status}` };
+      if (kind === "retry") {
+        return { kind, reason: `HTTP ${res.status}`, retryAfterMs: parseRetryAfter(res.headers.get("Retry-After")) };
+      }
       const message = (parsed as { error?: { message?: string } } | null)?.error?.message ?? `HTTP ${res.status}`;
       return { kind: "invalid", status: res.status, message };
     } catch (e) {
