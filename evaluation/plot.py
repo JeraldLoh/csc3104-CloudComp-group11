@@ -174,11 +174,12 @@ def fig_e3(summary):
                 color=INK, fontsize=7, fontweight="bold" if end else "normal")
         if v.get("killed"):
             kx = v["killed"]["t_s"] * SCALE
-            ax.axvline(kx, color=INK2, linewidth=0.8, linestyle=(0, (2, 2)))
+            ax.plot([kx, kx], [0, top * 1.1], color=INK2, linewidth=0.8, linestyle=(0, (2, 2)))  # stops below the panel label
             took = v.get("takeover_s")
             note = f"leader killed; new leader after {took * SCALE:.0f} s" if took is not None else "leader killed"
-            ax.text(kx + 4, 0.7, note, color=INK2, fontsize=6.5, ha="left", va="center", transform=ax.get_xaxis_transform())
+            ax.text(kx + 4, top * 1.05, note, color=INK2, fontsize=6.5, ha="left", va="center")
         ax.set_ylim(0, top * 1.45 + 0.5)
+        ax.set_yticks([v for v in range(0, int(top) + 1, 5)])  # no tick at the top edge, next to the panel above
         ax.set_xlim(0, xmax)
         ax.grid(axis="x", visible=False)
     axes[len(axes) // 2].set_ylabel("Check-ins stuck\n(stored, not queued)")
@@ -189,13 +190,15 @@ def fig_e3(summary):
 # ----------------------------------------------------------------------------- E4
 
 def fig_e4():
+    """Phi (suspicion) against time since the last check-in, for one phone of E1-real just
+    after the 5-minute outage: the phone whose CareRoute-rule detection time is the median."""
     d = load("E1-real-5min-outbox")
     if not d:
         return
+    import math
     import sys
     sys.path.insert(0, str(HERE))
-    from analyse import MIN_STD_S, PHI_THRESHOLD, WINDOW
-    # A representative phone: the median detection time under the design rule.
+    from analyse import MIN_STD_S, PHI_THRESHOLD, WINDOW, phi_detection_time
     rows = []
     for p in d["phones"]:
         r = d["truth"]["redis"].get(p["tripId"])
@@ -204,32 +207,40 @@ def fig_e4():
         design = [x / 1000 for x in reversed(r["intervals"])][-WINDOW:]
         arr = sorted(p["acked"].values())
         naive = [(b - a) / 1000 for a, b in zip(arr, arr[1:])][-WINDOW:]
-        rows.append((design, naive))
+        t_design = phi_detection_time(design)
+        if t_design is not None and len(naive) >= 2:
+            rows.append((t_design, design, naive))
     if not rows:
         return
-    design, naive = rows[len(rows) // 2]
+    rows.sort(key=lambda x: x[0])
+    _, design, naive = rows[len(rows) // 2]
 
-    def phi_curve(xs, ts):
+    def phi(xs, t):
         mu, sd = st.mean(xs), max(st.pstdev(xs), MIN_STD_S)
-        nd = st.NormalDist(mu, sd)
-        out = []
-        for t in ts:
-            tail = max(1 - nd.cdf(t), 1e-300)
-            out.append(min(-__import__("math").log10(tail), 40))
-        return out
+        tail = 0.5 * math.erfc((t - mu) / (sd * math.sqrt(2)))  # 1 - CDF without rounding to 0
+        return -math.log10(max(tail, 1e-300))
 
-    ts = [i * 0.5 for i in range(0, 241)]
-    fig, ax = plt.subplots(figsize=(3.5, 2.1))
-    ax.plot(ts, phi_curve(design, ts), color=DESIGN, linewidth=1.8)
-    ax.plot(ts, phi_curve(naive, ts), color=BASELINE, linestyle="--", linewidth=1.8)
+    CAP = 16
+    ts = [i * 0.5 for i in range(0, 641)]
+    fig, ax = plt.subplots(figsize=(3.5, 2.2))
+    for xs, colour, style in ((design, DESIGN, "-"), (naive, BASELINE, "--")):
+        ys = [min(phi(xs, t), CAP + 2) for t in ts]
+        ax.plot(ts, ys, color=colour, linestyle=style, linewidth=1.8, clip_on=True)
+        hit = phi_detection_time(xs)
+        if hit is not None and hit <= ts[-1]:
+            ax.plot([hit], [PHI_THRESHOLD], marker="o", markersize=4, color=colour, zorder=5)
+    hd, hn = phi_detection_time(design), phi_detection_time(naive)
     ax.axhline(PHI_THRESHOLD, color=INK2, linewidth=0.8)
-    ax.text(ts[-1], PHI_THRESHOLD + 0.6, f"suspect at φ = {PHI_THRESHOLD:g}", ha="right", va="bottom", color=INK2, fontsize=6.5)
-    ax.text(14, 30, "Only single live check-ins\ncount (CareRoute)", color=INK, fontsize=6.5, va="center")
-    ax.text(70, 4.0, "Every arrival counts,\nbatches included", color=INK, fontsize=6.5, va="center")
-    ax.set_ylim(0, 40)
+    ax.text(90, PHI_THRESHOLD + 0.4, f"suspect at \u03c6 = {PHI_THRESHOLD:g}", ha="left", va="bottom", color=INK2, fontsize=6.5)
+    ax.text(hd + 8, 13.5, f"Only single live check-ins\ncount (CareRoute):\nsuspected after {hd:.0f} s",
+            color=INK, fontsize=6.5, va="center", ha="left")
+    if hn is not None:
+        ax.text(ts[-1] - 4, 1.6, f"Every arrival counts,\nbatches included:\nafter {hn:.0f} s",
+                color=INK, fontsize=6.5, va="center", ha="right")
+    ax.set_ylim(0, CAP)
     ax.set_xlim(0, ts[-1])
     ax.set_xlabel("Seconds since the phone's last check-in")
-    ax.set_ylabel("Suspicion φ")
+    ax.set_ylabel("Suspicion \u03c6")
     save(fig, "e4-heartbeat")
 
 
