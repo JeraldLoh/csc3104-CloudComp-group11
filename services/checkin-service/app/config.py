@@ -35,6 +35,14 @@ class Settings:
     # e.g. "https://main.xxxx.amplifyapp.com". Not needed when the app's dev server proxies /api.
     cors_origins: tuple[str, ...] = field(default_factory=lambda: tuple(
         o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()))
+    # Background clean-up task (reconciler.py): finishes check-ins whose phone never retried.
+    reconciler_enabled: bool = field(default_factory=lambda: _bool("RECONCILER_ENABLED", True))
+    reconcile_interval_s: float = field(default_factory=lambda: float(os.getenv("RECONCILE_INTERVAL_S", "15")))
+    # Only items stored longer ago than this are touched, leaving in-flight requests alone.
+    reconcile_grace_s: float = field(default_factory=lambda: float(os.getenv("RECONCILE_GRACE_S", "30")))
+    reconcile_batch: int = field(default_factory=lambda: int(os.getenv("RECONCILE_BATCH", "100")))
+    # Leader lease length. Another replica takes over within about this + one interval.
+    leader_lease_ms: int = field(default_factory=lambda: int(os.getenv("LEADER_LEASE_MS", "45000")))
     # Login (Cognito, issue 1.5) isn't built yet. When true, a Bearer token is required.
     auth_required: bool = field(default_factory=lambda: _bool("AUTH_REQUIRED", False))
 

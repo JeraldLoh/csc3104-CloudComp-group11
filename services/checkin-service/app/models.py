@@ -74,6 +74,11 @@ class CheckinBatch(BaseModel):
         return sorted(items, key=lambda c: c.seq)
 
 
+def iso_ms(dt: datetime) -> str:
+    """2026-10-12T08:15:30.000Z: always milliseconds, so stored times sort correctly as text."""
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.") + f"{dt.microsecond // 1000:03d}Z"
+
+
 def iso_z(dt: datetime) -> str:
     """2026-10-12T08:15:30Z (contract time format; milliseconds kept if present)."""
     dt = dt.astimezone(timezone.utc)

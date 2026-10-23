@@ -22,6 +22,7 @@ from .config import Settings, settings as default_settings
 from .live_state import LiveState
 from .models import Checkin, CheckinBatch
 from .queue import CheckinQueue
+from .reconciler import LeaderLease, Reconciler, replica_id
 from .service import CheckinService
 from .store import CheckinStore
 
@@ -56,8 +57,17 @@ class AuthError(Exception):
 def create_app(service: CheckinService | None = None, s: Settings = default_settings) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        app.state.service = service or build_service(s)
+        svc = service or build_service(s)
+        app.state.service = svc
+        app.state.reconciler = None
+        if s.reconciler_enabled:
+            lease = LeaderLease(svc.state.r, replica_id(), s.leader_lease_ms)
+            rec = Reconciler(svc, lease, s.reconcile_interval_s, s.reconcile_grace_s, s.reconcile_batch)
+            rec.start()
+            app.state.reconciler = rec
         yield
+        if app.state.reconciler:
+            await app.state.reconciler.stop()
 
     app = FastAPI(title="CareRoute Check-in Service", lifespan=lifespan)
     if s.cors_origins:

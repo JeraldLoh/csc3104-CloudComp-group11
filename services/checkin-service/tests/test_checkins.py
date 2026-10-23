@@ -1,4 +1,5 @@
 """Tests run without Docker: moto fakes DynamoDB and SQS, fakeredis fakes Redis (with Lua)."""
+import dataclasses
 import json
 import os
 from datetime import datetime, timedelta, timezone
@@ -73,7 +74,8 @@ def env():
             state=LiveState(r, 86400, 10, 100),
             queue=CheckinQueue(sqs, QUEUE),
         )
-        app = create_app(service=service, s=Settings())
+        # Clean-up task off here; it has its own tests (test_reconciler.py).
+        app = create_app(service=service, s=dataclasses.replace(Settings(), reconciler_enabled=False))
         with TestClient(app, raise_server_exceptions=False) as client:
             yield Env(client, r, sqs, queue_url,
                       boto3.resource("dynamodb", region_name=REGION).Table(TABLE), service)

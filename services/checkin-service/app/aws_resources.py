@@ -11,18 +11,33 @@ from botocore.exceptions import ClientError
 log = logging.getLogger("checkin.resources")
 
 
+PENDING_INDEX_SPEC = {
+    "IndexName": "pending-index",
+    "KeySchema": [
+        {"AttributeName": "pending", "KeyType": "HASH"},
+        {"AttributeName": "receivedAt", "KeyType": "RANGE"},
+    ],
+    "Projection": {"ProjectionType": "ALL"},
+}
+
+ATTRIBUTES = [
+    {"AttributeName": "tripId", "AttributeType": "S"},
+    {"AttributeName": "seq", "AttributeType": "N"},
+    {"AttributeName": "pending", "AttributeType": "S"},
+    {"AttributeName": "receivedAt", "AttributeType": "S"},
+]
+
+
 def ensure_table(dynamodb_client, table_name: str) -> None:
     try:
         dynamodb_client.create_table(
             TableName=table_name,
-            AttributeDefinitions=[
-                {"AttributeName": "tripId", "AttributeType": "S"},
-                {"AttributeName": "seq", "AttributeType": "N"},
-            ],
+            AttributeDefinitions=ATTRIBUTES,
             KeySchema=[
                 {"AttributeName": "tripId", "KeyType": "HASH"},
                 {"AttributeName": "seq", "KeyType": "RANGE"},
             ],
+            GlobalSecondaryIndexes=[PENDING_INDEX_SPEC],
             BillingMode="PAY_PER_REQUEST",
         )
         dynamodb_client.get_waiter("table_exists").wait(TableName=table_name)
@@ -30,6 +45,15 @@ def ensure_table(dynamodb_client, table_name: str) -> None:
     except ClientError as e:
         if e.response["Error"]["Code"] != "ResourceInUseException":
             raise
+        # Table from an older version of this service: add the index if it's missing.
+        gsis = dynamodb_client.describe_table(TableName=table_name)["Table"].get("GlobalSecondaryIndexes", [])
+        if not any(g["IndexName"] == "pending-index" for g in gsis):
+            dynamodb_client.update_table(
+                TableName=table_name,
+                AttributeDefinitions=ATTRIBUTES,
+                GlobalSecondaryIndexUpdates=[{"Create": PENDING_INDEX_SPEC}],
+            )
+            log.info("added pending-index to %s", table_name)
     try:
         dynamodb_client.update_time_to_live(
             TableName=table_name,

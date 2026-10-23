@@ -15,16 +15,19 @@ Steps 3-5 are safe to repeat, so a check-in is never lost and never needs manual
 
 The cost is that the Coordinator may occasionally get the same check-in twice (at-least-once
 delivery). contracts/queues.md already requires it to ignore repeated tripId + seq.
+
+If the phone never retries (its battery died right after a failed attempt), the clean-up
+task (reconciler.py) finds the stuck item and finishes steps 3-5 for it instead.
 """
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 
 from .live_state import LiveState
-from .models import Checkin, iso_z
+from .models import Checkin, iso_ms
 from .queue import CheckinQueue
-from .store import CheckinStore
+from .store import CheckinStore, item_to_checkin
 
 log = logging.getLogger("checkin")
 
@@ -58,7 +61,7 @@ class CheckinService:
 
     def ingest(self, c: Checkin, now: datetime | None = None) -> Outcome:
         now = now or datetime.now(timezone.utc)
-        result = self.store.put_new(c, received_at=iso_z(now))
+        result = self.store.put_new(c, received_at=iso_ms(now))
 
         if not result.created and result.enqueued:
             return Outcome.DUPLICATE
@@ -66,10 +69,34 @@ class CheckinService:
         if result.created and not c.bufferedOffline:
             self.state.heartbeat(c.tripId, now, record_interval=True)
 
+        self.finish(c)
+        return Outcome.ACCEPTED if result.created else Outcome.RECOVERED
+
+    def finish(self, c: Checkin) -> None:
+        """Steps 3-5. Each is safe to repeat, so a retry, the clean-up task, or both at
+        once can run this for the same check-in without harm (at worst the Coordinator
+        receives a second copy, which it ignores)."""
         self.state.apply(c)
         self.queue.send(c)
         self.store.mark_enqueued(c.tripId, c.seq)
-        return Outcome.ACCEPTED if result.created else Outcome.RECOVERED
+
+    def reconcile_once(self, grace_s: float, limit: int = 100, now: datetime | None = None) -> int:
+        """Finish check-ins stored more than `grace_s` ago that never reached the queue.
+        The grace period leaves in-flight requests and quick phone retries to finish
+        their own work first. Returns how many were finished."""
+        now = now or datetime.now(timezone.utc)
+        cutoff = iso_ms(now - timedelta(seconds=grace_s))
+        done = 0
+        for candidate in self.store.find_stuck(cutoff, limit):
+            # The index lags slightly behind the table: re-read before acting.
+            item = self.store.get(candidate["tripId"], int(candidate["seq"]))
+            if not item or item.get("enqueued"):
+                continue
+            c = item_to_checkin(item)
+            self.finish(c)
+            done += 1
+            log.info("reconciled stuck check-in %s#%s", c.tripId, c.seq)
+        return done
 
     def ingest_one(self, c: Checkin) -> Counts:
         counts = Counts()

@@ -48,11 +48,26 @@ Resources:
           AttributeType: S
         - AttributeName: seq
           AttributeType: "N"
+        - AttributeName: pending
+          AttributeType: S
+        - AttributeName: receivedAt
+          AttributeType: S
       KeySchema:
         - AttributeName: tripId
           KeyType: HASH
         - AttributeName: seq
           KeyType: RANGE
+      # Sparse index: only check-ins not yet on the queue have `pending`, so this index
+      # stays tiny and the clean-up task finds stuck ones with a single cheap query.
+      GlobalSecondaryIndexes:
+        - IndexName: pending-index
+          KeySchema:
+            - AttributeName: pending
+              KeyType: HASH
+            - AttributeName: receivedAt
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
       TimeToLiveSpecification:
         AttributeName: expiresAt
         Enabled: true
@@ -128,6 +143,11 @@ Resources:
                 # DescribeTable: the /ready check.
                 Action: [dynamodb:PutItem, dynamodb:GetItem, dynamodb:UpdateItem, dynamodb:DescribeTable]
                 Resource: !GetAtt CheckinsTable.Arn
+              - Sid: PendingIndex
+                Effect: Allow
+                # The clean-up task lists stuck check-ins. Query on this index only.
+                Action: [dynamodb:Query]
+                Resource: !Sub "${CheckinsTable.Arn}/index/pending-index"
               - Sid: CheckinsQueue
                 Effect: Allow
                 Action: [sqs:SendMessage, sqs:GetQueueUrl, sqs:GetQueueAttributes]
