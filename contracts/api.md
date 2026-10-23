@@ -17,10 +17,17 @@ No endpoints apart from `/health`. It runs on a timer and sends `problem-report-
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
-| POST | `/api/checkins` | `checkin.json` | `202 {"accepted": 1, "duplicates": 0}` |
-| POST | `/api/checkins/batch` | `checkin-batch.json` | `202 {"accepted": 2, "duplicates": 0}` |
+| POST | `/api/checkins` | `checkin.json` | `202 {"accepted": 1, "duplicates": 0, "processed": 1}` |
+| POST | `/api/checkins/batch` | `checkin-batch.json` | `202 {"accepted": 2, "duplicates": 0, "processed": 2}` |
+| GET | `/metrics` | — | Prometheus metrics |
 
 Duplicates (same `tripId` + `seq`) are accepted but ignored, so the app can safely retry.
+
+`processed` (added, optional): how many of the request's check-ins, oldest first, were handled. A
+busy server stops a batch after about 1 s; the sender removes those and sends the rest next.
+
+`503` with `{"error": {"code": "overloaded"}}` and a `Retry-After` header (seconds): the replica is at
+capacity and did nothing; retry after that long (plus random extra).
 
 ## Coordinator and Aggregator (Member 3)
 

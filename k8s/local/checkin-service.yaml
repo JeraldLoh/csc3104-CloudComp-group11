@@ -16,6 +16,10 @@ spec:
   template:
     metadata:
       labels: { app: checkin-service }
+      annotations:   # lets a Prometheus server find the service's metrics
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: /metrics
     spec:
       containers:
         - name: checkin-service

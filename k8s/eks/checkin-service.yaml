@@ -24,6 +24,10 @@ spec:
   template:
     metadata:
       labels: { app: checkin-service }
+      annotations:   # lets a Prometheus server find the service's metrics
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: /metrics
     spec:
       serviceAccountName: checkin-service
       # Put the two replicas in different Availability Zones where possible, so losing
