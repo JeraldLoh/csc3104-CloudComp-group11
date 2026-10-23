@@ -35,7 +35,8 @@ plt.rcParams.update({
 
 def save(fig, name):
     FIGS.mkdir(exist_ok=True)
-    fig.tight_layout(pad=0.4)
+    if not fig.legends:  # figures with a shared legend lay themselves out
+        fig.tight_layout(pad=0.4)
     for ext in ("pdf", "png"):
         fig.savefig(FIGS / f"{name}.{ext}", bbox_inches="tight")
     plt.close(fig)
@@ -119,7 +120,8 @@ def fig_e2(summary):
     e2 = summary.get("E2") or {}
     if not e2:
         return
-    fig, (a1, a2) = plt.subplots(2, 1, figsize=(3.5, 3.4), sharex=True)
+    fig, (a1, a2) = plt.subplots(2, 1, figsize=(3.5, 3.7), sharex=True)
+    handles = []
     series = (("lockstep", BASELINE, "--", "No randomness (lockstep)"),
               ("jitter-retries", MIDDLE, ":", "Random retry delays"),
               ("full", DESIGN, "-", "Random retry delays + spread reconnect"))
@@ -130,18 +132,20 @@ def fig_e2(summary):
             continue
         xs = [i * v["bin_s"] for i in range(len(v["offered_per_s"]))]
         xmax = max(xmax, xs[-1])
-        if key != "jitter-retries":
-            a1.plot(xs, v["offered_per_s"], color=colour, linestyle=style, linewidth=1.2, label=label)
-        a2.plot(xs, v["delivered_pct"], color=colour, linestyle=style, linewidth=1.8, label=label)
+        if key != "jitter-retries":  # (a) shows the two extremes; the middle one sits between
+            a1.plot(xs, v["offered_per_s"], color=colour, linestyle=style, linewidth=1.2)
+        (h,) = a2.plot(xs, v["delivered_pct"], color=colour, linestyle=style, linewidth=1.8, label=label)
+        handles.append(h)
+        phones = v.get("phones", "all")
     a1.set_ylabel("Requests per second")
     a1.set_title("(a) Load on the server", loc="left", color=INK)
-    a1.legend(loc="upper right", fontsize=6.5)
     a2.set_ylabel("Backlog delivered (%)")
-    a2.set_xlabel("Seconds after 200 phones regain signal at once")
+    a2.set_xlabel(f"Seconds after {phones} phones regain signal at once")
     a2.set_title("(b) Progress", loc="left", color=INK)
     a2.set_ylim(0, 105)
     a2.set_xlim(0, xmax)
-    a2.legend(loc="lower right", fontsize=6.5)
+    fig.legend(handles=handles, loc="upper center", ncol=1, fontsize=6.5, bbox_to_anchor=(0.55, 1.0))
+    fig.tight_layout(pad=0.4, rect=(0, 0, 1, 0.86))
     save(fig, "e2-reconnect-storm")
 
 

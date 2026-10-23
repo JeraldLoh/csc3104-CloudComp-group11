@@ -125,6 +125,8 @@ def e2_timeline(d, bin_ms=500) -> dict:
         delivered.append(pct(i, total))
     last = (acks[-1] - reconnect) / 1000 if acks else None
     return {
+        "phones": len(d["phones"]),
+        "backlog_per_phone": total // max(1, len(d["phones"])),
         "bin_s": bin_ms / 1000,
         "offered_per_s": [x * 1000 / bin_ms for x in offered],
         "shed_per_s": [x * 1000 / bin_ms for x in shed],
