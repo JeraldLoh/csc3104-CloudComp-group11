@@ -1,3 +1,4 @@
+import type { SendResult } from "../src/lib/api";
 import { RequestQueue } from "../src/lib/requests";
 import { FakeTransport, freshDb } from "./helpers";
 
@@ -73,5 +74,22 @@ describe("RequestQueue", () => {
     expect(second.state.pending).toHaveLength(0);
     expect(second.state.lastDone?.label).toBe("help");
     second.dispose();
+  });
+
+  it("disposed while a request is out (database closed): stops cleanly, nothing more sent", async () => {
+    const { db, transport } = await setup();
+    const q = new RequestQueue(db, transport, { random: () => 0.5, baseMs: 1 });
+    let answer!: (r: SendResult) => void;
+    transport.respond = () => new Promise<SendResult>((r) => (answer = r));
+    const adding = q.add("help", "/api/help", {});
+    await vi.waitFor(() => expect(transport.calls).toHaveLength(1));
+    q.dispose();
+    db.close();
+    answer({ kind: "retry", reason: "timeout" });
+    await adding;
+    await new Promise((r) => setTimeout(r, 20)); // a 1 ms backoff would have fired by now
+    expect(transport.calls).toHaveLength(1);
+    await q.retryNow();
+    expect(transport.calls).toHaveLength(1);
   });
 });

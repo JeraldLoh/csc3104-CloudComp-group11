@@ -21,6 +21,7 @@ export class RequestQueue {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private failures = 0;
   private listeners = new Set<(s: RequestQueueState) => void>();
+  private disposed = false; // stopped for good; see Sender.dispose
   state: RequestQueueState = { pending: [], lastError: null, lastDone: null };
 
   constructor(
@@ -42,12 +43,14 @@ export class RequestQueue {
   }
 
   retryNow(): Promise<void> {
+    if (this.disposed) return Promise.resolve();
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     return this.flush();
   }
 
   flush(): Promise<void> {
+    if (this.disposed) return Promise.resolve();
     if (this.running) {
       this.rerun = true;
       return this.running;
@@ -57,7 +60,7 @@ export class RequestQueue {
         do {
           this.rerun = false;
           await this.drain();
-        } while (this.rerun);
+        } while (this.rerun && !this.disposed);
       } finally {
         this.running = null;
         await this.refresh();
@@ -78,6 +81,7 @@ export class RequestQueue {
     let retryAfterMs: number | undefined;
     for (const req of all) {
       const r = await this.transport.post(req.path, req.body);
+      if (this.disposed) return; // the database may be closed; it's resent (deduplicated) next time
       if (r.kind === "ok" || r.kind === "invalid") {
         // invalid (e.g. 404 trip not found) won't get better by retrying.
         await this.db.delete("requests", req.id!);
@@ -94,8 +98,8 @@ export class RequestQueue {
       this.update({ lastError: `${req.label}: ${r.kind === "retry" ? r.reason : "log in again"}` });
       await this.refresh(); // the help screen watches attempts to decide when to say "call now"
     }
-    if (!failed) {
-      this.failures = 0;
+    if (!failed || this.disposed) {
+      if (!failed) this.failures = 0;
       return;
     }
     this.failures += 1;
@@ -108,6 +112,7 @@ export class RequestQueue {
   }
 
   private async refresh() {
+    if (this.disposed) return;
     this.update({ pending: await this.db.getAll("requests") });
   }
 
@@ -117,7 +122,9 @@ export class RequestQueue {
   }
 
   dispose() {
+    this.disposed = true;
     if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
     this.listeners.clear();
   }
 }

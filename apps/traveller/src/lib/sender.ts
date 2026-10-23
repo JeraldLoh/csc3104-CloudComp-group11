@@ -22,6 +22,10 @@
 //  * Coming back online retries after a short random delay (0-2 s): many phones regain
 //    signal at the same moment (a cell tower or train coming back), so this spreads
 //    their catch-up batches. Returning to the app retries straight away.
+//  * Once disposed (the screen closed, or the app switched trip), the sender stops for
+//    good: a request still in flight finishes, but its answer is ignored and nothing
+//    more is sent or written. The database may already be closed, and a new sender may
+//    own the outbox; anything not removed is simply resent later (the server dedupes).
 import { asAck, type SendResult, type Transport } from "./api";
 import type { Outbox } from "./outbox";
 import type { OutboxItem } from "./db";
@@ -91,6 +95,7 @@ export class Sender {
   private timer: unknown = null;
   private listeners = new Set<(s: SenderState) => void>();
   private keepaliveNext = false;
+  private disposed = false;
 
   state: SenderState = {
     pending: 0, sending: false, consecutiveFailures: 0, nextRetryAt: null, lastSuccessAt: null,
@@ -120,6 +125,7 @@ export class Sender {
 
   /** Ask for a flush. Safe to call as often as you like. Waits out a running backoff. */
   flush(opts: { keepalive?: boolean } = {}): Promise<void> {
+    if (this.disposed) return Promise.resolve();
     if (opts.keepalive) this.keepaliveNext = true;
     if (this.timer !== null) {
       // Backing off: leave new check-ins in the outbox; the timer sends them all together.
@@ -134,7 +140,7 @@ export class Sender {
         do {
           this.rerun = false;
           await this.d.withLock(() => this.drain());
-        } while (this.rerun);
+        } while (this.rerun && !this.disposed);
       } finally {
         this.running = null;
         await this.refreshPending();
@@ -148,6 +154,7 @@ export class Sender {
    * either now or after a random delay of up to `jitterMs` (used on reconnect).
    */
   retryNow(opts: { jitterMs?: number } = {}): Promise<void> {
+    if (this.disposed) return Promise.resolve();
     this.cancelTimer();
     this.state.nextRetryAt = null;
     const wait = opts.jitterMs ? Math.floor(this.d.random() * opts.jitterMs) : 0;
@@ -168,6 +175,7 @@ export class Sender {
     this.update({ sending: true });
     try {
       for (;;) {
+        if (this.disposed) return;
         const items = await this.d.outbox.peek(this.d.maxBatch);
         if (items.length === 0) {
           this.update({ consecutiveFailures: 0, nextRetryAt: null });
@@ -180,6 +188,7 @@ export class Sender {
           return;
         }
         const result = await this.send(items);
+        if (this.disposed) return; // closed while the request was out: leave the outbox alone
         if (!(await this.handle(result, items))) return;
       }
     } finally {
@@ -225,6 +234,7 @@ export class Sender {
           // One bad check-in shouldn't block the rest. Send them one by one to find it.
           for (const item of items) {
             const single = await this.d.transport.postCheckin(item.checkin);
+            if (this.disposed) return false;
             if (!(await this.handle(single, [item]))) return false;
           }
           return true;
@@ -251,6 +261,7 @@ export class Sender {
 
   private schedule(ms: number) {
     this.cancelTimer();
+    if (this.disposed) return;
     this.timer = this.d.setTimer(() => {
       this.timer = null;
       void this.flush();
@@ -263,6 +274,7 @@ export class Sender {
   }
 
   private async refreshPending() {
+    if (this.disposed) return;
     this.update({ pending: await this.d.outbox.count() });
   }
 
@@ -271,7 +283,9 @@ export class Sender {
     for (const fn of this.listeners) fn(this.state);
   }
 
+  /** Stop for good. Safe to call while a request is in flight (see the rules above). */
   dispose() {
+    this.disposed = true;
     this.cancelTimer();
     this.listeners.clear();
   }

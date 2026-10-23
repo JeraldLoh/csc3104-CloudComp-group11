@@ -1,3 +1,5 @@
+import type { SendResult } from "../src/lib/api";
+import { Outbox } from "../src/lib/outbox";
 import { backoffDelay, retryDelay, Sender } from "../src/lib/sender";
 import { draft, FakeTransport, makeOutbox, ManualTimers, noLock } from "./helpers";
 
@@ -296,5 +298,54 @@ describe("partial batch answers", () => {
     await outbox.enqueue(draft(), { offline: false });
     await sender.flush();
     expect(await outbox.count()).toBe(0);
+  });
+
+});
+
+describe("Sender after dispose", () => {
+  it("disposed while a request is out (screen closed, database closed): stops cleanly", async () => {
+    const { db, outbox } = await makeOutbox();
+    const transport = new FakeTransport();
+    const timers = new ManualTimers();
+    let answer!: (r: SendResult) => void;
+    transport.respond = () => new Promise<SendResult>((r) => (answer = r));
+    const sender = new Sender({ outbox, transport, withLock: noLock, isOnline: () => true, random: () => 0.5,
+      setTimer: timers.set, clearTimer: timers.clear });
+    for (let i = 0; i < 3; i++) await outbox.enqueue(draft({ stepIndex: i }), { offline: true });
+    const flushing = sender.flush();
+    await vi.waitFor(() => expect(transport.calls).toHaveLength(1));
+
+    sender.dispose();
+    db.close(); // what the app does next when the screen unmounts
+    answer({ kind: "retry", reason: "timeout" });
+    await flushing; // no "database closed" error
+    expect(transport.calls).toHaveLength(1); // nothing more sent
+    expect(timers.pending).toHaveLength(0); // no retry scheduled by a dead sender
+    await sender.flush();
+    await sender.retryNow();
+    expect(transport.calls).toHaveLength(1);
+  });
+
+  it("a disposed sender ignores a late success; the next sender resends and the server dedupes", async () => {
+    const { db, outbox } = await makeOutbox();
+    const transport = new FakeTransport();
+    let answer!: (r: SendResult) => void;
+    transport.respond = () => new Promise<SendResult>((r) => (answer = r));
+    const old = new Sender({ outbox, transport, withLock: noLock, isOnline: () => true });
+    await outbox.enqueue(draft(), { offline: false });
+    await outbox.enqueue(draft(), { offline: false });
+    const flushing = old.flush();
+    await vi.waitFor(() => expect(transport.calls).toHaveLength(1));
+    old.dispose();
+    answer({ kind: "ok", body: { accepted: 2, duplicates: 0, processed: 2 } });
+    await flushing;
+    expect(await outbox.count()).toBe(2); // left alone: the new sender owns the outbox now
+
+    transport.respond = () => ({ kind: "ok", body: { accepted: 0, duplicates: 2, processed: 2 } });
+    const next = new Sender({ outbox: new Outbox(db), transport, withLock: noLock, isOnline: () => true });
+    await next.flush();
+    expect(await outbox.count()).toBe(0);
+    expect(next.state.duplicates).toBe(2);
+    next.dispose();
   });
 });

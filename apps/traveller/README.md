@@ -41,7 +41,7 @@ to Amplify (which gives https).
 ## Tests
 
 ```powershell
-npm test          # 84 tests: outbox, sender, tracker, request queue, HTTP, offline, route updates, wake lock
+npm test          # 97 tests: outbox, sender, tracker, request queue, HTTP, offline, route updates, wake lock, backoff, partial batches, shutdown
 npm run typecheck
 ```
 
