@@ -1,8 +1,10 @@
-"""Creates this service's DynamoDB tables in LocalStack (CREATE_RESOURCES=true, local only).
+"""Creates this service's DynamoDB tables and the disruptions queue in LocalStack
+(CREATE_RESOURCES=true, local only).
 
-On AWS these tables come from the platform stack (cloudformation/careroute-vpc-eks-standard.yaml);
-the keys and indexes here must match it. Safe to run repeatedly.
+On AWS these come from the platform stack (cloudformation/careroute-vpc-eks-standard.yaml);
+the keys, indexes and queue settings here must match it. Safe to run repeatedly.
 """
+import json
 import logging
 
 from botocore.exceptions import ClientError
@@ -82,3 +84,18 @@ def ensure_tables(dynamodb_client) -> None:
                 # Raised when TTL is already enabled.
                 if e.response["Error"]["Code"] != "ValidationException":
                     raise
+
+
+def ensure_queue(sqs_client, queue_name: str, visibility_timeout_s: int = 60) -> str:
+    """contracts/queues.md (careroute-disruptions): standard queue, visibility 60 s, long polling 20 s,
+    after 5 failed attempts a message moves to <queue_name>-dlq. Returns the queue URL."""
+    dlq_url = sqs_client.create_queue(QueueName=f"{queue_name}-dlq")["QueueUrl"]
+    dlq_arn = sqs_client.get_queue_attributes(QueueUrl=dlq_url, AttributeNames=["QueueArn"])["Attributes"]["QueueArn"]
+    url = sqs_client.create_queue(QueueName=queue_name)["QueueUrl"]
+    sqs_client.set_queue_attributes(QueueUrl=url, Attributes={
+        "VisibilityTimeout": str(visibility_timeout_s),
+        "ReceiveMessageWaitTimeSeconds": "20",
+        "RedrivePolicy": json.dumps({"deadLetterTargetArn": dlq_arn, "maxReceiveCount": "5"}),
+    })
+    log.info("queue ready %s", url)
+    return url
