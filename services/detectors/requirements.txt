@@ -1,1 +1,2 @@
 pydantic>=2.6,<3
+redis>=5,<7
