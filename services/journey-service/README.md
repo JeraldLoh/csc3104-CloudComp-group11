@@ -15,7 +15,8 @@ The service has two deployable parts that share a little code, so the files are 
 | File | API container | Lambda (disruption checker) |
 |---|---|---|
 | `main.py` (FastAPI endpoints), `models.py`, `auth.py`, `demo_map.html` | yes | no |
-| `journey_client.py` (the API's logic in one class: OneMap, planning, routes, trips, packs, easy-read) | yes | no |
+| `journey_client.py` (the API's logic in one class: OneMap, planning, routes, trips, packs) | yes | no |
+| `easy_read.py` (plain-language wording for route steps, no imports from the rest of `app/`) | yes | no |
 | `route_store.py`, `trip_store.py`, `pack_store.py` (DynamoDB / Redis / S3 storage) | yes | no |
 | `lta.py` (LTA DataMall client), `cache.py` (Redis JSON cache), `config.py` (settings) | yes | **yes** (shared) |
 | `disruption.py` (`DisruptionChecker`), `lambda_handler.py` (entry point) | not used | **yes** |
@@ -248,7 +249,7 @@ AWS rejects it.
 
 ## Easy-read wording
 
-`JourneyClient.easy_read(step)` writes short plain-language text for each step, e.g. "At Opposite Fengshan Primary
+`easy_read(step)` in `app/easy_read.py` writes short plain-language text for each step, e.g. "At Opposite Fengshan Primary
 School, wait for bus number 45. Get on and tap your card. Get off at Tanah Merah Station Exit 2 after 5 stops."
 It uses only the step's own facts (bus number, station names, stop count), so nothing can be invented. Plans and saved
 routes get it automatically; text a caregiver wrote is kept. Bus and train steps carry an extra `stopCount` field.

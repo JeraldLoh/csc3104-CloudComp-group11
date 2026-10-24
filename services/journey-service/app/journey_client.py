@@ -27,6 +27,7 @@ import httpx
 from .auth import Caller, Forbidden
 from .cache import JsonCache
 from .config import Settings
+from .easy_read import LINE_NAMES, easy_read, with_easy_read
 from .lta import LINE_CODES, SST, LtaClient, LtaError
 from .onemap_token import OneMapToken
 from .pack_store import PackUnavailable
@@ -38,12 +39,6 @@ log = logging.getLogger("journey")
 EARTH_RADIUS_M = 6_371_000.0
 
 ONEMAP_MODES = {"any": "TRANSIT", "bus": "BUS", "train": "RAIL"}   # plan() `mode` -> OneMap `mode`
-LINE_NAMES = {
-    "NS": "North South Line", "EW": "East West Line", "NE": "North East Line",
-    "CC": "Circle Line", "DT": "Downtown Line", "TE": "Thomson-East Coast Line",
-    "CG": "East West Line (Changi branch)", "BP": "Bukit Panjang LRT",
-    "SE": "Sengkang LRT", "SW": "Sengkang LRT", "PE": "Punggol LRT", "PW": "Punggol LRT",
-}
 CROWD_RANK = {None: 0, "low": 0, "moderate": 1, "high": 2}       # unknown counts as low when comparing options
 REALTIME_WITHIN = timedelta(minutes=20)           # a train leg starting later than this uses the crowd forecast
 SORTS = {                                        # plan(sort_by=...) -> sort key over an option
@@ -53,10 +48,6 @@ SORTS = {                                        # plan(sort_by=...) -> sort key
                            o["summary"]["walkDistanceM"]),
 }
 SERIOUS_INCIDENTS = {"Accident", "Road Block", "Fire", "Diversion", "Reverse Flow"}
-
-# Short forms in LTA stop names, spelled out for the plain-language text only (longest first).
-EASY_WORDS = [(r"\bPr Sch\b", "Primary School"), (r"\bSec Sch\b", "Secondary School"), (r"\bOpp\b", "Opposite"),
-              (r"\bStn\b", "Station"), (r"\bBlk\b", "Block"), (r"\bInt\b", "Interchange"), (r"\bSch\b", "School")]
 
 # Standard texts for the traveller's phone (contracts/examples/route-pack.json).
 PACK_MESSAGES = {
@@ -425,43 +416,8 @@ class JourneyClient:
             # Every station on the leg, so check_disruptions() can tell whether an MRT fault falls between the two ends.
             every = [leg["from"], *(leg.get("intermediateStops") or []), leg["to"]]
             step["stops"] = [{"code": s.get("stopCode"), "name": pretty(s.get("name"))} for s in every]
-        step["easyRead"] = cls.easy_read(step)
+        step["easyRead"] = easy_read(step)
         return step
-
-    @staticmethod
-    def easy_read(step: dict) -> str:
-        """Short plain-language wording for a step, built only from the step's own facts (no AI, so nothing
-        can be invented): the bus number, station names and stop count are copied from the route.
-        An AI rewrite can sit on top of this later and fall back to it."""
-        def plain(name: str | None) -> str | None:
-            for pattern, full in EASY_WORDS:
-                name = re.sub(pattern, full, name) if name else name
-            return name
-
-        start = plain((step.get("from") or {}).get("name"))
-        end = plain((step.get("to") or {}).get("name")) or "your destination"
-        line = step.get("line")
-        count = step.get("stopCount")
-        if count is None:                                    # older routes only have it inside the instruction
-            found = re.search(r"\((\d+) stops?\)", step.get("instruction") or "")
-            count = int(found.group(1)) if found else None
-        stops = None if count is None else f"{count} stop" + ("" if count == 1 else "s")
-        minutes = math.ceil((step.get("expectedDurationS") or 0) / 60)
-
-        if step.get("mode") == "bus" and line:
-            text = [f"At {start}, wait for bus number {line}." if start else f"Wait for bus number {line}.",
-                    "Get on and tap your card.",
-                    f"Get off at {end}" + (f" after {stops}." if stops else ".")]
-        elif step.get("mode") == "train":
-            name = LINE_NAMES.get(line, f"{line} line") if line else "MRT"
-            text = [f"Get on the {name} train" + (f" at {start}." if start else "."),
-                    f"Stay on the train for {stops}." if stops else "Stay on the train.",
-                    f"Get off at {end}."]
-        elif step.get("mode") == "walk":
-            text = [f"Walk to {end}."] + ([f"It takes about {minutes} minutes."] if minutes >= 2 else [])
-        else:
-            return step.get("instruction") or ""
-        return " ".join(text)
 
     @staticmethod
     def _leg_path(leg: dict) -> list[tuple[float, float]]:
@@ -669,7 +625,7 @@ class JourneyClient:
             if data.get("caregiverId") != caller.id:
                 raise Forbidden("A route can only be saved as yourself: caregiverId must be your own id.")
         store = self._route_store()
-        route = {**self._with_easy_read(data), "version": 1, "approved": False, "updatedAt": self._now_iso()}
+        route = {**with_easy_read(data), "version": 1, "approved": False, "updatedAt": self._now_iso()}
         for _ in range(5):                       # ids are random; a clash is vanishingly rare
             candidate = self._ordered({**route, "routeId": "R-" + secrets.token_hex(3).upper()})
             try:
@@ -693,7 +649,7 @@ class JourneyClient:
         for field in ("travellerId", "caregiverId"):
             if data.get(field) != current[field]:
                 raise RouteInvalid(f"{field} can't be changed on a saved route")
-        route = self._ordered({**self._with_easy_read(data), "routeId": route_id, "version": current["version"] + 1,
+        route = self._ordered({**with_easy_read(data), "routeId": route_id, "version": current["version"] + 1,
                                "approved": False, "updatedAt": self._now_iso()})
         self._route_store().replace(route, expected_version)
         return route
@@ -716,12 +672,6 @@ class JourneyClient:
         if caller is not None:
             routes = [r for r in routes if self._participates(caller, r)]
         return sorted(routes, key=lambda r: r["updatedAt"], reverse=True)
-
-    @classmethod
-    def _with_easy_read(cls, data: dict) -> dict:
-        """Fills in easy-read wording for steps that have none; text a caregiver wrote is kept."""
-        steps = [{**s, "easyRead": s.get("easyRead") or cls.easy_read(s)} for s in data["steps"]]
-        return {**data, "steps": steps}
 
     @staticmethod
     def _ordered(route: dict) -> dict:
@@ -865,7 +815,7 @@ class JourneyClient:
             target = step.get("to") or {}
             steps.append({
                 "stepIndex": step["stepIndex"], "mode": step["mode"],
-                "easyRead": step.get("easyRead") or self.easy_read(step),
+                "easyRead": step.get("easyRead") or easy_read(step),
                 "lat": target.get("lat"), "lng": target.get("lng"),     # where this step ends
                 "underground": step.get("underground"),
                 "photoUrl": step.get("photoKey"), "audioUrl": step.get("audioKey"),
