@@ -1,4 +1,4 @@
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["."]
+pythonpath = [".", "../.."]  # "../.." is the repo root, so tests can import tools.simulator
 addopts = "-q"
