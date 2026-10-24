@@ -1,0 +1,23 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cloud-fastapi
+  namespace: careroute
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip        # required for Fargate
+    # TODO: AlbSecurityGroupId output from the stack (otherwise the controller makes its own SG)
+    alb.ingress.kubernetes.io/security-groups: sg-REPLACE_ME
+    alb.ingress.kubernetes.io/healthcheck-path: /health
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+spec:
+  ingressClassName: alb
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: cloud-fastapi
+                port: { number: 8000 }

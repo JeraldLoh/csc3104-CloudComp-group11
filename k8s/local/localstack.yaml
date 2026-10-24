@@ -17,7 +17,7 @@ spec:
           ports: [{ containerPort: 4566 }]
           env:
             - name: SERVICES
-              value: "s3,sqs"
+              value: "s3,sqs,dynamodb,cloudwatch,logs"
             - name: AWS_DEFAULT_REGION
               value: "ap-southeast-1"
             - name: LOCALSTACK_AUTH_TOKEN

@@ -26,3 +26,6 @@ dist/
 
 # Common build output
 build/
+
+# AWS
+iam_policy.json
