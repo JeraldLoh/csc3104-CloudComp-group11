@@ -7,7 +7,17 @@
 # Safe to re-run. The stack is created or updated from the current
 # cloudformation/*.yaml, so edits to the template are picked up on the next run.
 #
+# With --service NAME, only that service is built and deployed onto an existing
+# stack (no CloudFormation or Load Balancer Controller steps):
+#   services/NAME/Dockerfile      image build context
+#   k8s/eks/services/NAME.yaml    manifest; Deployment must be named NAME.
+#                                 Placeholders: __IMAGE__ __NAMESPACE__ __REGION__
+#                                 __REDIS_ENDPOINT__ __CHECKINS_QUEUE_URL__
+#                                 __DISRUPTIONS_QUEUE_URL__
+# The image goes to ECR repository careroute-NAME (created if missing).
+#
 # Usage: ./scripts/macos/deploy.sh [--email you@example.com] [--tag v2]
+#                                  [--service NAME]
 #                                  [--stack-name NAME] [--region REGION]
 # Every option can also be set through the matching environment variable below.
 
@@ -21,15 +31,17 @@ APP_PORT="${APP_PORT:-8000}"
 APP_NAMESPACE="${APP_NAMESPACE:-careroute}"
 BUDGET_EMAIL="${BUDGET_EMAIL:-}"
 IMAGE_TAG="${IMAGE_TAG:-v1}"
+SERVICE="${SERVICE:-}"
 LBC_POLICY_NAME="AWSLoadBalancerControllerIAMPolicy"
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --email)      BUDGET_EMAIL="$2"; shift 2 ;;
     --tag)        IMAGE_TAG="$2"; shift 2 ;;
+    --service)    SERVICE="$2"; shift 2 ;;
     --stack-name) STACK_NAME="$2"; shift 2 ;;
     --region)     REGION="$2"; shift 2 ;;
-    -h|--help)    sed -n '2,14p' "$0"; exit 0 ;;
+    -h|--help)    sed -n '2,22p' "$0"; exit 0 ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
 done
@@ -58,6 +70,72 @@ docker info >/dev/null 2>&1 || die "Docker is not running. Start Docker Desktop 
 ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)" \
   || die "AWS credentials are not configured (run 'aws configure')"
 info "Account $ACCOUNT_ID, region $REGION, stack $STACK_NAME"
+
+# ---------------------------------------------------------------------------
+# --service: build and deploy one service onto the existing stack, then exit.
+if [ -n "$SERVICE" ]; then
+  printf '%s' "$SERVICE" | grep -Eq '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$' \
+    || die "Service name must be lowercase letters, digits and dashes: '$SERVICE'"
+  SERVICE_DIR="$REPO_ROOT/services/$SERVICE"
+  SERVICE_MANIFEST="$REPO_ROOT/k8s/eks/services/$SERVICE.yaml"
+  [ -f "$SERVICE_DIR/Dockerfile" ] || die "No Dockerfile at services/$SERVICE/Dockerfile"
+  [ -f "$SERVICE_MANIFEST" ] || die "No manifest at k8s/eks/services/$SERVICE.yaml"
+
+  STATUS="$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$REGION" \
+    --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo NONE)"
+  case "$STATUS" in
+    CREATE_COMPLETE|UPDATE_COMPLETE) ;;
+    *) die "Stack $STACK_NAME is $STATUS. Run this script without --service first to create it." ;;
+  esac
+
+  CLUSTER_NAME="$(stack_output EksClusterName)"
+  REDIS_ENDPOINT="$(stack_output RedisEndpoint)"
+  CHECKINS_QUEUE_URL="$(stack_output CheckinsQueueUrl)"
+  DISRUPTIONS_QUEUE_URL="$(stack_output DisruptionsQueueUrl)"
+  REPO_NAME="careroute-$SERVICE"
+  ECR_REGISTRY="$ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com"
+  IMAGE="$ECR_REGISTRY/$REPO_NAME:$IMAGE_TAG"
+
+  step "Connecting kubectl to the cluster"
+  aws eks update-kubeconfig --region "$REGION" --name "$CLUSTER_NAME"
+
+  # Created outside the stack, like the S3 bucket; teardown.sh removes careroute-* repos.
+  step "Ensuring ECR repository $REPO_NAME exists"
+  if aws ecr describe-repositories --repository-names "$REPO_NAME" --region "$REGION" >/dev/null 2>&1; then
+    info "Repository already exists"
+  else
+    aws ecr create-repository --repository-name "$REPO_NAME" --region "$REGION" >/dev/null
+    info "Created repository $REPO_NAME"
+  fi
+
+  step "Building and pushing image $IMAGE"
+  aws ecr get-login-password --region "$REGION" | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+  docker build --platform linux/amd64 -t "$IMAGE" "$SERVICE_DIR"
+  docker push "$IMAGE"
+
+  step "Rendering and applying k8s/eks/services/$SERVICE.yaml"
+  RENDERED="$WORK_DIR/$SERVICE.yaml"
+  sed -e "s|__IMAGE__|$IMAGE|g" \
+      -e "s|__NAMESPACE__|$APP_NAMESPACE|g" \
+      -e "s|__REGION__|$REGION|g" \
+      -e "s|__REDIS_ENDPOINT__|$REDIS_ENDPOINT|g" \
+      -e "s|__CHECKINS_QUEUE_URL__|$CHECKINS_QUEUE_URL|g" \
+      -e "s|__DISRUPTIONS_QUEUE_URL__|$DISRUPTIONS_QUEUE_URL|g" \
+      "$SERVICE_MANIFEST" > "$RENDERED"
+  DEPLOYMENT_EXISTED=false
+  kubectl get deployment "$SERVICE" -n "$APP_NAMESPACE" >/dev/null 2>&1 && DEPLOYMENT_EXISTED=true
+  kubectl apply -f "$RENDERED"
+  # Re-pushing the same tag does not change the spec, so force new pods to pull it.
+  if [ "$DEPLOYMENT_EXISTED" = true ]; then
+    kubectl rollout restart deployment/"$SERVICE" -n "$APP_NAMESPACE"
+  fi
+  kubectl rollout status deployment/"$SERVICE" -n "$APP_NAMESPACE" --timeout=10m
+
+  echo
+  printf '\033[1;32mService %s deployed.\033[0m Logs: kubectl logs -n %s deploy/%s -f\n' \
+    "$SERVICE" "$APP_NAMESPACE" "$SERVICE"
+  exit 0
+fi
 
 # ---------------------------------------------------------------------------
 step "Validating CloudFormation template"

@@ -3,7 +3,8 @@
 # order that avoids orphaned resources:
 #   k8s resources (deletes the ALB) -> Load Balancer Controller + its IRSA role ->
 #   leftover controller-made LBs/target groups/security groups ->
-#   CloudFormation stack -> out-of-stack S3 bucket, IAM policy and log groups.
+#   CloudFormation stack -> out-of-stack S3 bucket, careroute-* ECR repositories,
+#   IAM policy and log groups.
 #
 # Nothing about the stack's contents is hardcoded: S3 buckets and ECR repos are
 # looked up from the live stack and emptied before deletion, so resources added
@@ -139,7 +140,8 @@ info "Account $ACCOUNT_ID, region $REGION, stack $STACK_NAME ($STATUS), cluster 
 if [ "$ASSUME_YES" != true ]; then
   echo
   echo "This permanently deletes the stack, the EKS cluster, all DynamoDB tables,"
-  echo "the ECR images and the S3 bucket careroute-files-$ACCOUNT_ID."
+  echo "the ECR images, the careroute-* ECR repositories and the S3 bucket"
+  echo "careroute-files-$ACCOUNT_ID."
   printf 'Type the stack name (%s) to continue: ' "$STACK_NAME"
   read -r CONFIRM
   [ "$CONFIRM" = "$STACK_NAME" ] || die "Aborted."
@@ -226,6 +228,14 @@ if aws s3api head-bucket --bucket "$BUCKET" >/dev/null 2>&1; then
 else
   info "Bucket $BUCKET not found"
 fi
+
+# Per-service repositories created by deploy.sh --service.
+for repo in $(aws ecr describe-repositories --region "$REGION" \
+    --query "repositories[?starts_with(repositoryName, 'careroute-')].repositoryName" \
+    --output text 2>/dev/null); do
+  aws ecr delete-repository --repository-name "$repo" --force --region "$REGION" >/dev/null \
+    && info "Deleted ECR repository $repo"
+done
 
 POLICY_ARN="arn:aws:iam::$ACCOUNT_ID:policy/$LBC_POLICY_NAME"
 if aws iam get-policy --policy-arn "$POLICY_ARN" >/dev/null 2>&1; then

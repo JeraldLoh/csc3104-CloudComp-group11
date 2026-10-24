@@ -9,14 +9,26 @@
   Safe to re-run. The stack is created or updated from the current
   cloudformation\*.yaml, so edits to the template are picked up on the next run.
 
+  With -Service NAME, only that service is built and deployed onto an existing
+  stack (no CloudFormation or Load Balancer Controller steps):
+    services\NAME\Dockerfile      image build context
+    k8s\eks\services\NAME.yaml    manifest; Deployment must be named NAME.
+                                  Placeholders: __IMAGE__ __NAMESPACE__ __REGION__
+                                  __REDIS_ENDPOINT__ __CHECKINS_QUEUE_URL__
+                                  __DISRUPTIONS_QUEUE_URL__
+  The image goes to ECR repository careroute-NAME (created if missing).
+
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File scripts\windows\deploy.ps1 -BudgetEmail you@example.com
 .EXAMPLE
   .\scripts\windows\deploy.ps1 -ImageTag v2
+.EXAMPLE
+  .\scripts\windows\deploy.ps1 -Service coordinator
 #>
 param(
   [string]$BudgetEmail = $env:BUDGET_EMAIL,
   [string]$ImageTag = 'v1',
+  [string]$Service = $env:SERVICE,
   [string]$StackName = 'careroute-stack-1',
   [string]$Region = 'ap-southeast-1',
   [string]$ClusterName = 'careroute-cluster-1',
@@ -66,6 +78,77 @@ try {
   $AccountId = Invoke-Quiet { aws sts get-caller-identity --query Account --output text }
   if ($LASTEXITCODE -ne 0) { throw "AWS credentials are not configured (run 'aws configure')" }
   Write-Info "Account $AccountId, region $Region, stack $StackName"
+
+  # ---------------------------------------------------------------------------
+  # -Service: build and deploy one service onto the existing stack, then exit.
+  if ($Service) {
+    if ($Service -cnotmatch '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$') {
+      throw "Service name must be lowercase letters, digits and dashes: '$Service'"
+    }
+    $ServiceDir = Join-Path $RepoRoot "services\$Service"
+    $ServiceManifest = Join-Path $RepoRoot "k8s\eks\services\$Service.yaml"
+    if (-not (Test-Path (Join-Path $ServiceDir 'Dockerfile'))) { throw "No Dockerfile at services\$Service\Dockerfile" }
+    if (-not (Test-Path $ServiceManifest)) { throw "No manifest at k8s\eks\services\$Service.yaml" }
+
+    $Status = Invoke-Quiet { aws cloudformation describe-stacks --stack-name $StackName --region $Region --query 'Stacks[0].StackStatus' --output text }
+    if ($LASTEXITCODE -ne 0 -or -not $Status) { $Status = 'NONE' }
+    if ($Status -notin 'CREATE_COMPLETE', 'UPDATE_COMPLETE') {
+      throw "Stack $StackName is $Status. Run this script without -Service first to create it."
+    }
+
+    $OutputsJson = Invoke-Checked { aws cloudformation describe-stacks --stack-name $StackName --region $Region --query 'Stacks[0].Outputs' --output json }
+    $Outputs = @{}
+    foreach ($o in ($OutputsJson | Out-String | ConvertFrom-Json)) { $Outputs[$o.OutputKey] = $o.OutputValue }
+    $ClusterName = $Outputs['EksClusterName']
+    $RepoName = "careroute-$Service"
+    $EcrRegistry = "$AccountId.dkr.ecr.$Region.amazonaws.com"
+    $Image = "$EcrRegistry/${RepoName}:$ImageTag"
+
+    Write-Step 'Connecting kubectl to the cluster'
+    Invoke-Checked { aws eks update-kubeconfig --region $Region --name $ClusterName }
+
+    # Created outside the stack, like the S3 bucket; teardown.ps1 removes careroute-* repos.
+    Write-Step "Ensuring ECR repository $RepoName exists"
+    Invoke-Quiet { aws ecr describe-repositories --repository-names $RepoName --region $Region } | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+      Write-Info 'Repository already exists'
+    } else {
+      Invoke-Checked { aws ecr create-repository --repository-name $RepoName --region $Region } | Out-Null
+      Write-Info "Created repository $RepoName"
+    }
+
+    Write-Step "Building and pushing image $Image"
+    Invoke-Checked { aws ecr get-login-password --region $Region | docker login --username AWS --password-stdin $EcrRegistry }
+    Invoke-Checked { docker build --platform linux/amd64 -t $Image $ServiceDir }
+    Invoke-Checked { docker push $Image }
+
+    Write-Step "Rendering and applying k8s/eks/services/$Service.yaml"
+    $Rendered = Join-Path $WorkDir "$Service.yaml"
+    $Placeholders = [ordered]@{
+      '__IMAGE__'                 = $Image
+      '__NAMESPACE__'             = $AppNamespace
+      '__REGION__'                = $Region
+      '__REDIS_ENDPOINT__'        = $Outputs['RedisEndpoint']
+      '__CHECKINS_QUEUE_URL__'    = $Outputs['CheckinsQueueUrl']
+      '__DISRUPTIONS_QUEUE_URL__' = $Outputs['DisruptionsQueueUrl']
+    }
+    $text = [IO.File]::ReadAllText($ServiceManifest)
+    foreach ($key in $Placeholders.Keys) { $text = $text.Replace($key, [string]$Placeholders[$key]) }
+    [IO.File]::WriteAllText($Rendered, $text, $Utf8NoBom)
+    Invoke-Quiet { kubectl get deployment $Service -n $AppNamespace } | Out-Null
+    $DeploymentExisted = ($LASTEXITCODE -eq 0)
+    Invoke-Checked { kubectl apply -f $Rendered }
+    # Re-pushing the same tag does not change the spec, so force new pods to pull it.
+    if ($DeploymentExisted) {
+      Invoke-Checked { kubectl rollout restart "deployment/$Service" -n $AppNamespace }
+    }
+    Invoke-Checked { kubectl rollout status "deployment/$Service" -n $AppNamespace --timeout=10m }
+
+    Write-Host ''
+    Write-Host "Service $Service deployed." -ForegroundColor Green -NoNewline
+    Write-Host " Logs: kubectl logs -n $AppNamespace deploy/$Service -f"
+    return
+  }
 
   # ---------------------------------------------------------------------------
   Write-Step 'Validating CloudFormation template'
