@@ -1,5 +1,8 @@
 """Synthetic trips: ``generate(scenario, seed)`` returns check-ins in the ``checkin.json`` shape.
 
+``browser=True`` degrades them the way a web page on a phone would (gaps, jittery
+timestamps, missing speed and heading); see :func:`_browserify`.
+
 Each check-in also carries two fixture-only fields, ``scenario`` and ``expected``
 (``normal``, a problem type, or ``abstain``). Strip them with :func:`strip_labels`
 before sending a check-in anywhere.
@@ -125,7 +128,34 @@ def _timestamp(i: int) -> str:
     return (TRIP_START + timedelta(seconds=i * INTERVAL_S)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def generate(scenario: str, seed: int = 42) -> List[Dict]:
+def _browserify(checkins: List[Dict], seed: int) -> List[Dict]:
+    """Make clean check-ins look like they came from a web page on a phone.
+
+    Mobile browsers throttle background tabs and often report no speed or heading,
+    so: ~20% of check-ins go missing (gaps of 20 s or more), timestamps wobble by
+    up to 2 s, about half the speeds are null, and heading is null when standing
+    still or ~30% of the time otherwise. ``seq`` is renumbered to stay contiguous
+    (it counts what the page sent). Uses its own RNG so the clean data is untouched.
+    """
+    rng = random.Random(f"{seed}-browser")
+    last = len(checkins) - 1
+    kept = [c for i, c in enumerate(checkins) if i in (0, last) or rng.random() >= 0.2]
+    out = []
+    for seq, c in enumerate(kept, start=1):
+        c = dict(c)
+        at = datetime.strptime(c["timestamp"], "%Y-%m-%dT%H:%M:%SZ") + timedelta(seconds=rng.randint(-2, 2))
+        still = c["speedMps"] < 0.5
+        c["seq"] = seq
+        c["timestamp"] = at.strftime("%Y-%m-%dT%H:%M:%SZ")
+        if rng.random() < 0.5:
+            c["speedMps"] = None
+        if still or rng.random() < 0.3:
+            c["headingDeg"] = None
+        out.append(c)
+    return out
+
+
+def generate(scenario: str, seed: int = 42, browser: bool = False) -> List[Dict]:
     if scenario not in SCENARIOS:
         raise ValueError(f"unknown scenario {scenario!r}, expected one of {', '.join(SCENARIOS)}")
     rng = random.Random(seed)
@@ -166,7 +196,7 @@ def generate(scenario: str, seed: int = 42) -> List[Dict]:
                 "expected": "abstain" if poor_gps else tick.label,
             }
         )
-    return checkins
+    return _browserify(checkins, seed) if browser else checkins
 
 
 def strip_labels(checkin: Dict) -> Dict:

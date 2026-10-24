@@ -27,16 +27,17 @@ def generate_command(out: Path, seed: int, scenarios: List[str]) -> None:
     out.mkdir(parents=True, exist_ok=True)
     (out / "route.json").write_text(_dump_route(build_route()))
     for name in scenarios:
-        checkins = generate(name, seed)
-        (out / f"{name}.json").write_text(_dump_checkins(checkins))
-        print(f"{name}: {len(checkins)} check-ins -> {out / (name + '.json')}")
+        for stem, browser in ((name, False), (f"{name}-browser", True)):
+            checkins = generate(name, seed, browser=browser)
+            (out / f"{stem}.json").write_text(_dump_checkins(checkins))
+            print(f"{stem}: {len(checkins)} check-ins -> {out / (stem + '.json')}")
 
 
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m tools.simulator")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    gen = sub.add_parser("generate", help="write one fixture file per scenario, plus route.json")
+    gen = sub.add_parser("generate", help="write clean and browser-like fixtures per scenario, plus route.json")
     gen.add_argument("--out", type=Path, default=Path(DEFAULT_OUT), help="output directory")
     gen.add_argument("--seed", type=int, default=42)
     gen.add_argument("--scenario", action="append", choices=SCENARIOS,

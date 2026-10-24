@@ -31,6 +31,8 @@ class Settings(BaseModel):
     # Heading/speed
     min_moving_speed_mps: float = Field(default=0.5, ge=0)
     wrong_dir_deg: float = Field(default=120, gt=0, le=180)
+    # Faster than this on a walking step is noted in the reason (never a problem by itself)
+    walk_max_speed_mps: float = Field(default=4.0, gt=0)
 
     # Dwell-time
     dwell_radius_m: float = Field(default=30, gt=0)

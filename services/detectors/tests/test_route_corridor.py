@@ -153,3 +153,20 @@ def test_replay_on_route_scenarios_never_flag(scenario):
 
 def test_replay_poor_gps_always_abstains():
     assert {v.verdict for _, v in replay("poor_gps")} == {"abstain"}
+
+
+def test_replay_browser_off_route_is_flagged():
+    results = list(replay("off_route-browser"))
+    first_drift = next(i for i, (expected, _) in enumerate(results) if expected == "off_route")
+    first_flag = next(i for i, (_, vote) in enumerate(results) if vote.verdict == "problem")
+    assert first_flag >= first_drift
+    assert first_flag - first_drift <= 6
+
+
+@pytest.mark.parametrize("scenario", ["normal", "normal_bus_wait", "long_dwell", "wrong_direction"])
+def test_replay_browser_on_route_scenarios_never_flag(scenario):
+    assert not [v for _, v in replay(f"{scenario}-browser") if v.verdict == "problem"]
+
+
+def test_replay_browser_poor_gps_always_abstains():
+    assert {v.verdict for _, v in replay("poor_gps-browser")} == {"abstain"}

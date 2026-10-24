@@ -9,6 +9,7 @@ their limit, so one stray GPS reading cannot raise an alarm.
 
 from typing import List, Tuple
 
+from detectors.common import abstain_reason, confidence as _confidence, usable_checkins
 from detectors.config import Settings
 from detectors.context import TripContext
 from detectors.geo import nearest_segment
@@ -21,36 +22,14 @@ def _abstain(request: DetectorRequest, reason: str) -> DetectorVote:
     return DetectorVote.abstain(request.request_id, DETECTOR_ID, reason)
 
 
-def _confidence(score: float) -> float:
-    """Map a 0..1 score onto the 0.5..0.95 confidence range."""
-    return round(0.5 + 0.45 * min(1.0, max(0.0, score)), 2)
-
-
 def detect(request: DetectorRequest, ctx: TripContext, settings: Settings) -> DetectorVote:
-    checkin = request.checkin
-
-    if ctx.path is None or len(ctx.path) < 2:
-        return _abstain(request, "no route in Redis for this trip")
-    if ctx.route_version_mismatch:
-        return _abstain(
-            request,
-            f"route version mismatch (check-in {checkin.route_version}, trip {ctx.route_version})",
-        )
-    if checkin.accuracy_m is None:
-        return _abstain(request, "check-in has no GPS accuracy")
-    if checkin.accuracy_m > settings.gps_max_accuracy_m:
-        return _abstain(
-            request,
-            f"GPS accuracy {checkin.accuracy_m:g} m exceeds {settings.gps_max_accuracy_m:g} m limit",
-        )
+    reason = abstain_reason(request, ctx, settings)
+    if reason:
+        return _abstain(request, reason)
 
     needed = settings.corridor_consecutive
     # Newest first; ctx.recent already includes this request's own check-in
-    usable = [
-        c
-        for c in reversed(ctx.recent)
-        if c.accuracy_m is not None and c.accuracy_m <= settings.gps_max_accuracy_m
-    ]
+    usable = list(reversed(usable_checkins(ctx.recent, settings)))
     if len(usable) < needed:
         return _abstain(request, f"only {len(usable)} usable check-in(s), need {needed}")
 

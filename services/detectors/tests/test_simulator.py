@@ -91,3 +91,26 @@ def test_poor_gps_accuracy_and_label():
 
 def test_normal_gps_accuracy_range():
     assert all(5 <= c["accuracyM"] <= 15 for c in generate("normal"))
+
+
+@pytest.mark.parametrize("scenario", SCENARIOS)
+def test_browser_mode_is_deterministic_and_leaves_clean_data_alone(scenario):
+    assert generate(scenario, seed=7, browser=True) == generate(scenario, seed=7, browser=True)
+    assert generate(scenario, seed=7) == generate(scenario, seed=7, browser=False)
+
+
+@pytest.mark.parametrize("scenario", SCENARIOS)
+def test_browser_checkins_look_like_a_web_page(scenario):
+    clean = generate(scenario)
+    checkins = generate(scenario, browser=True)
+    models = [CheckIn.model_validate(strip_labels(c)) for c in checkins]  # nulls are valid
+
+    assert len(checkins) < len(clean)  # some went missing
+    assert [c["seq"] for c in checkins] == list(range(1, len(checkins) + 1))
+    gaps = [(b.timestamp - a.timestamp).total_seconds() for a, b in zip(models, models[1:])]
+    assert min(gaps) > 0  # still strictly increasing
+    assert max(gaps) >= 18 and len(set(gaps)) > 3  # gaps and irregular spacing
+    assert any(c["speedMps"] is None for c in checkins)
+    assert any(c["headingDeg"] is None for c in checkins)
+    assert any(c["speedMps"] is not None for c in checkins)
+    assert {c["expected"] for c in checkins} == {c["expected"] for c in clean}
