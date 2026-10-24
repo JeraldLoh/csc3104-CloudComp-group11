@@ -13,10 +13,10 @@
 
 set -uo pipefail
 
-STACK_NAME="${STACK_NAME:-csc3104-careroute-1}"
+STACK_NAME="${STACK_NAME:-careroute-stack-1}"
 REGION="${REGION:-ap-southeast-1}"
-CLUSTER_NAME="${CLUSTER_NAME:-csc3104}"
-APP_NAMESPACE="${APP_NAMESPACE:-csc3104}"
+CLUSTER_NAME="${CLUSTER_NAME:-careroute-cluster-1}"
+APP_NAMESPACE="${APP_NAMESPACE:-careroute}"
 LBC_POLICY_NAME="AWSLoadBalancerControllerIAMPolicy"
 ASSUME_YES=false
 
@@ -139,7 +139,7 @@ info "Account $ACCOUNT_ID, region $REGION, stack $STACK_NAME ($STATUS), cluster 
 if [ "$ASSUME_YES" != true ]; then
   echo
   echo "This permanently deletes the stack, the EKS cluster, all DynamoDB tables,"
-  echo "the ECR images and the S3 bucket csc3104-files-$ACCOUNT_ID."
+  echo "the ECR images and the S3 bucket careroute-files-$ACCOUNT_ID."
   printf 'Type the stack name (%s) to continue: ' "$STACK_NAME"
   read -r CONFIRM
   [ "$CONFIRM" = "$STACK_NAME" ] || die "Aborted."
@@ -220,7 +220,7 @@ fi
 
 # ---------------------------------------------------------------------------
 step "Cleaning up resources created outside the stack"
-BUCKET="csc3104-files-$ACCOUNT_ID"
+BUCKET="careroute-files-$ACCOUNT_ID"
 if aws s3api head-bucket --bucket "$BUCKET" >/dev/null 2>&1; then
   aws s3 rb "s3://$BUCKET" --force --region "$REGION" && info "Deleted bucket $BUCKET"
 else

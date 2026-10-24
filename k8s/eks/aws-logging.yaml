@@ -21,6 +21,6 @@ data:
         Name              cloudwatch_logs
         Match             *
         region            ap-southeast-1
-        log_group_name    /eks/csc3104/csc3104
+        log_group_name    /eks/careroute-cluster-1/careroute
         log_stream_prefix fargate-
         auto_create_group true

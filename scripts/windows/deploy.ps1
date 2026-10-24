@@ -17,12 +17,12 @@
 param(
   [string]$BudgetEmail = $env:BUDGET_EMAIL,
   [string]$ImageTag = 'v1',
-  [string]$StackName = 'csc3104-careroute-1',
+  [string]$StackName = 'careroute-stack-1',
   [string]$Region = 'ap-southeast-1',
-  [string]$ClusterName = 'csc3104',
+  [string]$ClusterName = 'careroute-cluster-1',
   [ValidateSet('fargate', 'nodegroup')][string]$ComputeMode = 'fargate',
   [int]$AppPort = 8000,
-  [string]$AppNamespace = 'csc3104'
+  [string]$AppNamespace = 'careroute'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -182,7 +182,7 @@ try {
   Invoke-Checked { docker push "${EcrUri}:$ImageTag" }
 
   # ---------------------------------------------------------------------------
-  $Bucket = "csc3104-files-$AccountId"
+  $Bucket = "careroute-files-$AccountId"
   Write-Step "Ensuring S3 bucket $Bucket exists"
   Invoke-Quiet { aws s3api head-bucket --bucket $Bucket } | Out-Null
   if ($LASTEXITCODE -eq 0) {
@@ -208,6 +208,7 @@ try {
   Update-Manifest 'serviceaccount.yaml' '(eks\.amazonaws\.com/role-arn:)[^\r\n]*' ('${1} ' + $ApiRoleArn)
   Update-Manifest 'fastapi.yaml'        'redis://[^:/"]*:6379' ("redis://${RedisEndpoint}:6379")
   Update-Manifest 'ingress.yaml'        '(alb\.ingress\.kubernetes\.io/security-groups:)[^\r\n]*' ('${1} ' + $AlbSgId)
+  Update-Manifest 'aws-logging.yaml'    '(log_group_name\s*)[^\r\n]*' ('${1}' + "/eks/$ClusterName/$AppNamespace")
 
   # ---------------------------------------------------------------------------
   Write-Step 'Applying manifests'

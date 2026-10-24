@@ -18,10 +18,10 @@
 #>
 param(
   [switch]$Yes,
-  [string]$StackName = 'csc3104-careroute-1',
+  [string]$StackName = 'careroute-stack-1',
   [string]$Region = 'ap-southeast-1',
-  [string]$ClusterName = 'csc3104',
-  [string]$AppNamespace = 'csc3104'
+  [string]$ClusterName = 'careroute-cluster-1',
+  [string]$AppNamespace = 'careroute'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -135,7 +135,7 @@ try {
   if (-not $Yes) {
     Write-Host ''
     Write-Host 'This permanently deletes the stack, the EKS cluster, all DynamoDB tables,'
-    Write-Host "the ECR images and the S3 bucket csc3104-files-$AccountId."
+    Write-Host "the ECR images and the S3 bucket careroute-files-$AccountId."
     $confirm = Read-Host "Type the stack name ($StackName) to continue"
     if ($confirm -ne $StackName) { throw 'Aborted.' }
   }
@@ -218,7 +218,7 @@ try {
 
   # ---------------------------------------------------------------------------
   Write-Step 'Cleaning up resources created outside the stack'
-  $Bucket = "csc3104-files-$AccountId"
+  $Bucket = "careroute-files-$AccountId"
   Invoke-Quiet { aws s3api head-bucket --bucket $Bucket } | Out-Null
   if ($LASTEXITCODE -eq 0) {
     Invoke-Checked { aws s3 rb "s3://$Bucket" --force --region $Region }

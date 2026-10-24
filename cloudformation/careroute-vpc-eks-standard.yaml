@@ -21,7 +21,7 @@ Parameters:
     Description: Monthly cost budget in USD. Alerts fire at 80% and 100% of this amount.
   ClusterName:
     Type: String
-    Default: csc3104
+    Default: careroute-cluster-1
     Description: EKS cluster name. Also used in the subnet discovery tags.
   ComputeMode:
     Type: String
@@ -32,7 +32,7 @@ Parameters:
       nodegroup = fallback managed node group on EC2 if Fargate is blocked in the lab.
   AppNamespace:
     Type: String
-    Default: csc3104
+    Default: careroute
     Description: Kubernetes namespace scheduled onto Fargate.
   AppPort:
     Type: Number
@@ -44,10 +44,10 @@ Parameters:
     Description: Kubernetes service account allowed to assume the API role (IRSA).
   ResourcePrefix:
     Type: String
-    Default: csc3104
+    Default: careroute
     Description: >
       The API role may only touch S3 buckets, SQS queues and DynamoDB tables
-      whose names start with this prefix (e.g. csc3104-checkins).
+      whose names start with this prefix (e.g. careroute-checkins).
   RedisNodeType:
     Type: String
     Default: cache.t3.micro
@@ -272,7 +272,7 @@ Resources:
           CidrIp: 0.0.0.0/0
       Tags:
         - Key: Name
-          Value: csc3104-alb-sg
+          Value: careroute-alb-sg
 
   RedisSecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -281,7 +281,7 @@ Resources:
       VpcId: !Ref Vpc
       Tags:
         - Key: Name
-          Value: csc3104-redis-sg
+          Value: careroute-redis-sg
 
   # Fargate pods use the EKS cluster security group, so the rules below
   # reference it instead of a custom pod security group.

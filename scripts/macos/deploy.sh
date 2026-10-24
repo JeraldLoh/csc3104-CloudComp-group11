@@ -13,12 +13,12 @@
 
 set -euo pipefail
 
-STACK_NAME="${STACK_NAME:-csc3104-careroute-1}"
+STACK_NAME="${STACK_NAME:-careroute-stack-1}"
 REGION="${REGION:-ap-southeast-1}"
-CLUSTER_NAME="${CLUSTER_NAME:-csc3104}"
+CLUSTER_NAME="${CLUSTER_NAME:-careroute-cluster-1}"
 COMPUTE_MODE="${COMPUTE_MODE:-fargate}"
 APP_PORT="${APP_PORT:-8000}"
-APP_NAMESPACE="${APP_NAMESPACE:-csc3104}"
+APP_NAMESPACE="${APP_NAMESPACE:-careroute}"
 BUDGET_EMAIL="${BUDGET_EMAIL:-}"
 IMAGE_TAG="${IMAGE_TAG:-v1}"
 LBC_POLICY_NAME="AWSLoadBalancerControllerIAMPolicy"
@@ -165,7 +165,7 @@ docker build --platform linux/amd64 -t "$ECR_URI:$IMAGE_TAG" "$REPO_ROOT"
 docker push "$ECR_URI:$IMAGE_TAG"
 
 # ---------------------------------------------------------------------------
-BUCKET="csc3104-files-$ACCOUNT_ID"
+BUCKET="careroute-files-$ACCOUNT_ID"
 step "Ensuring S3 bucket $BUCKET exists"
 if aws s3api head-bucket --bucket "$BUCKET" >/dev/null 2>&1; then
   info "Bucket already exists"
@@ -188,6 +188,7 @@ render kustomization.yaml  "s|^\([[:space:]]*newTag:\).*|\1 $IMAGE_TAG|"
 render serviceaccount.yaml "s|\(eks.amazonaws.com/role-arn:\).*|\1 $API_ROLE_ARN|"
 render fastapi.yaml        "s|redis://[^:/\"]*:6379|redis://$REDIS_ENDPOINT:6379|"
 render ingress.yaml        "s|\(alb.ingress.kubernetes.io/security-groups:\).*|\1 $ALB_SG_ID|"
+render aws-logging.yaml    "s|\(log_group_name[[:space:]]*\).*|\1/eks/$CLUSTER_NAME/$APP_NAMESPACE|"
 
 # ---------------------------------------------------------------------------
 step "Applying manifests"

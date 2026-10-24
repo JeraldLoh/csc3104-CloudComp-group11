@@ -38,7 +38,7 @@ the committed manifests stay unchanged.
 ### 1. Deploy the CloudFormation stack
 
 Open the AWS Console, go to CloudFormation, and create a stack from
-`cloudformation/careroute-vpc-eks-standard.yaml`. Set `ClusterName` to `csc3104`,
+`cloudformation/careroute-vpc-eks-standard.yaml`. Set `ClusterName` to `careroute-cluster-1`,
 `ComputeMode` to `fargate`, `AppPort` to `8000`, and `BudgetAlertEmail` to your
 email address (this creates a monthly cost budget with alerts at 80% and 100% of
 $80 USD — confirm the subscription email AWS sends after stack creation). Tick
@@ -48,9 +48,9 @@ Alternatively, deploy from the CLI:
 
 ```powershell
 aws cloudformation create-stack `
-  --stack-name csc3104-careroute-1 `
+  --stack-name careroute-stack-1 `
   --template-body file://cloudformation/careroute-vpc-eks-standard.yaml `
-  --parameters ParameterKey=ClusterName,ParameterValue=csc3104 `
+  --parameters ParameterKey=ClusterName,ParameterValue=careroute-cluster-1 `
                ParameterKey=ComputeMode,ParameterValue=fargate `
                ParameterKey=AppPort,ParameterValue=8000 `
                ParameterKey=BudgetAlertEmail,ParameterValue=your-email@example.com `
@@ -61,13 +61,13 @@ aws cloudformation create-stack `
 Wait for the stack to reach `CREATE_COMPLETE` (15–25 minutes):
 
 ```powershell
-aws cloudformation wait stack-create-complete --stack-name csc3104-careroute-1 --region ap-southeast-1
+aws cloudformation wait stack-create-complete --stack-name careroute-stack-1 --region ap-southeast-1
 ```
 
 ### 2. Collect the stack outputs
 
 ```powershell
-aws cloudformation describe-stacks --stack-name csc3104-careroute-1 --region ap-southeast-1 --query "Stacks[0].Outputs" --output table
+aws cloudformation describe-stacks --stack-name careroute-stack-1 --region ap-southeast-1 --query "Stacks[0].Outputs" --output table
 ```
 
 Note the following values for later steps:
@@ -85,7 +85,7 @@ Note the following values for later steps:
 ### 3. Connect kubectl to the cluster
 
 ```powershell
-aws eks update-kubeconfig --region ap-southeast-1 --name csc3104
+aws eks update-kubeconfig --region ap-southeast-1 --name careroute-cluster-1
 kubectl get pods -A
 ```
 
@@ -112,7 +112,7 @@ Create the controller's service account and IAM role:
 
 ```powershell
 eksctl create iamserviceaccount `
-  --cluster csc3104 `
+  --cluster careroute-cluster-1 `
   --namespace kube-system `
   --name aws-load-balancer-controller `
   --attach-policy-arn arn:aws:iam::<ACCOUNT_ID>:policy/AWSLoadBalancerControllerIAMPolicy `
@@ -126,7 +126,7 @@ Install the Helm chart with the `VpcId` output from step 2:
 ```powershell
 helm install aws-load-balancer-controller eks/aws-load-balancer-controller `
   -n kube-system `
-  --set clusterName=csc3104 `
+  --set clusterName=careroute-cluster-1 `
   --set serviceAccount.create=false `
   --set serviceAccount.name=aws-load-balancer-controller `
   --set region=ap-southeast-1 `
@@ -157,7 +157,7 @@ SQS queues and DynamoDB tables are created by the CloudFormation stack. The S3
 bucket is the only resource created manually:
 
 ```powershell
-aws s3 mb s3://csc3104-files-<ACCOUNT_ID> --region ap-southeast-1
+aws s3 mb s3://careroute-files-<ACCOUNT_ID> --region ap-southeast-1
 ```
 
 ### 3. Fill in the placeholders
@@ -175,7 +175,7 @@ Update the following files in `k8s/eks/` with the stack outputs:
 
 ```powershell
 kubectl apply -k k8s/eks
-kubectl get pods -n csc3104 -w
+kubectl get pods -n careroute -w
 ```
 
 Fargate pods take 1–2 minutes to start. Press `Ctrl+C` once both replicas show `1/1 Running`.
@@ -185,7 +185,7 @@ Fargate pods take 1–2 minutes to start. Press `Ctrl+C` once both replicas show
 Test through the ALB:
 
 ```powershell
-kubectl get ingress -n csc3104
+kubectl get ingress -n careroute
 curl.exe http://<ALB_ADDRESS>/health
 ```
 
@@ -195,7 +195,7 @@ The ALB address appears within a few minutes. The health endpoint should return
 To confirm the IRSA role is wired up:
 
 ```powershell
-kubectl exec -n csc3104 deploy/cloud-fastapi -- env | findstr AWS_
+kubectl exec -n careroute deploy/cloud-fastapi -- env | findstr AWS_
 ```
 
 You should see `AWS_ROLE_ARN` and `AWS_WEB_IDENTITY_TOKEN_FILE`.
@@ -220,16 +220,16 @@ kubectl delete -k k8s/eks
 
 # 2. Uninstall the load balancer controller
 helm uninstall aws-load-balancer-controller -n kube-system
-eksctl delete iamserviceaccount --cluster csc3104 --namespace kube-system --name aws-load-balancer-controller --region ap-southeast-1
+eksctl delete iamserviceaccount --cluster careroute-cluster-1 --namespace kube-system --name aws-load-balancer-controller --region ap-southeast-1
 
 # 3. Wait a few minutes for the ALB and its network interfaces to be deleted
 
 # 4. Delete the CloudFormation stack (removes VPC, EKS, Redis, SQS, DynamoDB, IAM roles, ECR)
-aws cloudformation delete-stack --stack-name csc3104-careroute-1 --region ap-southeast-1
-aws cloudformation wait stack-delete-complete --stack-name csc3104-careroute-1 --region ap-southeast-1
+aws cloudformation delete-stack --stack-name careroute-stack-1 --region ap-southeast-1
+aws cloudformation wait stack-delete-complete --stack-name careroute-stack-1 --region ap-southeast-1
 
 # 5. Clean up resources created outside the stack
-aws s3 rb s3://csc3104-files-<ACCOUNT_ID> --force --region ap-southeast-1
+aws s3 rb s3://careroute-files-<ACCOUNT_ID> --force --region ap-southeast-1
 aws iam delete-policy --policy-arn arn:aws:iam::<ACCOUNT_ID>:policy/AWSLoadBalancerControllerIAMPolicy
 ```
 
