@@ -25,3 +25,5 @@ dist/
 
 # Common build output
 build/
+services/journey-service/app/demo_data/
+services/journey-service/tests/fixtures/

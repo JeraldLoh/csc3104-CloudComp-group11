@@ -1,0 +1,120 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Journey Service disruption checker: a Lambda that runs every minute, looks at the trips in progress (Redis) against
+  LTA's MRT alerts and puts a disruption message on the platform's disruptions queue. A separate stack from the
+  platform's; it only reads that stack's outputs (passed in as parameters by deploy-lambda.ps1).
+
+Parameters:
+  CodeBucket:
+    Type: String
+    Description: S3 bucket holding the package zip (the shared <prefix>-files-<account> bucket).
+  CodeKey:
+    Type: String
+    Description: Key of the package zip in that bucket (deploy-lambda.ps1 puts a content hash in it, so a new build redeploys).
+  PrivateSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: The platform stack's PrivateSubnetIds output. They route to the internet through its NAT gateway, which LTA needs.
+  SecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: >
+      The platform stack's ClusterSecurityGroupId output. Redis only accepts connections from this group, so giving the
+      Lambda the same group lets it reach Redis without any change to the platform's template.
+  RedisEndpoint:
+    Type: String
+    Description: The platform stack's RedisEndpoint output.
+  DisruptionsQueueArn:
+    Type: String
+    Description: The platform stack's DisruptionsQueueArn output.
+  DisruptionsQueueName:
+    Type: String
+    Description: Name of that queue (the last part of the DisruptionsQueueUrl output).
+  LtaApiKey:
+    Type: String
+    NoEcho: true
+    Description: LTA DataMall AccountKey. Ends up in the function's environment variables (visible to anyone who can read the function's configuration); move it to Secrets Manager before production.
+  DisruptionMinStatus:
+    Type: String
+    Default: "2"
+    AllowedValues: ["1", "2"]
+    Description: LTA status that triggers an alert. 2 = disrupted (default); 1 would also alert on minor delays.
+  ScheduleState:
+    Type: String
+    Default: ENABLED
+    AllowedValues: [ENABLED, DISABLED]
+
+Resources:
+  # Created here (not left for Lambda to create) so logs expire; named exactly as Lambda expects.
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${AWS::StackName}-disruption-checker
+      RetentionInDays: 14
+
+  FunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        # CloudWatch Logs plus the network-interface permissions a Lambda inside a VPC needs.
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        - PolicyName: send-disruptions
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [sqs:SendMessage, sqs:GetQueueUrl]
+                Resource: !Ref DisruptionsQueueArn
+
+  Function:
+    Type: AWS::Lambda::Function
+    DependsOn: LogGroup
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-disruption-checker
+      Description: Sends a disruption message for every in-progress trip affected by an MRT disruption.
+      Runtime: python3.12
+      Handler: app.lambda_handler.handler
+      Role: !GetAtt FunctionRole.Arn
+      Code:
+        S3Bucket: !Ref CodeBucket
+        S3Key: !Ref CodeKey
+      Timeout: 30                    # LTA is retried twice at 5 s each; Redis and SQS answer in milliseconds
+      MemorySize: 256
+      VpcConfig:
+        SubnetIds: !Ref PrivateSubnetIds
+        SecurityGroupIds: [!Ref SecurityGroupId]
+      Environment:
+        Variables:                   # AWS_DEFAULT_REGION is set by Lambda itself
+          REDIS_URL: !Sub redis://${RedisEndpoint}:6379/0
+          LTA_API_KEY: !Ref LtaApiKey
+          DISRUPTIONS_QUEUE: !Ref DisruptionsQueueName
+          DISRUPTION_MIN_STATUS: !Ref DisruptionMinStatus
+
+  Schedule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Run the disruption checker every minute.
+      ScheduleExpression: rate(1 minute)
+      State: !Ref ScheduleState
+      Targets:
+        - Id: disruption-checker
+          Arn: !GetAtt Function.Arn
+
+  SchedulePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref Function
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt Schedule.Arn
+
+Outputs:
+  FunctionName:
+    Value: !Ref Function
+  LogGroupName:
+    Value: !Ref LogGroup

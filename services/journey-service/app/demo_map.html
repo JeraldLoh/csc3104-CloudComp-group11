@@ -1,0 +1,453 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Journey map (dev demo)</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+  :root { --walk:#6b7280; --bus:#1d6fd6; --train:#d6331d; --warn:#b45309; --high:#b91c1c; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.4 system-ui, sans-serif; display:flex; height:100vh; }
+  aside { width:360px; max-width:45vw; overflow:auto; padding:12px 14px; border-right:1px solid #ddd; background:#fff; color:#111; }
+  #map { flex:1; }
+  h1 { font-size:16px; margin:0 0 4px; }
+  .hint { color:#555; margin:0 0 10px; font-size:12px; }
+  label { display:block; font-weight:600; margin-top:8px; }
+  input, select, button { width:100%; padding:6px 8px; font:inherit; margin-top:3px; }
+  .row { display:flex; gap:6px; } .row > * { flex:1; }
+  button { cursor:pointer; background:#1d6fd6; color:#fff; border:0; border-radius:4px; }
+  button.secondary { background:#e5e7eb; color:#111; }
+  button:disabled { opacity:.5; cursor:default; }
+  #status { margin:8px 0; min-height:1.2em; } #status.error { color:var(--high); }
+  .option { display:block; text-align:left; background:#f3f4f6; color:#111; margin-top:6px; }
+  .option.active { background:#dbeafe; outline:2px solid var(--bus); }
+  ol { padding-left:0; list-style:none; margin:10px 0; }
+  li.step { border-left:5px solid var(--walk); padding:2px 0 6px 8px; margin-bottom:4px; }
+  li.step.bus { border-color:var(--bus); } li.step.train { border-color:var(--train); }
+  .live { color:#065f46; font-size:12px; }
+  .warning { font-size:12px; padding:4px 6px; margin:3px 0; border-left:4px solid var(--warn); background:#fffbeb; }
+  .warning.high { border-color:var(--high); background:#fef2f2; }
+  .meta { color:#555; font-size:12px; }
+  h2 { font-size:14px; margin:18px 0 0; border-top:1px solid #ddd; padding-top:10px; }
+  .saved-item { display:flex; gap:6px; align-items:center; margin-top:6px; }
+  .saved-item button { margin-top:0; }
+  .saved-item .open { flex:1; text-align:left; background:#f3f4f6; color:#111; }
+  .saved-item .approve { width:auto; background:#047857; }
+  .badge { font-size:11px; color:#065f46; }
+  .banner { font-size:12px; padding:6px 8px; margin:0 0 10px; border-left:4px solid var(--warn); background:#fffbeb; }
+  .presets button { margin-top:4px; text-align:left; background:#f3f4f6; color:#111; }
+</style>
+</head>
+<body>
+<aside>
+  <h1>Route planner <span class="meta">(dev demo)</span></h1>
+  <p class="hint">Search for a place, or click the map: first click = from, second = to.</p>
+
+  <div id="saved-data" hidden>
+    <p class="banner" id="saved-banner"></p>
+    <div class="presets" id="presets"></div>
+  </div>
+
+  <label for="act-as">Act as <span class="meta">(needed only when the service runs with AUTH_MODE=dev)</span></label>
+  <input id="act-as" value="G-DEMO" placeholder="G-003 (caregiver) or U-042 (traveller)" autocomplete="off">
+
+  <label for="q-from">From</label>
+  <input id="q-from" placeholder="Place, address or postal code, then Enter" autocomplete="off">
+  <select id="r-from" hidden></select>
+
+  <label for="q-to">To</label>
+  <input id="q-to" placeholder="Place, address or postal code, then Enter" autocomplete="off">
+  <select id="r-to" hidden></select>
+
+  <label for="sort">Sort options by</label>
+  <select id="sort">
+    <option value="walking">Least walking</option>
+    <option value="crowding">Least crowded</option>
+    <option value="time">Fastest (OneMap's order)</option>
+  </select>
+
+  <label for="mode">Travel by</label>
+  <select id="mode">
+    <option value="any">Bus or train</option>
+    <option value="bus">Bus only</option>
+    <option value="train">Train only</option>
+  </select>
+
+  <div class="row" style="margin-top:10px">
+    <button id="plan">Plan route</button>
+    <button id="clear" class="secondary">Clear</button>
+  </div>
+  <div id="status" role="status"></div>
+  <div id="options"></div>
+  <ol id="steps"></ol>
+  <div id="warnings"></div>
+
+  <div id="save-panel" hidden>
+    <label for="route-name">Save the selected option as</label>
+    <input id="route-name">
+    <div class="row">
+      <div><label for="caregiver">Caregiver ID</label><input id="caregiver" value="G-DEMO"></div>
+    </div>
+    <button id="save" style="margin-top:8px">Save route</button>
+  </div>
+
+  <h2>Saved routes</h2>
+  <label for="traveller">Traveller ID</label>
+  <input id="traveller" value="U-DEMO">
+  <div id="saved"></div>
+
+  <h2>Trips</h2>
+  <div id="trips"></div>
+  <div id="pack-link" class="meta"></div>
+</aside>
+<div id="map"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+const CROWD_TEXT = { low: "quiet", moderate: "getting busy", high: "very busy" };
+const COLORS = { walk: "#6b7280", bus: "#1d6fd6", train: "#d6331d" };
+const map = L.map("map").setView([1.3521, 103.8198], 12);
+L.tileLayer("https://www.onemap.gov.sg/maps/tiles/Default/{z}/{x}/{y}.png", {
+  minZoom: 11, maxZoom: 19,
+  attribution: '<a href="https://www.onemap.gov.sg/">OneMap</a> &copy; contributors &middot; <a href="https://www.sla.gov.sg/">Singapore Land Authority</a>',
+}).addTo(map);
+
+const $ = (id) => document.getElementById(id);
+const points = { from: null, to: null };     // {lat, lng, marker}
+let drawn = L.layerGroup().addTo(map);
+let lastOptions = [];
+let activeIndex = 0;
+
+// All dynamic text goes through textContent: LTA notices and place names are not trusted HTML.
+function el(tag, props = {}, ...children) {
+  const node = Object.assign(document.createElement(tag), props);
+  for (const c of children) node.append(c);
+  return node;
+}
+
+function setStatus(text, isError = false) {
+  $("status").textContent = text;
+  $("status").className = isError ? "error" : "";
+}
+
+function setPoint(which, lat, lng, label) {
+  if (points[which]) map.removeLayer(points[which].marker);
+  const marker = L.marker([lat, lng]).addTo(map).bindTooltip(which === "from" ? "From" : "To", { permanent: true, direction: "top" });
+  if (label) $("q-" + which).value = label;
+  points[which] = { lat, lng, marker, label: $("q-" + which).value };   // label: the text this pin belongs to
+}
+
+function dropPoint(which) {
+  if (points[which]) map.removeLayer(points[which].marker);
+  points[which] = null;
+}
+
+map.on("click", (e) => {
+  const which = !points.from ? "from" : !points.to ? "to" : null;
+  if (which) setPoint(which, e.latlng.lat, e.latlng.lng, "Pinned on map");
+  else { clearAll(); setPoint("from", e.latlng.lat, e.latlng.lng, "Pinned on map"); }
+});
+
+async function api(path, options = {}) {
+  // With AUTH_MODE=dev the service believes this header (local testing only); with AUTH_MODE=off it is ignored.
+  const user = $("act-as").value.trim();
+  const headers = { ...(options.headers || {}), ...(user ? { "X-Dev-User": user } : {}) };
+  const res = await fetch(path, { ...options, headers });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error ? body.error.message : "Request failed (" + res.status + ")");
+  return body;
+}
+
+const NAMES = { from: "start", to: "destination" };
+
+// Searches the text in a box and pins the first result. Throws with a readable message if it can't.
+async function searchAndPick(which) {
+  const input = $("q-" + which), select = $("r-" + which);
+  const q = input.value.trim();
+  if (q.length < 2) throw new Error("Type a " + NAMES[which] + " place (or click the map) first.");
+  const { places } = await api("/api/places/search?q=" + encodeURIComponent(q));
+  select.replaceChildren(...places.map((p, i) => el("option", { value: i, textContent: p.name + (p.postalCode ? " (" + p.postalCode + ")" : "") })));
+  select.hidden = places.length === 0;
+  select._places = places;
+  if (!places.length) throw new Error('No places found for "' + q + '".');
+  select.value = 0;
+  pick(which);
+}
+
+function pick(which) {
+  const select = $("r-" + which);
+  const p = select._places[Number(select.value)];
+  if (!p) return;
+  setPoint(which, p.lat, p.lng);
+  map.setView([p.lat, p.lng], 15);
+}
+
+for (const which of ["from", "to"]) {
+  const input = $("q-" + which);
+  // Editing the text means the pinned place no longer matches the box.
+  input.addEventListener("input", () => { if (points[which] && input.value !== points[which].label) dropPoint(which); });
+  input.addEventListener("keydown", async (e) => {
+    if (e.key !== "Enter") return;
+    try {
+      setStatus("Searching...");
+      await searchAndPick(which);
+      setStatus("Pinned the first result. Pick another from the list if it isn't the right one.");
+    } catch (err) { setStatus(err.message, true); }
+  });
+  $("r-" + which).addEventListener("change", () => pick(which));
+}
+
+function clearAll() {
+  for (const which of ["from", "to"]) {
+    dropPoint(which);
+    $("q-" + which).value = "";
+    $("r-" + which).hidden = true;
+  }
+  drawn.clearLayers();
+  for (const id of ["options", "steps", "warnings"]) $(id).replaceChildren();
+  setStatus("");
+}
+$("clear").addEventListener("click", clearAll);
+
+$("plan").addEventListener("click", async () => {
+  $("plan").disabled = true;     // only while a request is running
+  try {
+    for (const which of ["from", "to"]) {
+      if (points[which]) continue;
+      setStatus("Looking up the " + NAMES[which] + "...");
+      await searchAndPick(which);          // text typed but not searched yet: use the first result
+    }
+    setStatus("Planning...");
+    const body = {
+      from: { lat: points.from.lat, lng: points.from.lng },
+      to: { lat: points.to.lat, lng: points.to.lng },
+      mode: $("mode").value,
+      sortBy: $("sort").value,
+    };
+    const { options } = await api("/api/routes/plan", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    lastOptions = options;
+    drawn.clearLayers();
+    for (const id of ["options", "steps", "warnings"]) $(id).replaceChildren();
+    if (!options.length) { setStatus("No route found for that trip.", true); return; }
+    setStatus(options.length + " option(s). Click one to see it on the map.");
+    $("options").append(...options.map((o, i) => {
+      const s = o.summary;
+      const label = "Option " + o.option + ": " + Math.round(s.durationS / 60) + " min, " + s.modes.join(" + ") +
+        ", walk " + s.walkDistanceM + " m" + (s.crowd ? ", " + CROWD_TEXT[s.crowd] : "") +
+        (s.fare != null ? ", $" + s.fare.toFixed(2) : "") +
+        (o.warnings.length ? " (" + o.warnings.length + " notice" + (o.warnings.length > 1 ? "s" : "") + ")" : "");
+      return el("button", { className: "option", textContent: label, onclick: () => show(i) });
+    }));
+    show(0);
+    $("route-name").value = placeName("from") + " to " + placeName("to");
+    $("save-panel").hidden = false;
+  } catch (err) { setStatus(err.message, true); }
+  finally { $("plan").disabled = false; }
+});
+
+// Shareable link: /demo?from=1.4043,103.9021&to=1.3040,103.8318&mode=bus plans straight away.
+(function fromUrl() {
+  const q = new URLSearchParams(location.search);
+  const pair = (v) => (v || "").split(",").map(Number);
+  const [fa, fo] = pair(q.get("from")), [ta, to] = pair(q.get("to"));
+  if ([fa, fo, ta, to].some((n) => !Number.isFinite(n))) return;
+  setPoint("from", fa, fo, fa + ", " + fo);
+  setPoint("to", ta, to, ta + ", " + to);
+  if (["any", "bus", "train"].includes(q.get("mode"))) $("mode").value = q.get("mode");
+  $("plan").click();
+})();
+
+// Saved-data mode (ONEMAP_MODE / LTA_MODE = recorded): say so, and offer the trips that were saved.
+(async function savedData() {
+  let info;
+  try { info = await (await fetch("/demo/info")).json(); } catch { return; }
+  const parts = [];
+  if (info.onemap === "recorded") parts.push("routes from OneMap data saved on " + info.onemapRecordedAt);
+  if (info.lta === "recorded") parts.push("bus and train information from LTA data saved on " + info.ltaRecordedAt);
+  if (!parts.length) return;
+  $("saved-banner").textContent = "Demo using saved data: " + parts.join("; ") + "." +
+    (info.onemap === "recorded" ? " Only the trips below can be planned." : "");
+  $("presets").replaceChildren(...info.trips.map((trip) => el("button", {
+    textContent: trip.name,
+    onclick: () => {
+      clearAll();
+      setPoint("from", trip.from.lat, trip.from.lng, trip.from.name);
+      setPoint("to", trip.to.lat, trip.to.lng, trip.to.name);
+      $("plan").click();
+    },
+  })));
+  $("saved-data").hidden = false;
+})();
+
+function show(index) {
+  const o = lastOptions[index];
+  activeIndex = index;
+  document.querySelectorAll(".option").forEach((b, i) => b.classList.toggle("active", i === index));
+  drawn.clearLayers();
+
+  const bounds = [];
+  o.steps.forEach((step, i) => {
+    const path = o.stepPaths[i];
+    bounds.push(...path);
+    L.polyline(path, {
+      color: COLORS[step.mode], weight: step.mode === "walk" ? 4 : 6, opacity: .9,
+      dashArray: step.mode === "walk" ? "2 8" : null,
+    }).bindTooltip(step.instruction).addTo(drawn);
+    L.circleMarker(path[0], { radius: 6, color: COLORS[step.mode], fillColor: "#fff", fillOpacity: 1, weight: 3 })
+      .bindPopup(el("div", { textContent: (i + 1) + ". " + step.instruction })).addTo(drawn);
+  });
+  for (const w of o.warnings) {
+    const at = w.stepIndex != null ? o.stepPaths[w.stepIndex] : null;
+    if (at) L.circleMarker(at[Math.floor(at.length / 2)], { radius: 9, color: "#b45309", fillColor: "#f59e0b", fillOpacity: .7 })
+      .bindPopup(el("div", { textContent: w.message })).addTo(drawn);
+  }
+  map.fitBounds(bounds, { padding: [40, 40] });
+
+  const liveByStep = Object.fromEntries(o.live.map((l) => [l.stepIndex, l]));
+  $("steps").replaceChildren(...o.steps.map((step) => {
+    const li = el("li", { className: "step " + step.mode }, el("div", { textContent: step.instruction }));
+    li.append(el("div", { className: "meta", textContent: Math.round((step.expectedDurationS || 0) / 60) + " min" }));
+    const live = liveByStep[step.stepIndex];
+    if (live) li.append(el("div", { className: "live", textContent: live.station
+      ? "Platform at " + live.station + ": " + (CROWD_TEXT[live.crowd] || "unknown") + " (" + live.source + ")"
+      : live.nextBuses.length
+        ? "Next bus " + live.serviceNo + " at stop " + live.busStopCode + ": " + live.nextBuses.map((b) => b.display + (b.load ? " (" + b.load + ")" : "")).join(", ") +
+          (live.crowd ? ". The next bus is " + CROWD_TEXT[live.crowd] + "." : "")
+        : "No live arrival data for bus " + live.serviceNo }));
+    return li;
+  }));
+  $("warnings").replaceChildren(...o.warnings.map((w) =>
+    el("div", { className: "warning " + (w.severity === "high" ? "high" : ""), textContent: w.message })));
+}
+
+// ---- saving routes (POST/GET /api/routes, POST /api/routes/{id}/approve) ----
+
+const JSON_HEADERS = { "Content-Type": "application/json" };
+
+// What the person typed, unless it is just coordinates or a map pin (those aren't place names).
+function placeName(which) {
+  const text = $("q-" + which).value.trim();
+  return !text || text === "Pinned on map" || /^-?\d+(\.\d+)?\s*,\s*-?\d+(\.\d+)?$/.test(text)
+    ? (which === "from" ? "Start" : "Destination") : text;
+}
+const placeOf = (which) => {
+  const named = placeName(which);
+  return { name: ["Start", "Destination"].includes(named) ? null : named, lat: points[which].lat, lng: points[which].lng };
+};
+
+$("save").addEventListener("click", async () => {
+  const option = lastOptions[activeIndex];
+  if (!option) { setStatus("Plan a route first.", true); return; }
+  try {
+    const route = await api("/api/routes", { method: "POST", headers: JSON_HEADERS, body: JSON.stringify({
+      travellerId: $("traveller").value.trim(), caregiverId: $("caregiver").value.trim(),
+      name: $("route-name").value.trim() || "Untitled route",
+      origin: placeOf("from"), destination: placeOf("to"),
+      steps: option.steps, path: option.path,
+    }) });
+    setStatus("Saved as " + route.routeId + " (version " + route.version + ", not approved yet).");
+    await loadSaved();
+  } catch (err) { setStatus(err.message, true); }
+});
+
+async function loadSaved() {
+  const traveller = $("traveller").value.trim();
+  if (!traveller) { $("saved").replaceChildren(); return; }
+  try {
+    const { routes } = await api("/api/routes?travellerId=" + encodeURIComponent(traveller));
+    $("saved").replaceChildren(...(routes.length ? routes.map((r) => el("div", { className: "saved-item" },
+      el("button", { className: "open", onclick: () => openSaved(r.routeId),
+        textContent: r.name + "  (" + r.routeId + ", v" + r.version + (r.approved ? ", approved" : ", not approved") + ")" }),
+      ...(r.approved
+        ? [el("button", { className: "approve", textContent: "New trip today", onclick: () => newTrip(r.routeId) })]
+        : [el("button", { className: "approve", textContent: "Approve", onclick: () => approve(r.routeId) })]),
+    )) : [el("div", { className: "meta", textContent: "Nothing saved for this traveller yet." })]));
+  } catch (err) { setStatus(err.message, true); }
+  await loadTrips();
+}
+
+// ---- trips (POST /api/trips, /start, /end, GET /pack) ----
+
+const today = () => new Date().toLocaleDateString("en-CA");        // YYYY-MM-DD in the browser's timezone
+
+async function newTrip(routeId) {
+  try {
+    const trip = await api("/api/trips", { method: "POST", headers: JSON_HEADERS, body: JSON.stringify({ routeId, date: today() }) });
+    setStatus("Trip " + trip.tripId + " planned for " + trip.date + " on route " + routeId + " v" + trip.routeVersion + ".");
+    await loadTrips();
+  } catch (err) { setStatus(err.message, true); }
+}
+
+async function loadTrips() {
+  const traveller = $("traveller").value.trim();
+  if (!traveller) { $("trips").replaceChildren(); return; }
+  try {
+    const { trips } = await api("/api/trips?travellerId=" + encodeURIComponent(traveller));
+    $("trips").replaceChildren(...(trips.length ? trips.map((t) => el("div", { className: "saved-item" },
+      el("span", { className: "meta", style: "flex:1", textContent: t.date + "  " + t.tripId + "  " + t.status + "  (" + t.routeId + " v" + t.routeVersion + ")" }),
+      ...(t.status === "planned" ? [el("button", { className: "approve", textContent: "Start", onclick: () => tripAction(t.tripId, "start") })] : []),
+      ...(t.status === "active" ? [el("button", { className: "approve", textContent: "End", onclick: () => tripAction(t.tripId, "end") })] : []),
+      el("button", { className: "approve", textContent: "Pack", onclick: () => openPack(t.tripId) }),
+    )) : [el("div", { className: "meta", textContent: "No trips yet. Approve a route, then start a trip." })]));
+  } catch (err) { setStatus(err.message, true); }
+}
+
+async function tripAction(tripId, action) {
+  try {
+    const trip = await api("/api/trips/" + tripId + "/" + action, { method: "POST" });
+    setStatus("Trip " + trip.tripId + " is now " + trip.status + ".");
+    await loadTrips();
+  } catch (err) { setStatus(err.message, true); }
+}
+
+async function openPack(tripId) {
+  try {
+    const pack = await api("/api/trips/" + tripId + "/pack");
+    $("pack-link").replaceChildren("Pack ready (link valid for an hour): ",
+      el("a", { href: pack.packUrl, target: "_blank", rel: "noopener", textContent: pack.packVersion }));
+    setStatus("Route pack " + pack.packVersion + " stored. Open the link below the trips list.");
+  } catch (err) { setStatus(err.message, true); }
+}
+
+async function approve(routeId) {
+  try {
+    const route = await api("/api/routes/" + routeId + "/approve", { method: "POST" });
+    setStatus(route.routeId + " approved (version " + route.version + ").");
+    await loadSaved();
+  } catch (err) { setStatus(err.message, true); }
+}
+
+async function openSaved(routeId) {
+  try {
+    const route = await api("/api/routes/" + routeId);
+    drawn.clearLayers();
+    document.querySelectorAll(".option").forEach((b) => b.classList.remove("active"));
+    $("warnings").replaceChildren();
+    const line = L.polyline(route.path, { color: COLORS.bus, weight: 5, opacity: .85 }).addTo(drawn);
+    route.steps.forEach((step, i) => {
+      const at = step.from.lat != null ? [step.from.lat, step.from.lng] : route.path[0];
+      L.circleMarker(at, { radius: 6, color: COLORS[step.mode], fillColor: "#fff", fillOpacity: 1, weight: 3 })
+        .bindPopup(el("div", { textContent: (i + 1) + ". " + step.instruction })).addTo(drawn);
+    });
+    map.fitBounds(line.getBounds(), { padding: [40, 40] });
+    $("steps").replaceChildren(...route.steps.map((step) =>
+      el("li", { className: "step " + step.mode }, el("div", { textContent: step.instruction }))));
+    setStatus("Opened " + route.name + " (" + route.routeId + ", version " + route.version + (route.approved ? ", approved" : ", not approved") + ").");
+  } catch (err) { setStatus(err.message, true); }
+}
+
+$("traveller").addEventListener("change", loadSaved);     // loadSaved also refreshes the trips list
+// Acting as a caregiver saves routes as that caregiver; acting as a traveller looks up that traveller's routes.
+$("act-as").addEventListener("change", () => {
+  const user = $("act-as").value.trim();
+  if (user.startsWith("G-")) $("caregiver").value = user;
+  if (user.startsWith("U-")) $("traveller").value = user;
+  loadSaved();
+});
+loadSaved();
+</script>
+</body>
+</html>

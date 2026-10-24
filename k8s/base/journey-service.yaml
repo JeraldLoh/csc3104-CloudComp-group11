@@ -1,0 +1,77 @@
+# The LTA and OneMap keys come from a Secret, created from the root .env like localstack-auth:
+#   kubectl create secret generic journey-api-keys --from-env-file=.env -n csc3104
+# (the .env needs LTA_API_KEY= and ONEMAP_API_EMAIL= / ONEMAP_API_PASSWORD= (or ONEMAP_API_KEY=) lines; other lines are ignored by the pod)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: journey-service
+  namespace: csc3104
+  labels: { app: journey-service }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: journey-service }
+  template:
+    metadata:
+      labels: { app: journey-service }
+    spec:
+      containers:
+        - name: journey-service
+          image: journey-service:local
+          imagePullPolicy: IfNotPresent   # kind: use the image loaded with `kind load`
+          ports: [{ containerPort: 8000 }]
+          env:
+            - { name: REDIS_URL, value: "redis://cloud-redis:6379/0" }
+            - { name: AWS_ENDPOINT_URL, value: "http://cloud-localstack:4566" }   # remove on EKS
+            - { name: AWS_ACCESS_KEY_ID, value: "csc3104" }                       # remove on EKS (use IAM role)
+            - { name: AWS_SECRET_ACCESS_KEY, value: "csc3104" }                   # remove on EKS
+            - { name: AWS_DEFAULT_REGION, value: "ap-southeast-1" }
+            - name: LTA_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: journey-api-keys
+                  key: LTA_API_KEY
+                  optional: true          # pod still starts without it; LTA calls return 502
+            - name: ONEMAP_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: journey-api-keys
+                  key: ONEMAP_API_KEY
+                  optional: true          # pod still starts without it; planning returns 502
+            - name: ONEMAP_API_EMAIL          # the OneMap account: the service logs in and renews its own token
+              valueFrom:
+                secretKeyRef:
+                  name: journey-api-keys
+                  key: ONEMAP_API_EMAIL
+                  optional: true
+            - name: ONEMAP_API_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: journey-api-keys
+                  key: ONEMAP_API_PASSWORD
+                  optional: true
+          resources:
+            # Requests are needed for the Horizontal Pod Autoscaler (issue 3.4) to work.
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+          # Ready = Redis reachable. Not ready -> no traffic, but not restarted.
+          readinessProbe:
+            httpGet: { path: /ready, port: 8000 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          # Alive = process responds. Deliberately doesn't check dependencies, so a Redis
+          # outage doesn't make Kubernetes restart every replica at once.
+          livenessProbe:
+            httpGet: { path: /health, port: 8000 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: journey-service
+  namespace: csc3104
+spec:
+  type: ClusterIP
+  selector: { app: journey-service }
+  ports: [{ port: 8000, targetPort: 8000 }]

@@ -1,0 +1,48 @@
+# Adds the Journey Service to compose.yaml without editing it.
+# From the repo root (LTA_API_KEY and ONEMAP_API_EMAIL / ONEMAP_API_PASSWORD go in the root .env, next to LOCALSTACK_AUTH_TOKEN):
+#   docker compose -f compose.yaml -f services/journey-service/compose.journey.yaml up --build -d journey-service
+# (Paths here are relative to the repo root, because compose.yaml is the first file.)
+services:
+  journey-service:
+    image: journey-service:local
+    build: services/journey-service
+    ports:
+      - "8006:8000"
+    environment:
+      REDIS_URL: redis://cloud-redis:6379/0
+      AWS_ENDPOINT_URL: http://cloud-localstack:4566
+      AWS_ACCESS_KEY_ID: csc3104
+      AWS_SECRET_ACCESS_KEY: csc3104
+      AWS_DEFAULT_REGION: ap-southeast-1
+      LTA_API_KEY: ${LTA_API_KEY:-}
+      ONEMAP_API_KEY: ${ONEMAP_API_KEY:-}                # a pasted token (lasts 3 days); not needed with the account below
+      ONEMAP_API_EMAIL: ${ONEMAP_API_EMAIL:-}            # the OneMap account: the service logs in and renews its own token
+      ONEMAP_API_PASSWORD: ${ONEMAP_API_PASSWORD:-}
+      # Demo on saved API responses (app/demo_data), so it works offline and after the OneMap token expires.
+      # Set ONEMAP_MODE=live / LTA_MODE=live (in .env or the shell) to use the real APIs again.
+      ONEMAP_MODE: ${ONEMAP_MODE:-recorded}
+      LTA_MODE: ${LTA_MODE:-recorded}
+      ROUTES_STORE: dynamodb           # saved routes in LocalStack's DynamoDB (use "redis" to run without it)
+      CREATE_RESOURCES: "true"         # create the tables, bucket and queue on startup (local only)
+      PACKS_BUCKET: careroute-packs    # route packs in LocalStack's S3
+      S3_PUBLIC_ENDPOINT_URL: http://localhost:4566   # pack links are opened in your browser, outside Docker
+      DEMO_UI: "true"                  # dev map page at http://localhost:8006/demo
+      AUTH_MODE: ${AUTH_MODE:-off}     # off (default) | dev (trust an X-Dev-User header, local only) | cognito
+    depends_on:
+      cloud-redis:
+        condition: service_healthy
+      cloud-localstack:
+        condition: service_healthy
+
+  cloud-localstack:
+    environment:
+      # compose.yaml only starts s3,sqs; the routes table needs DynamoDB.
+      SERVICES: s3,sqs,dynamodb
+    # Newer LocalStack images don't include curl, so compose.yaml's health check can never pass.
+    # Check with Python instead, and allow time for startup.
+    healthcheck:
+      test: python3 -c "import urllib.request as u; u.urlopen('http://localhost:4566/_localstack/health', timeout=2)"
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
