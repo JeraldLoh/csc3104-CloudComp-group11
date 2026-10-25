@@ -649,11 +649,20 @@ Resources:
       TableName: !Sub ${ResourcePrefix}-checkins
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
-        - { AttributeName: tripId,   AttributeType: S }
-        - { AttributeName: seq,      AttributeType: N }
+        - { AttributeName: tripId,     AttributeType: S }
+        - { AttributeName: seq,        AttributeType: N }
+        - { AttributeName: pending,    AttributeType: S }
+        - { AttributeName: receivedAt, AttributeType: S }
       KeySchema:
-        - { AttributeName: tripId,   KeyType: HASH }
-        - { AttributeName: seq,      KeyType: RANGE }
+        - { AttributeName: tripId,     KeyType: HASH }
+        - { AttributeName: seq,        KeyType: RANGE }
+      # Used by the check-in service's clean-up task to find stuck check-ins.
+      GlobalSecondaryIndexes:
+        - IndexName: pending-index
+          KeySchema:
+            - { AttributeName: pending,    KeyType: HASH }
+            - { AttributeName: receivedAt, KeyType: RANGE }
+          Projection: { ProjectionType: ALL }
       TimeToLiveSpecification:
         AttributeName: expiresAt
         Enabled: true
