@@ -10,7 +10,9 @@
 # With --service NAME, only that service is built and deployed onto an existing
 # stack (no CloudFormation or Load Balancer Controller steps):
 #   services/NAME/Dockerfile      image build context
-#   k8s/eks/services/NAME.yaml    manifest; Deployment must be named NAME.
+#   k8s/eks/services/NAME.yaml    manifest; a Deployment named NAME, or (for one image run
+#                                 as several Deployments, e.g. detectors) every Deployment
+#                                 labelled app.kubernetes.io/part-of: NAME.
 #                                 Placeholders: __IMAGE__ __NAMESPACE__ __REGION__
 #                                 __REDIS_ENDPOINT__ __CHECKINS_QUEUE_URL__
 #                                 __DISRUPTIONS_QUEUE_URL__
@@ -73,6 +75,17 @@ info "Account $ACCOUNT_ID, region $REGION, stack $STACK_NAME"
 
 # ---------------------------------------------------------------------------
 # --service: build and deploy one service onto the existing stack, then exit.
+# Sets TARGET to the kubectl arguments selecting this service's Deployment(s); fails if there are none.
+service_target() {
+  if kubectl get deployment "$SERVICE" -n "$APP_NAMESPACE" >/dev/null 2>&1; then
+    TARGET=(deployment/"$SERVICE")
+  elif [ -n "$(kubectl get deployment -n "$APP_NAMESPACE" -l "app.kubernetes.io/part-of=$SERVICE" -o name 2>/dev/null)" ]; then
+    TARGET=(deployment -l "app.kubernetes.io/part-of=$SERVICE")
+  else
+    return 1
+  fi
+}
+
 if [ -n "$SERVICE" ]; then
   printf '%s' "$SERVICE" | grep -Eq '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$' \
     || die "Service name must be lowercase letters, digits and dashes: '$SERVICE'"
@@ -123,13 +136,14 @@ if [ -n "$SERVICE" ]; then
       -e "s|__DISRUPTIONS_QUEUE_URL__|$DISRUPTIONS_QUEUE_URL|g" \
       "$SERVICE_MANIFEST" > "$RENDERED"
   DEPLOYMENT_EXISTED=false
-  kubectl get deployment "$SERVICE" -n "$APP_NAMESPACE" >/dev/null 2>&1 && DEPLOYMENT_EXISTED=true
+  service_target && DEPLOYMENT_EXISTED=true
   kubectl apply -f "$RENDERED"
+  service_target || die "The manifest has no Deployment named $SERVICE or labelled app.kubernetes.io/part-of=$SERVICE"
   # Re-pushing the same tag does not change the spec, so force new pods to pull it.
   if [ "$DEPLOYMENT_EXISTED" = true ]; then
-    kubectl rollout restart deployment/"$SERVICE" -n "$APP_NAMESPACE"
+    kubectl rollout restart "${TARGET[@]}" -n "$APP_NAMESPACE"
   fi
-  kubectl rollout status deployment/"$SERVICE" -n "$APP_NAMESPACE" --timeout=10m
+  kubectl rollout status "${TARGET[@]}" -n "$APP_NAMESPACE" --timeout=10m
 
   echo
   printf '\033[1;32mService %s deployed.\033[0m Logs: kubectl logs -n %s deploy/%s -f\n' \
