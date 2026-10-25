@@ -4,4 +4,7 @@ resources:
   - redis.yaml
   - localstack.yaml
   - fastapi.yaml
+  - detectors/route-corridor
+  - detectors/heading-speed
+  - detectors/dwell-time
   - journey-service.yaml

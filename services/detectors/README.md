@@ -38,6 +38,25 @@ returns an `abstain` vote (`internal error: <type>`), never a 500; a malformed b
 
 One image for all three detectors; `DETECTOR_ID` picks which one runs. Deployment is via Kubernetes (stage 11).
 
+### Kubernetes (kind)
+
+`k8s/local/detectors/` has one shared `base/` (Deployment with 2 replicas, ClusterIP Service on 8000,
+HPA 2-6 replicas at 60% CPU, preferred pod anti-affinity across nodes and zones) and one tiny
+kustomization per detector that names it and sets `DETECTOR_ID`. The Services are
+`careroute-detector-route-corridor`, `-heading-speed` and `-dwell-time`. They are part of
+`kubectl apply -k k8s/local`, and read Redis from `cloud-redis`.
+
+```bash
+docker build -t cloud-detectors:local services/detectors
+kind load docker-image cloud-detectors:local --name csc3104-local
+kubectl apply -k k8s/local
+kubectl get pods,svc,hpa -n csc3104
+kubectl port-forward -n csc3104 svc/careroute-detector-route-corridor 8101:8000
+```
+
+The HPA shows `<unknown>` CPU until metrics-server is installed in the kind cluster. EKS manifests are not
+added yet (the deploy script handles one Deployment per `--service`).
+
 ### Local dev with mock data
 
 `compose.yaml` starts Redis, a one-shot `seed` job and the three detectors (8101 route-corridor,
@@ -56,6 +75,19 @@ docker compose down
 `--request <scenario>` prints a `detector-request.json` for the scenario's interesting moment; send it
 to any port. `dev/seed.py` also runs on the host (`python dev/seed.py --redis redis://localhost:6379/0`)
 to re-seed. `long_dwell` makes dwell-time abstain: Redis only keeps 10 check-ins (see the dwell-time docstring).
+
+### Replay a whole scenario
+
+With the compose stack up, from the repo root (needs the detectors venv for `redis`):
+
+```bash
+python -m tools.simulator replay --scenario off_route      # per-check-in table + results/<scenario>-<time>.csv
+python -m tools.simulator replay --all                     # every scenario, then a summary per detector
+```
+
+Flags: `--redis`, `--detectors` (comma-separated URLs), `--speed` (0 = fast, 1 = real time),
+`--no-browser` (clean check-ins), `--seed`. The summary lists true positives, false alarms, abstains and the
+detection delay in check-ins (only for the problem each detector owns). `results/` is git-ignored.
 
 ## Settings
 

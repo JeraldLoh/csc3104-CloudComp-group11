@@ -1,0 +1,14 @@
+# Deployment, Service and HPA all become careroute-detector-dwell-time
+resources:
+  - ../base
+nameSuffix: -dwell-time
+labels:
+  - pairs: { app: careroute-detector-dwell-time }
+    includeSelectors: true
+    includeTemplates: true
+patches:
+  - target: { kind: Deployment }
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: { name: DETECTOR_ID, value: dwell-time }
