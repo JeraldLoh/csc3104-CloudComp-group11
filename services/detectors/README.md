@@ -34,6 +34,29 @@ DETECTOR_ID=route-corridor uvicorn detectors.app:app --reload   # then open /doc
 It refuses to start if `DETECTOR_ID` is not a registered detector. Any detection or Redis failure
 returns an `abstain` vote (`internal error: <type>`), never a 500; a malformed body is a 422.
 
+## Docker
+
+One image for all three detectors; `DETECTOR_ID` picks which one runs. Deployment is via Kubernetes (stage 11).
+
+### Local dev with mock data
+
+`compose.yaml` starts Redis, a one-shot `seed` job and the three detectors (8101 route-corridor,
+8102 heading-speed, 8103 dwell-time). `dev/seed.py` writes one mock trip per simulator scenario
+(`off_route`, `wrong_direction`, `long_dwell`, `normal`, `normal_bus_wait`, `poor_gps`) into Redis,
+using the same keys as `contracts/redis-keys.md`.
+
+```bash
+cd services/detectors
+docker compose up --build -d
+python dev/seed.py --request off_route | curl -s -X POST localhost:8101/internal/detect \
+     -H 'content-type: application/json' -d @-
+docker compose down
+```
+
+`--request <scenario>` prints a `detector-request.json` for the scenario's interesting moment; send it
+to any port. `dev/seed.py` also runs on the host (`python dev/seed.py --redis redis://localhost:6379/0`)
+to re-seed. `long_dwell` makes dwell-time abstain: Redis only keeps 10 check-ins (see the dwell-time docstring).
+
 ## Settings
 
 Each env var is the field name in upper case. Defaults are in `detectors/config.py`.
