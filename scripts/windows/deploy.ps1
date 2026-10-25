@@ -12,7 +12,7 @@
   With -Service NAME, only that service is built and deployed onto an existing
   stack (no CloudFormation or Load Balancer Controller steps):
     services\NAME\Dockerfile      image build context
-    k8s\eks\services\NAME.yaml    manifest; Deployment must be named NAME.
+    k8s\eks\services\NAME.yaml    manifest (any number of Deployments/Services).
                                   Placeholders: __IMAGE__ __NAMESPACE__ __REGION__
                                   __REDIS_ENDPOINT__ __CHECKINS_QUEUE_URL__
                                   __DISRUPTIONS_QUEUE_URL__
@@ -135,18 +135,21 @@ try {
     $text = [IO.File]::ReadAllText($ServiceManifest)
     foreach ($key in $Placeholders.Keys) { $text = $text.Replace($key, [string]$Placeholders[$key]) }
     [IO.File]::WriteAllText($Rendered, $text, $Utf8NoBom)
-    Invoke-Quiet { kubectl get deployment $Service -n $AppNamespace } | Out-Null
-    $DeploymentExisted = ($LASTEXITCODE -eq 0)
+    # Deployments in this manifest that already exist (a manifest may hold several).
+    $Existing = @(Invoke-Quiet { kubectl get -f $Rendered -o name } | Where-Object { $_ -like 'deployment*' })
     Invoke-Checked { kubectl apply -f $Rendered }
     # Re-pushing the same tag does not change the spec, so force new pods to pull it.
-    if ($DeploymentExisted) {
-      Invoke-Checked { kubectl rollout restart "deployment/$Service" -n $AppNamespace }
+    foreach ($d in $Existing) {
+      Invoke-Checked { kubectl rollout restart $d -n $AppNamespace }
     }
-    Invoke-Checked { kubectl rollout status "deployment/$Service" -n $AppNamespace --timeout=10m }
+    $Deployments = @(Invoke-Checked { kubectl get -f $Rendered -o name } | Where-Object { $_ -like 'deployment*' })
+    foreach ($d in $Deployments) {
+      Invoke-Checked { kubectl rollout status $d -n $AppNamespace --timeout=10m }
+    }
 
     Write-Host ''
     Write-Host "Service $Service deployed." -ForegroundColor Green -NoNewline
-    Write-Host " Logs: kubectl logs -n $AppNamespace deploy/$Service -f"
+    Write-Host " Pods: kubectl get pods -n $AppNamespace"
     return
   }
 

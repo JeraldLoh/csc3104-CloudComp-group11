@@ -70,8 +70,9 @@ services/<name>/Dockerfile          your service's code and Dockerfile
 k8s/eks/services/<name>.yaml        your Kubernetes manifest
 ```
 
-The Deployment inside the manifest must be called `<name>` too. Use lowercase letters, digits and
-dashes only (e.g. `coordinator`, `detector-route`).
+Use lowercase letters, digits and dashes only (e.g. `coordinator`, `fake-detector`). The manifest
+can hold several Deployments and Services (e.g. one image deployed under several names); the
+script waits until every Deployment in it is ready.
 
 **Don't paste AWS values into your manifest.** Write these placeholders instead; the script fills
 them in from the environment (and never saves the filled-in version to Git):
@@ -91,7 +92,7 @@ Example `k8s/eks/services/coordinator.yaml`:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: coordinator                  # must match --service
+  name: coordinator
   namespace: __NAMESPACE__
 spec:
   replicas: 1                        # use 2 for demos and failover tests

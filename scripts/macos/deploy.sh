@@ -10,7 +10,7 @@
 # With --service NAME, only that service is built and deployed onto an existing
 # stack (no CloudFormation or Load Balancer Controller steps):
 #   services/NAME/Dockerfile      image build context
-#   k8s/eks/services/NAME.yaml    manifest; Deployment must be named NAME.
+#   k8s/eks/services/NAME.yaml    manifest (any number of Deployments/Services).
 #                                 Placeholders: __IMAGE__ __NAMESPACE__ __REGION__
 #                                 __REDIS_ENDPOINT__ __CHECKINS_QUEUE_URL__
 #                                 __DISRUPTIONS_QUEUE_URL__
@@ -122,18 +122,19 @@ if [ -n "$SERVICE" ]; then
       -e "s|__CHECKINS_QUEUE_URL__|$CHECKINS_QUEUE_URL|g" \
       -e "s|__DISRUPTIONS_QUEUE_URL__|$DISRUPTIONS_QUEUE_URL|g" \
       "$SERVICE_MANIFEST" > "$RENDERED"
-  DEPLOYMENT_EXISTED=false
-  kubectl get deployment "$SERVICE" -n "$APP_NAMESPACE" >/dev/null 2>&1 && DEPLOYMENT_EXISTED=true
+  # Deployments in this manifest that already exist (a manifest may hold several).
+  EXISTING="$(kubectl get -f "$RENDERED" -o name 2>/dev/null | grep '^deployment' || true)"
   kubectl apply -f "$RENDERED"
   # Re-pushing the same tag does not change the spec, so force new pods to pull it.
-  if [ "$DEPLOYMENT_EXISTED" = true ]; then
-    kubectl rollout restart deployment/"$SERVICE" -n "$APP_NAMESPACE"
-  fi
-  kubectl rollout status deployment/"$SERVICE" -n "$APP_NAMESPACE" --timeout=10m
+  for d in $EXISTING; do
+    kubectl rollout restart "$d" -n "$APP_NAMESPACE"
+  done
+  for d in $(kubectl get -f "$RENDERED" -o name | grep '^deployment'); do
+    kubectl rollout status "$d" -n "$APP_NAMESPACE" --timeout=10m
+  done
 
   echo
-  printf '\033[1;32mService %s deployed.\033[0m Logs: kubectl logs -n %s deploy/%s -f\n' \
-    "$SERVICE" "$APP_NAMESPACE" "$SERVICE"
+  printf '\033[1;32mService %s deployed.\033[0m Pods: kubectl get pods -n %s\n' "$SERVICE" "$APP_NAMESPACE"
   exit 0
 fi
 
