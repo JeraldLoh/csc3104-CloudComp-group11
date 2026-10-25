@@ -7,3 +7,4 @@ resources:
   - detectors/route-corridor
   - detectors/heading-speed
   - detectors/dwell-time
+  - journey-service.yaml
