@@ -1,6 +1,6 @@
 # Detectors (Member 4) on EKS: one image, three Deployments. DETECTOR_ID picks the detector.
 # Each has a Service detector-route|heading|dwell:8000 (the Coordinator calls POST /internal/detect), an HPA
-# (2-6 replicas, 60% CPU) and a PodDisruptionBudget. The script fills in the __PLACEHOLDERS__ (scripts/README.md).
+# (2-4 replicas, 60% CPU) and a PodDisruptionBudget. The script fills in the __PLACEHOLDERS__ (scripts/README.md).
 #
 # Deploy with `deploy.sh --service detectors`: the Deployments are found by their part-of label.
 # The HPAs need metrics-server running in the cluster (not installed by the platform stack).
@@ -66,7 +66,7 @@ metadata:
 spec:
   scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: detector-route }
   minReplicas: 2
-  maxReplicas: 6
+  maxReplicas: 4
   metrics:
     - type: Resource
       resource:
@@ -145,7 +145,7 @@ metadata:
 spec:
   scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: detector-heading }
   minReplicas: 2
-  maxReplicas: 6
+  maxReplicas: 4
   metrics:
     - type: Resource
       resource:
@@ -224,7 +224,7 @@ metadata:
 spec:
   scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: detector-dwell }
   minReplicas: 2
-  maxReplicas: 6
+  maxReplicas: 4
   metrics:
     - type: Resource
       resource:

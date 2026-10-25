@@ -41,7 +41,7 @@ One image for all three detectors; `DETECTOR_ID` picks which one runs. Deploymen
 ### Kubernetes (kind)
 
 `k8s/local/detectors/` has one shared `base/` (Deployment with 2 replicas, ClusterIP Service on 8000,
-HPA 2-6 replicas at 60% CPU, preferred pod anti-affinity across nodes and zones) and one tiny
+HPA 2-4 replicas at 60% CPU, preferred pod anti-affinity across nodes and zones) and one tiny
 kustomization per detector that names it and sets `DETECTOR_ID`. The Services are
 `detector-route`, `-heading` and `-dwell`. They are not part of
 `kubectl apply -k k8s/local` (so teammates without the image aren't affected, like `alert-service`); apply them
