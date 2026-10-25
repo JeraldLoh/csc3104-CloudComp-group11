@@ -36,7 +36,8 @@ def alert_message(incident: dict, name: str) -> str:
 
 
 def build_event(event_type: str, incident: dict, traveller_name: str | None = None) -> dict:
-    """alert-event.json. detectionCount and updatedAt are extra (allowed: new optional fields)."""
+    """alert-event.json. tripId, stepIndex, detectionCount and updatedAt are extra (allowed: new optional
+    fields), so a dashboard can show a new alert in full without reloading the list."""
     name = traveller_name or incident["travellerId"]
     return {
         "event": f"incident.{event_type}",
@@ -44,6 +45,8 @@ def build_event(event_type: str, incident: dict, traveller_name: str | None = No
             "incidentId": incident["incidentId"],
             "travellerId": incident["travellerId"],
             "travellerName": name,
+            "tripId": incident.get("tripId"),
+            "stepIndex": incident.get("stepIndex"),
             "problemType": incident["problemType"],
             "severity": incident["severity"],
             "state": incident["state"],

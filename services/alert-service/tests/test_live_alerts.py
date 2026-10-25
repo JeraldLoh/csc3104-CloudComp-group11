@@ -82,6 +82,9 @@ def test_new_problem_publishes_incident_opened(client, channel, report):
     assert event["event"] == "incident.opened"
     assert event["incident"]["state"] == "open"
     assert event["incident"]["detectionCount"] == 1
+    # so the dashboard can show "Trip T-001 · step 2" without reloading
+    assert event["incident"]["tripId"] == "T-001"
+    assert event["incident"]["stepIndex"] == 2
 
 
 def test_repeat_problem_publishes_incident_updated(client, channel, report):
@@ -157,11 +160,11 @@ async def test_stream_only_sends_the_requested_travellers_events(async_redis):
 
 
 @pytest.mark.anyio
-async def test_quiet_stream_sends_keep_alives(async_redis):
-    """So load balancers don't close an idle connection (the AWS ALB does after 60 s)."""
+async def test_quiet_stream_sends_pings(async_redis):
+    """So load balancers don't close an idle connection, and the dashboard can tell it's still alive."""
     stream = event_stream(async_redis, ConnectedRequest(), traveller_id="U-nobody", keepalive_s=0.3)
     try:
         await anext(stream)
-        assert await anext(stream) == ": keep-alive\n\n"
+        assert await anext(stream) == "event: ping\ndata: {}\n\n"
     finally:
         await stream.aclose()

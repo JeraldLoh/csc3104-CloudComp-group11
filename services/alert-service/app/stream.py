@@ -4,8 +4,12 @@ The browser opens one long HTTP response (EventSource) and receives each alert-e
 `data:` line the moment any replica publishes it. Each open stream subscribes to the Redis channel
 itself, so closing the dashboard just closes that subscription.
 
-A comment line goes out every 15 s when nothing else does: load balancers close connections that
-stay silent (the AWS ALB after 60 s), and the browser's EventSource would then have to reconnect.
+A `ping` event goes out every 15 s when nothing else does, for two reasons:
+- load balancers close connections that stay silent (the AWS ALB after 60 s);
+- the dashboard can tell a quiet connection from a dead one. A proxy can keep the browser's side open
+  after this end has gone (Vite's dev proxy does when the service restarts), so the page would show
+  "Live" and receive nothing. If the dashboard hears no ping for a while, it reconnects.
+Pings are a separate event type (`event: ping`), so code listening for alert events never sees them.
 """
 import json
 import time
@@ -13,10 +17,11 @@ import time
 from app.events import CHANNEL
 
 KEEPALIVE_S = 15
+PING = "event: ping\ndata: {}\n\n"
 
 
 async def event_stream(redis_async, request, traveller_id: str | None = None, keepalive_s: float = KEEPALIVE_S):
-    """Yields SSE chunks: alert events (only `traveller_id`'s, if given) and keep-alive comments."""
+    """Yields SSE chunks: alert events (only `traveller_id`'s, if given) and pings."""
     pubsub = redis_async.pubsub()
     await pubsub.subscribe(CHANNEL)
     try:
@@ -28,7 +33,7 @@ async def event_stream(redis_async, request, traveller_id: str | None = None, ke
             if msg is None:
                 # None also means "a subscribe confirmation was skipped", so check the time really passed.
                 if time.monotonic() - last_sent >= keepalive_s:
-                    yield ": keep-alive\n\n"
+                    yield PING
                     last_sent = time.monotonic()
                 continue
             data = msg["data"]

@@ -7,4 +7,6 @@ $env:AWS_SECRET_ACCESS_KEY = "csc3104"
 $env:AWS_DEFAULT_REGION = "ap-southeast-1"
 $env:CREATE_RESOURCES = "true"
 # --reload-dir: restart only when our code changes, not when OneDrive or VS Code touch files in .venv.
-& "$PSScriptRoot\.venv\Scripts\python.exe" -m uvicorn app.main:app --reload --reload-dir "$PSScriptRoot\app" --port 8005 --app-dir $PSScriptRoot
+# --timeout-graceful-shutdown: live streams (/api/stream) never close by themselves, so don't wait
+# for them forever on a restart; dashboards reconnect on their own.
+& "$PSScriptRoot\.venv\Scripts\python.exe" -m uvicorn app.main:app --reload --reload-dir "$PSScriptRoot\app" --port 8005 --app-dir $PSScriptRoot --timeout-graceful-shutdown 5
