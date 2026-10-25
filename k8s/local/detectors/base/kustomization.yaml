@@ -1,0 +1,5 @@
+# One detector, unnamed. Each sibling directory names it and sets DETECTOR_ID.
+resources:
+  - deployment.yaml
+  - service.yaml
+  - hpa.yaml
