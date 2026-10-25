@@ -1,6 +1,6 @@
 # Fake detectors (stand-ins for Member 4's), one image deployed four times under the
 # contract's service names, so the Coordinator finds them without extra config.
-# Deploy: bash scripts/macos/deploy.sh --service fake-detector
+# Deploy: bash scripts/macos/deploy.sh --service fake-detector  (Deployments found by their part-of label)
 # Remove before Member 4 deploys the real detectors (same names):
 #   kubectl delete -n careroute deploy,svc -l role=fake-detector
 # Change one live: kubectl -n careroute port-forward svc/detector-route 9001:8000, then
@@ -10,7 +10,7 @@ kind: Deployment
 metadata:
   name: detector-route
   namespace: __NAMESPACE__
-  labels: { app: detector-route, role: fake-detector }
+  labels: { app: detector-route, role: fake-detector, app.kubernetes.io/part-of: fake-detector }
 spec:
   replicas: 1
   selector:
@@ -50,7 +50,7 @@ kind: Deployment
 metadata:
   name: detector-dwell
   namespace: __NAMESPACE__
-  labels: { app: detector-dwell, role: fake-detector }
+  labels: { app: detector-dwell, role: fake-detector, app.kubernetes.io/part-of: fake-detector }
 spec:
   replicas: 1
   selector:
@@ -90,7 +90,7 @@ kind: Deployment
 metadata:
   name: detector-heading
   namespace: __NAMESPACE__
-  labels: { app: detector-heading, role: fake-detector }
+  labels: { app: detector-heading, role: fake-detector, app.kubernetes.io/part-of: fake-detector }
 spec:
   replicas: 1
   selector:
@@ -130,7 +130,7 @@ kind: Deployment
 metadata:
   name: detector-ml
   namespace: __NAMESPACE__
-  labels: { app: detector-ml, role: fake-detector }
+  labels: { app: detector-ml, role: fake-detector, app.kubernetes.io/part-of: fake-detector }
 spec:
   replicas: 1
   selector:

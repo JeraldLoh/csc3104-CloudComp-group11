@@ -1,6 +1,6 @@
 # Fake Alert Service (stand-in for Member 5's), deployed under the contract name
 # alert-service so the Aggregator finds it without extra config.
-# Deploy: bash scripts/macos/deploy.sh --service fake-alert
+# Deploy: bash scripts/macos/deploy.sh --service fake-alert  (Deployment found by its part-of label)
 # Remove before Member 5 deploys the real one (same name):
 #   kubectl delete -n careroute deploy,svc -l role=fake-alert
 # See alerts: kubectl -n careroute port-forward svc/alert-service 8004:8000, then
@@ -10,7 +10,7 @@ kind: Deployment
 metadata:
   name: alert-service
   namespace: __NAMESPACE__
-  labels: { app: alert-service, role: fake-alert }
+  labels: { app: alert-service, role: fake-alert, app.kubernetes.io/part-of: fake-alert }
 spec:
   replicas: 1                       # incidents live in memory: keep exactly one
   selector:
