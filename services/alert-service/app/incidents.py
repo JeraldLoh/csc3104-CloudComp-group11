@@ -19,9 +19,11 @@ from app.config import settings
 from app.errors import ApiError
 from app.models import ProblemReport
 
-URGENT_PROBLEMS = {"no_response", "help_requested"}
+# "unknown": detectors agree something is wrong but not what, so the caregiver should check.
+URGENT_PROBLEMS = {"no_response", "help_requested", "unknown"}
 RESOLVED_TTL_S = 30 * 24 * 3600  # contracts: incidents are deleted 30 days after being resolved
 TRAVELLER_INDEX = "travellerId-createdAt-index"
+UNKNOWN_STEP = "unknown"  # incident ID's last part when a report's stepIndex is null
 
 _serializer = TypeSerializer()
 _deserializer = TypeDeserializer()
@@ -36,8 +38,8 @@ def now_iso() -> str:
     return iso(datetime.now(timezone.utc))
 
 
-def incident_id(traveller_id: str, trip_id: str, problem_type: str, step_index: int) -> str:
-    return f"{traveller_id}#{trip_id}#{problem_type}#{step_index}"
+def incident_id(traveller_id: str, trip_id: str, problem_type: str, step: int | str) -> str:
+    return f"{traveller_id}#{trip_id}#{problem_type}#{step}"
 
 
 def _to_dynamo(value) -> dict:
@@ -95,10 +97,13 @@ class IncidentStore:
         Returns (incident, outcome); outcome is "created", "updated" or "reopened".
         """
         details = details or {}
-        iid = incident_id(report.travellerId, report.tripId, report.problemType, report.stepIndex)
+        # A missing step must not lose the alert; repeats with no step still share one incident.
+        step = UNKNOWN_STEP if report.stepIndex is None else report.stepIndex
+        iid = incident_id(report.travellerId, report.tripId, report.problemType, step)
         now = now_iso()
         detected_at = iso(report.timestamp)
-        location = report.location.model_dump() if report.location else None
+        loc = report.location
+        location = loc.model_dump() if loc and loc.lat is not None and loc.lng is not None else None
 
         incident = {
             "incidentId": iid,

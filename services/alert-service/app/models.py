@@ -4,15 +4,18 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-# contracts/README.md: problem types used everywhere
+# contracts/README.md: problem types used everywhere, plus "unknown": the Aggregator sends it when
+# detectors agree something is wrong but none says what. Rejecting it would lose the alert.
 ProblemType = Literal[
-    "off_route", "wrong_direction", "missed_stop", "long_dwell", "no_response", "help_requested", "disruption"
+    "off_route", "wrong_direction", "missed_stop", "long_dwell", "no_response", "help_requested", "disruption",
+    "unknown",
 ]
 
 
 class Location(BaseModel):
-    lat: float
-    lng: float
+    # contracts/README.md: unknown values are null (e.g. no GPS fix underground).
+    lat: float | None = None
+    lng: float | None = None
 
 
 class ProblemReport(BaseModel):
@@ -25,7 +28,7 @@ class ProblemReport(BaseModel):
     source: str
     travellerId: str
     tripId: str
-    stepIndex: int
+    stepIndex: int | None = None  # null if the check-in didn't say which step
     problemType: ProblemType
     confidence: float | None = None
     location: Location | None = None

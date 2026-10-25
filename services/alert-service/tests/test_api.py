@@ -41,6 +41,16 @@ def test_heartbeat_report_is_accepted(client, no_response_report):
     assert resp.json()["incidentId"].endswith("#T-001#no_response#2")
 
 
+def test_report_with_gaps_is_still_accepted(client, report):
+    """Unknown type, unknown step, no GPS: all allowed, and the caregiver is still alerted."""
+    gaps = {**report, "problemType": "unknown", "stepIndex": None, "location": {"lat": None, "lng": None}}
+
+    resp = client.post("/internal/problems", json=gaps)
+
+    assert resp.status_code == 200
+    assert resp.json() == {"incidentId": f"{report['travellerId']}#T-001#unknown#unknown", "created": True}
+
+
 def test_ack_and_resolve(client, report):
     iid = client.post("/internal/problems", json=report).json()["incidentId"]
     headers = {"X-User-Id": "G-007"}

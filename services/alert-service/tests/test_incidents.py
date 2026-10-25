@@ -71,6 +71,40 @@ def test_no_response_from_heartbeat_is_urgent(store, no_response_report):
     assert incident["source"] == "heartbeat"
 
 
+# ---------------------------------------------------------------------------- incomplete reports
+# The contract says unknown values are null. A report with gaps must still become an alert.
+def test_unknown_problem_type_is_accepted_and_urgent(store, report):
+    incident, outcome = store.record_problem(ProblemReport(**{**report, "problemType": "unknown"}))
+
+    assert outcome == "created"
+    assert incident["incidentId"].endswith("#unknown#2")
+    assert incident["severity"] == "urgent"
+
+
+def test_missing_gps_is_stored_as_no_location(store, report):
+    no_fix = {**report, "location": {"lat": None, "lng": None}}
+    incident, _ = store.record_problem(ProblemReport(**no_fix))
+
+    assert incident["lastLocation"] is None
+
+
+def test_missing_step_is_unknown_in_the_incident_id(store, report):
+    incident, outcome = store.record_problem(ProblemReport(**{**report, "stepIndex": None}))
+
+    assert outcome == "created"
+    assert incident["incidentId"] == f"{report['travellerId']}#T-001#off_route#unknown"
+    assert incident["stepIndex"] is None
+
+
+def test_repeated_reports_with_no_step_are_one_incident(store, report):
+    no_step = ProblemReport(**{**report, "stepIndex": None})
+    store.record_problem(no_step)
+    incident, outcome = store.record_problem(no_step)
+
+    assert outcome == "updated"
+    assert incident["detectionCount"] == 2
+
+
 # ---------------------------------------------------------------------------- states
 def test_acknowledge_then_resolve(store, report):
     iid = store.record_problem(ProblemReport(**report))[0]["incidentId"]
