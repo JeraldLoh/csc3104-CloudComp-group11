@@ -12,6 +12,15 @@ from .voting import Decision
 UNKNOWN_PROBLEM = "unknown"
 
 
+def whole_number(value) -> int | None:
+    """batteryPct as an int: the Alert Service only accepts whole numbers, but a check-in may
+    carry 63.5. Rejecting the report over that would lose the alert. Unreadable -> null."""
+    try:
+        return None if value is None else int(round(float(value)))
+    except (TypeError, ValueError):
+        return None
+
+
 def iso_z(dt: datetime) -> str:
     """2026-10-12T08:15:31Z: UTC, whole seconds, as in the contract examples."""
     return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -36,6 +45,6 @@ def build_problem_report(request_id: str, checkin: dict, votes: list[dict], deci
             for v in votes
         ],
         "location": {"lat": checkin.get("lat"), "lng": checkin.get("lng")},
-        "batteryPct": checkin.get("batteryPct"),
+        "batteryPct": whole_number(checkin.get("batteryPct")),
         "timestamp": iso_z(now),
     }

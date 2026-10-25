@@ -89,6 +89,17 @@ def test_unknown_step_and_battery_are_null():
     assert report["batteryPct"] is None
 
 
+@pytest.mark.parametrize("battery, expected", [
+    (64, 64), (64.0, 64), (63.6, 64), (63.4, 63), ("57", 57), (None, None), ("low", None),
+])
+def test_battery_is_sent_as_a_whole_number(battery, expected):
+    # The Alert Service (Member 5) only accepts an int; 63.5 would be rejected and the alert lost.
+    d = Decision("problem", "off_route", 0.9, 0.9, 2)
+    report = build_problem_report("T-001#17", {**example("checkin.json"), "batteryPct": battery}, [], d, NOW)
+    assert report["batteryPct"] == expected
+    assert report["batteryPct"] is None or type(report["batteryPct"]) is int
+
+
 def test_confidence_is_rounded():
     d = Decision("problem", "off_route", 0.876543, 0.876543, 2)
     assert build_problem_report("T-001#17", example("checkin.json"), [], d, NOW)["confidence"] == 0.88
