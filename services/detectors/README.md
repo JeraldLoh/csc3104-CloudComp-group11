@@ -43,7 +43,7 @@ One image for all three detectors; `DETECTOR_ID` picks which one runs. Deploymen
 `k8s/local/detectors/` has one shared `base/` (Deployment with 2 replicas, ClusterIP Service on 8000,
 HPA 2-6 replicas at 60% CPU, preferred pod anti-affinity across nodes and zones) and one tiny
 kustomization per detector that names it and sets `DETECTOR_ID`. The Services are
-`careroute-detector-route-corridor`, `-heading-speed` and `-dwell-time`. They are not part of
+`detector-route`, `-heading` and `-dwell`. They are not part of
 `kubectl apply -k k8s/local` (so teammates without the image aren't affected, like `alert-service`); apply them
 with `kubectl apply -k k8s/local/detectors`. They read Redis from `cloud-redis`, so apply `k8s/local` first.
 
@@ -53,7 +53,7 @@ kind load docker-image cloud-detectors:local --name csc3104-local
 kubectl apply -k k8s/local            # Redis etc., if not already there
 kubectl apply -k k8s/local/detectors
 kubectl get pods,svc,hpa -n csc3104
-kubectl port-forward -n csc3104 svc/careroute-detector-route-corridor 8101:8000
+kubectl port-forward -n csc3104 svc/detector-route 8101:8000
 ```
 
 The HPA shows `<unknown>` CPU until metrics-server is installed in the kind cluster. On EKS: `k8s/eks/services/detectors.yaml`, deployed with
