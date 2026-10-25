@@ -1,0 +1,80 @@
+# Journey Service on the platform's EKS Fargate cluster (the stack in cloudformation/careroute-vpc-eks-standard.yaml).
+# deploy-eks.ps1 fills in the four upper-case angle-bracket placeholders (image, Redis endpoint,
+# pack bucket, resource prefix) in a temporary copy and applies it; this file stays unchanged in Git so no account-specific value is
+# ever committed.
+#
+# No Ingress on purpose: the Service is ClusterIP only until the team decides how our endpoints are exposed on the
+# load balancer. Try it with:  kubectl port-forward svc/journey-service 8006:8000 -n careroute
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: journey-service
+  namespace: careroute
+  labels: { app: journey-service }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: journey-service }
+  template:
+    metadata:
+      labels: { app: journey-service }
+    spec:
+      # The platform's IAM role trusts exactly one service account, `cloud-fastapi` (created by the platform's
+      # k8s/eks/serviceaccount.yaml). Using any other name means no AWS access at all.
+      serviceAccountName: cloud-fastapi
+      containers:
+        - name: journey-service
+          image: <JOURNEY_IMAGE>            # ECR URI + tag, filled in by deploy-eks.ps1
+          ports: [{ containerPort: 8000 }]
+          env:
+            - { name: REDIS_URL, value: "redis://<REDIS_ENDPOINT>:6379/0" }   # ElastiCache, from the stack's RedisEndpoint
+            - { name: AWS_DEFAULT_REGION, value: "ap-southeast-1" }
+            # No AWS_ENDPOINT_URL and no access keys: boto3 uses real AWS and the IRSA role. CREATE_RESOURCES stays unset
+            # (false): the role cannot create anything, the stack already owns the tables.
+            - { name: ROUTES_STORE, value: "dynamodb" }
+            # The team's resource prefix is careroute (contracts/dynamo-db-tables.md). The platform stack builds its
+            # names from its ResourcePrefix, so deploy-eks.ps1 fills in the prefix the stack really uses.
+            - { name: ROUTES_TABLE, value: "<RESOURCE_PREFIX>-routes" }
+            - { name: TRIPS_TABLE, value: "<RESOURCE_PREFIX>-trips" }
+            - { name: PACKS_BUCKET, value: "<PACKS_BUCKET>" }                  # <prefix>-files-<account id>; packs go under packs/
+            # Always the real APIs in AWS; saved-data mode (ONEMAP_MODE / LTA_MODE=recorded) is for local demos only.
+            - { name: ONEMAP_MODE, value: "live" }
+            - { name: LTA_MODE, value: "live" }
+            # Logins are not enforced until the team has a Cognito user pool and has agreed the token claims
+            # (see ../README.md and the service README "Who is calling"). Then: AUTH_MODE=cognito + COGNITO_* settings.
+            - { name: AUTH_MODE, value: "off" }
+            - name: LTA_API_KEY
+              valueFrom: { secretKeyRef: { name: journey-api-keys, key: LTA_API_KEY, optional: true } }
+            - name: ONEMAP_API_KEY
+              valueFrom: { secretKeyRef: { name: journey-api-keys, key: ONEMAP_API_KEY, optional: true } }
+            # The OneMap account: the service logs in and renews its own token (the password stays in the Secret).
+            - name: ONEMAP_API_EMAIL
+              valueFrom: { secretKeyRef: { name: journey-api-keys, key: ONEMAP_API_EMAIL, optional: true } }
+            - name: ONEMAP_API_PASSWORD
+              valueFrom: { secretKeyRef: { name: journey-api-keys, key: ONEMAP_API_PASSWORD, optional: true } }
+          # Fargate sizes the pod from requests, so set them explicitly (requests = limits, as the platform does).
+          resources:
+            requests: { cpu: 250m, memory: 512Mi }
+            limits: { cpu: 250m, memory: 512Mi }
+          # Ready = Redis, the DynamoDB tables and the pack bucket are usable (a GetItem and a HeadBucket, both allowed
+          # by the platform's role). Not ready = no traffic, but not restarted.
+          readinessProbe:
+            httpGet: { path: /ready, port: 8000 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          # Alive = the process answers. Deliberately checks nothing external, so a Redis or AWS outage does not
+          # make Kubernetes restart every replica at once.
+          livenessProbe:
+            httpGet: { path: /health, port: 8000 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: journey-service
+  namespace: careroute
+spec:
+  type: ClusterIP
+  selector: { app: journey-service }
+  ports: [{ port: 8000, targetPort: 8000 }]
