@@ -1,0 +1,73 @@
+# Local dev/testing only: the Journey Service with its own Redis and LocalStack.
+# From the repo root (LTA_API_KEY, ONEMAP_API_EMAIL / ONEMAP_API_PASSWORD and LOCALSTACK_AUTH_TOKEN go in the root .env):
+#   docker compose --env-file .env -f services/journey-service/compose.journey.yaml up --build -d
+# (Paths here are relative to this folder. Redis takes host port 6379, as services/detectors/compose.yaml does,
+# so stop one stack before starting the other.)
+name: careroute
+services:
+  journey-service:
+    image: journey-service:local
+    build: .
+    ports:
+      - "8006:8000"
+    environment:
+      REDIS_URL: redis://cloud-redis:6379/0
+      AWS_ENDPOINT_URL: http://cloud-localstack:4566
+      AWS_ACCESS_KEY_ID: csc3104
+      AWS_SECRET_ACCESS_KEY: csc3104
+      AWS_DEFAULT_REGION: ap-southeast-1
+      LTA_API_KEY: ${LTA_API_KEY:-}
+      ONEMAP_API_KEY: ${ONEMAP_API_KEY:-}                # a pasted token (lasts 3 days); not needed with the account below
+      ONEMAP_API_EMAIL: ${ONEMAP_API_EMAIL:-}            # the OneMap account: the service logs in and renews its own token
+      ONEMAP_API_PASSWORD: ${ONEMAP_API_PASSWORD:-}
+      # Starts on saved API responses (app/saved_data, the default), so it works offline and after the OneMap token
+      # expires. Switch to live in the caregiver app's header or with `python -m app.demo_tools mode live`, or start
+      # live with ONEMAP_MODE=live / LTA_MODE=live in .env or the shell.
+      ONEMAP_MODE: ${ONEMAP_MODE:-recorded}
+      LTA_MODE: ${LTA_MODE:-recorded}
+      ONEMAP_TOKEN_ENV_FILE: /app/.env   # each new OneMap token is also written to your .env as ONEMAP_API_KEY
+      ROUTES_STORE: dynamodb           # saved routes in LocalStack's DynamoDB (use "redis" to run without it)
+      CREATE_RESOURCES: "true"         # create the tables, bucket and queue on startup (local only)
+      PACKS_BUCKET: careroute-packs    # route packs in LocalStack's S3
+      S3_PUBLIC_ENDPOINT_URL: http://localhost:4566   # pack links are opened in your browser, outside Docker
+      DEMO_UI: "true"                  # dev extras: the live/saved switch (/api/dev/data-mode) and app/demo_tools.py
+      AUTH_MODE: ${AUTH_MODE:-off}     # off (default) | dev (trust an X-Dev-User header, local only) | cognito
+    volumes:
+      - ../../.env:/app/.env           # the root .env, so ONEMAP_TOKEN_ENV_FILE can update it
+    depends_on:
+      cloud-redis:
+        condition: service_healthy
+      cloud-localstack:
+        condition: service_healthy
+
+  cloud-redis:
+    image: redis:latest
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    volumes:
+      - cloud-redis-data:/data
+    command: ["redis-server", "--appendonly", "yes"]
+
+  cloud-localstack:
+    image: localstack/localstack:latest
+    ports:
+      - "127.0.0.1:4566:4566"
+    environment:
+      SERVICES: s3,sqs,dynamodb        # the routes and trips tables need DynamoDB
+      AWS_DEFAULT_REGION: ap-southeast-1
+      LOCALSTACK_AUTH_TOKEN: ${LOCALSTACK_AUTH_TOKEN:?Set LOCALSTACK_AUTH_TOKEN in .env}
+    # Newer LocalStack images don't include curl, so check with Python instead, and allow time for startup.
+    healthcheck:
+      test: python3 -c "import urllib.request as u; u.urlopen('http://localhost:4566/_localstack/health', timeout=2)"
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
+
+volumes:
+  cloud-redis-data:
