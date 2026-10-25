@@ -3,7 +3,7 @@
 Pure function, no I/O. The stationary run is the newest check-ins that all lie
 within ``DWELL_RADIUS_M`` of their centroid; its duration comes from the
 timestamps, not the count. The limit depends on the current step's mode:
-``DWELL_TRANSIT_S`` for bus/mrt (waiting for a vehicle), otherwise
+``DWELL_TRANSIT_S`` for bus/train (waiting for a vehicle), otherwise
 ``DWELL_WALK_S``. Over the limit is ``problem`` / ``long_dwell``.
 
 Assumption: ``trip:{id}:recent`` holds only 10 check-ins (~100 s), shorter than
@@ -11,7 +11,7 @@ either limit. So a dwell can only be *proven* over the limit if the window
 itself spans it. When the whole window is stationary the true dwell is at
 least the window span, but we can't tell how much longer. If that span is
 already ``APPROACH_FRACTION`` of the limit we abstain ("window too short")
-instead of guessing normal. Asking M2 to store a ``dwellStartAt`` in
+instead of guessing normal. Asking the Check-in Service to store a ``dwellStartAt`` in
 ``trip:{id}:context`` would remove this blind spot.
 """
 
@@ -24,7 +24,8 @@ from detectors.geo import haversine_m
 from detectors.models import CheckIn, DetectorRequest, DetectorVote
 
 DETECTOR_ID = "dwell-time"
-TRANSIT_MODES = {"bus", "mrt"}
+# Step modes are walk / bus / train (contracts/examples, journey service)
+TRANSIT_MODES = {"bus", "train"}
 # A fully stationary window spanning this share of the limit is "approaching" it
 APPROACH_FRACTION = 0.25
 

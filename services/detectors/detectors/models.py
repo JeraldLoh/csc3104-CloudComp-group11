@@ -80,8 +80,9 @@ class CheckIn(ContractModel):
     accuracy_m: Optional[float] = Field(default=None, ge=0)
     speed_mps: Optional[float] = Field(default=None, ge=0)
     heading_deg: Optional[float] = Field(default=None, ge=0, lt=360)
-    step_index: int = Field(ge=0)
-    route_version: int = Field(ge=0)
+    # Nullable: the web app sends null until it has loaded the route pack
+    step_index: Optional[int] = Field(default=None, ge=0)
+    route_version: Optional[int] = Field(default=None, ge=0)
     battery_pct: Optional[int] = Field(default=None, ge=0, le=100)
     status: str
     # Not present inside detector-request.json, so default to False.
@@ -98,7 +99,7 @@ class CheckIn(ContractModel):
 
 
 class DetectorRequest(ContractModel):
-    """Sent by the Coordinator (M3) to POST /internal/detect."""
+    """Sent by the Coordinator to POST /internal/detect."""
 
     request_id: str
     risk_level: RiskLevel
@@ -106,7 +107,7 @@ class DetectorRequest(ContractModel):
 
 
 class DetectorVote(ContractModel):
-    """Returned by a detector to the Coordinator (M3)."""
+    """Returned by a detector to the Coordinator."""
 
     request_id: str
     detector_id: DetectorId

@@ -1,1 +1,1 @@
-"""CareRoute detector service (M4)."""
+"""CareRoute detector service."""

@@ -99,6 +99,8 @@ def load_context(redis, request: DetectorRequest) -> TripContext:
         route_version=route_version,
         status=raw_ctx.get("status"),
         recent=[by_seq[s] for s in sorted(by_seq)],
+        # A check-in with no routeVersion (route pack not loaded yet) is unknown, not a mismatch
         route_version_mismatch=route_version is not None
+        and checkin.route_version is not None
         and route_version != checkin.route_version,
     )

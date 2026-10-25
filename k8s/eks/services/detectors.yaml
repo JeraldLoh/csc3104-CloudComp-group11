@@ -1,4 +1,4 @@
-# Detectors (Member 4) on EKS: one image, three Deployments. DETECTOR_ID picks the detector.
+# Detectors on EKS: one image, three Deployments. DETECTOR_ID picks the detector.
 # Each has a Service detector-route|heading|dwell:8000 (the Coordinator calls POST /internal/detect), an HPA
 # (2-4 replicas, 60% CPU) and a PodDisruptionBudget. The script fills in the __PLACEHOLDERS__ (scripts/README.md).
 #

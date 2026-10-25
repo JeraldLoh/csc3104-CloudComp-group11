@@ -134,3 +134,12 @@ def test_logs_one_json_line_per_request(caplog):
 
 def test_module_app_exists():
     assert app_module.app.title
+
+
+def test_web_checkin_with_nulls_is_not_rejected():
+    client, r, _ = client_for("route-corridor")
+    seed(r, [])
+    nulls = {**checkin(1, 1.405), "stepIndex": None, "routeVersion": None, "speedMps": None, "headingDeg": None, "batteryPct": None}
+    with client:
+        resp = client.post("/internal/detect", json=body(nulls))
+    assert resp.status_code == 200 and resp.json()["verdict"] in {"normal", "problem", "abstain"}

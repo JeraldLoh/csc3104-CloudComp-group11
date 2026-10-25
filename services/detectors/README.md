@@ -1,9 +1,9 @@
-# Detectors (M4)
+# Detectors
 
 One codebase and one image. `DETECTOR_ID` selects which detector a container runs:
 `route-corridor`, `heading-speed`, `dwell-time` (and `ml-anomaly` later).
 
-The Coordinator (M3) calls `POST /internal/detect` with `contracts/examples/detector-request.json`
+The Coordinator calls `POST /internal/detect` with `contracts/examples/detector-request.json`
 and gets back `contracts/examples/detector-vote.json`. Verdicts are `normal`, `problem` or `abstain`.
 `abstain` means "can't decide" and always has `problemType: null` and `confidence: 0`.
 
