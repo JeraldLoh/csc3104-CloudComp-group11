@@ -29,7 +29,7 @@ so its package needs only `httpx` and `redis` (boto3 is already in the Lambda ru
 `app/` into the container (including `demo_data/`); the Lambda package lists its 7 files explicitly (`deploy/lambda/make_zip.py`),
 so saved data never ships to AWS. Packaging, schedule and permissions are in `deploy/` (see `deploy/README.md`).
 
-All tests are in `tests/test_journey.py`; `tests/fixtures/` holds real LTA and OneMap responses.
+Tests are split by area in `tests/` (`test_planning.py`, `test_routes_trips.py`, `test_disruption.py`, `test_lta.py`, `test_api.py`, `test_auth.py`, `test_replay.py`; shared setup in `helpers.py`), so you can run just the file you changed. `tests/fixtures/` holds real LTA and OneMap responses.
 
 ## Endpoints
 
@@ -39,6 +39,7 @@ All tests are in `tests/test_journey.py`; `tests/fixtures/` holds real LTA and O
 | POST | `/api/routes` | save a route: `route.json` without `routeId` -> `201` with `routeId`, `version` 1, `approved` false |
 | GET | `/api/routes/{routeId}` | load a saved route |
 | PUT | `/api/routes/{routeId}` | edit: send the route plus the `version` you edited -> version + 1, approval cleared; `409` if someone saved first |
+| DELETE | `/api/routes/{routeId}` | remove a saved route -> `204`; optional `?version=` refuses with `409` if it has changed; `409` too while one of its trips is active (**not in the contract yet**) |
 | POST | `/api/routes/{routeId}/approve` | `approved: true` (idempotent; the version doesn't change) |
 | GET | `/api/routes?travellerId=` | a traveller's saved routes, newest first (**not in the contract yet**) |
 | POST | `/api/trips` | `{"routeId","date"}` -> `201` `trip.json` (`planned`); the route must be approved |
@@ -124,7 +125,7 @@ if the signing keys can't be fetched it is `503`, not `401`.
 |---|---|
 | plan, place search | any logged-in user |
 | save a route | a caregiver, as themselves (`caregiverId` must be their own id) |
-| edit or approve a route, create a trip | the route's caregiver (its traveller gets `403`) |
+| edit, approve or delete a route, create a trip | the route's caregiver (its traveller gets `403`) |
 | read a route; read, start or end a trip; get its pack | the route's caregiver or traveller |
 | route and trip lists | only what the caller may see (someone else's traveller gives an empty list) |
 | anyone else, any route or trip | `404`, the same as for one that doesn't exist |
@@ -165,7 +166,7 @@ the plain-language wording, the LTA cross-check, saving, trips, packs and the di
   records every trip's routes, looks up the places (no token needed), and refreshes the LTA data (needs `LTA_API_KEY`).
   A trip is offered on the demo page only once it has a saved route. `--routes fixtures` rebuilds just the first two
   trips offline from `tests/fixtures`. Keys and the password are never written to the files. After recording, update
-  the trip list expected in `tests/test_journey.py` (`test_the_page_lists_the_saved_trips...`) if you added trips.
+  the trip list expected in `tests/test_replay.py` if you added trips.
 - `GET /demo/info` (with `DEMO_UI`) says which data is in use. The service logs a `SAVED-DATA MODE` warning at startup.
 
 ## OneMap login
@@ -219,6 +220,8 @@ LocalStack's free edition doesn't keep data across a restart of the LocalStack c
 - Editing needs the `version` you edited; if it's stale you get `409` and nothing is overwritten.
   Every edit clears `approved`, so the caregiver approves what they changed. Approving keeps the version.
 - `travellerId` and `caregiverId` can't be changed on a saved route.
+- Deleting a route leaves its planned trips in place, but they can no longer start or build a pack (`409`: the route was
+  deleted). A route with an active trip can't be deleted until that trip ends.
 - A plan option can be posted as-is; `summary`, `live`, `warnings` and `stepPaths` are dropped, extra step fields
   (like a train step's `stops`) are kept.
 

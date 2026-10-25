@@ -665,6 +665,18 @@ class JourneyClient:
         self._route_store().replace(route, current["version"])
         return route
 
+    def delete_route(self, route_id: str, expected_version: int | None = None, caller: Caller | None = None) -> None:
+        """Removes a saved route. Raises RouteConflict if `expected_version` is given and out of date, and
+        TripConflict while one of its trips is under way. Its planned trips stay but can no longer start."""
+        current = self.get_route(route_id, caller)
+        if caller is not None and not self._owns(caller, current):
+            raise Forbidden("Only the route's caregiver can delete it.")
+        if self._trips is not None and any(
+                t["routeId"] == route_id and t["status"] == "active"
+                for t in self._trips.list_for_traveller(current["travellerId"])):
+            raise TripConflict(f"Route {route_id} has a trip under way. End that trip before deleting the route.")
+        self._route_store().delete(route_id, expected_version)
+
     def list_routes(self, traveller_id: str, caller: Caller | None = None) -> list[dict]:
         """A traveller's saved routes, most recently changed first. With a caller, only the ones that caller may
         see: asking for someone else's traveller gives an empty list, not an error."""
@@ -746,7 +758,11 @@ class JourneyClient:
     def _route_for_trip(self, trip: dict) -> dict:
         """The route exactly as it was when the trip was created, or a conflict if it has since changed
         (only the latest version of a route is kept, so an edited route can't be used for the old trip)."""
-        route = self.get_route(trip["routeId"])
+        try:
+            route = self.get_route(trip["routeId"])
+        except RouteNotFound:
+            raise TripConflict(f"Route {trip['routeId']} was deleted after this trip was created. "
+                               "Create a new trip on another route.") from None
         if route["version"] != trip["routeVersion"] or not route["approved"]:
             raise TripConflict(f"Route {trip['routeId']} was changed after this trip was created. "
                                "Approve the new version and create a new trip.")

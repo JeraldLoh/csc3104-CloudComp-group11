@@ -1,0 +1,122 @@
+/* Everything is under .rp so it can't leak into the page that hosts the planner.
+   A host can retheme it by setting the --rp-* variables on .rp or a parent. */
+.rp {
+  --rp-bg: #fff;
+  --rp-fg: #111;
+  --rp-muted: #555;
+  --rp-line: #ddd;
+  --rp-surface: #f3f4f6;
+  --rp-accent: #1d6fd6;
+  --rp-accent-fg: #fff;
+  --rp-walk: #6b7280;
+  --rp-bus: #1d6fd6;
+  --rp-train: #d6331d;
+  --rp-warn: #b45309;
+  --rp-high: #b91c1c;
+
+  container-type: inline-size;
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-height: 420px;
+  background: var(--rp-bg);
+  color: var(--rp-fg);
+  font: 14px/1.4 system-ui, sans-serif;
+}
+.rp *, .rp *::before, .rp *::after { box-sizing: border-box; }
+
+.rp__panel { width: 380px; max-width: 45%; display: flex; flex-direction: column; min-height: 0;
+  border-right: 1px solid var(--rp-line); background: var(--rp-surface); }
+.rp__body { flex: 1; min-height: 0; overflow: auto; padding: 10px 12px 16px; }
+.rp__body[hidden] { display: none; }
+
+/* Tabs: one job at a time instead of one long scrolling panel. */
+.rp__tabs { display: flex; flex: none; background: var(--rp-bg); border-bottom: 1px solid var(--rp-line); }
+.rp__tab { flex: 1; padding: 10px 6px; font: inherit; font-weight: 600; cursor: pointer; color: var(--rp-muted);
+  background: none; border: 0; border-bottom: 3px solid transparent; }
+.rp__tab--active { color: var(--rp-fg); border-bottom-color: var(--rp-accent); }
+.rp__count { margin-left: 6px; padding: 0 6px; font-size: 11px; font-weight: 600; border-radius: 9px;
+  color: var(--rp-fg); background: var(--rp-surface); }
+
+/* Each part of a tab is its own card. */
+.rp__card { background: var(--rp-bg); border: 1px solid var(--rp-line); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
+.rp__card > .rp__heading { margin-bottom: 8px; }
+.rp__pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.rp__map { flex: 1; min-width: 0; min-height: 280px; }
+
+.rp__hint { color: var(--rp-muted); margin: 0 0 10px; font-size: 12px; }
+.rp__field { margin-top: 8px; }
+.rp label { display: block; font-weight: 600; }
+.rp input, .rp select, .rp__btn { width: 100%; padding: 6px 8px; font: inherit; margin-top: 3px; }
+.rp input, .rp select { color: inherit; background: var(--rp-bg); border: 1px solid var(--rp-line); border-radius: 4px; }
+.rp__row { display: flex; gap: 6px; margin-top: 12px; }
+.rp__row > * { flex: 1; }
+
+.rp__btn { cursor: pointer; background: var(--rp-accent); color: var(--rp-accent-fg); border: 0; border-radius: 4px; }
+.rp__btn--secondary { background: var(--rp-surface); color: var(--rp-fg); }
+.rp__btn:disabled { opacity: .5; cursor: default; }
+.rp :focus-visible { outline: 2px solid var(--rp-accent); outline-offset: 2px; }
+
+.rp__status { margin: 8px 0; min-height: 1.2em; }
+.rp__status--error { color: var(--rp-high); }
+
+.rp__option { display: block; text-align: left; margin-top: 6px; padding: 6px 8px; font: inherit; width: 100%;
+  cursor: pointer; background: var(--rp-surface); color: var(--rp-fg); border: 0; border-radius: 4px; }
+.rp__option--active { background: #dbeafe; color: #111; outline: 2px solid var(--rp-bus); }
+
+.rp__steps { padding: 0; list-style: none; margin: 10px 0; }
+.rp__step { border-left: 5px solid var(--rp-walk); padding: 2px 0 6px 8px; margin-bottom: 4px; }
+.rp__step--bus { border-color: var(--rp-bus); }
+.rp__step--train { border-color: var(--rp-train); }
+.rp__meta { color: var(--rp-muted); font-size: 12px; }
+.rp__live { color: #065f46; font-size: 12px; }
+
+.rp__warning { font-size: 12px; padding: 4px 6px; margin: 3px 0; border-left: 4px solid var(--rp-warn); background: #fffbeb; color: #111; }
+.rp__warning--high { border-color: var(--rp-high); background: #fef2f2; }
+
+.rp__btn--spaced { margin-top: 10px; }
+.rp__spaced { margin-top: 8px; }
+
+.rp__heading { font-size: 15px; margin: 0 0 6px; }
+.rp__list { list-style: none; margin: 0; padding: 0; }
+.rp__route { margin-top: 6px; }
+.rp__route > .rp__item { margin-top: 0; }
+.rp__row-actions { display: flex; flex-direction: column; gap: 4px; flex: none; }
+.rp__item { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
+.rp__open { flex: 1; min-width: 0; text-align: left; padding: 6px 8px; font: inherit; cursor: pointer;
+  background: var(--rp-surface); color: var(--rp-fg); border: 0; border-radius: 4px; }
+.rp__open > span { display: block; }
+.rp__name { font-weight: 600; }
+.rp__meta code { font: inherit; font-family: ui-monospace, monospace; }
+.rp__easy { color: var(--rp-muted); font-size: 12px; }
+.rp__badge--warn { color: var(--rp-warn); }
+.rp__open[aria-current="true"] { outline: 2px solid var(--rp-bus); }
+.rp__badge { display: block; font-size: 11px; color: var(--rp-warn); }
+.rp__badge--ok { color: #065f46; }
+.rp__btn--small { width: auto; margin-top: 0; }
+.rp__btn--danger { background: var(--rp-high); color: #fff; }
+.rp__confirm { margin-top: 6px; padding: 8px; border-left: 4px solid var(--rp-high); background: #fef2f2; color: #111; font-size: 13px; }
+.rp__confirm .rp__row { margin-top: 8px; }
+.rp__opened-head { display: flex; gap: 8px; align-items: flex-start; justify-content: space-between; }
+.rp__opened-head .rp__heading { margin: 0; }
+.rp__opened-actions { display: flex; gap: 6px; flex: none; }
+.rp__opened .rp__steps { margin-bottom: 6px; }
+
+.rp__editor { margin-top: 8px; }
+.rp__editor textarea { width: 100%; margin-top: 3px; padding: 6px 8px; font: inherit; resize: vertical;
+  color: inherit; background: var(--rp-bg); border: 1px solid var(--rp-line); border-radius: 4px; }
+.rp__editor .rp__warning { margin-bottom: 8px; }
+.rp__trip { margin-top: 6px; padding-bottom: 6px; border-bottom: 1px solid var(--rp-line); }
+.rp__trip:last-child { border-bottom: 0; }
+.rp__trip .rp__item { margin-top: 0; }
+.rp__trip-text { flex: 1; min-width: 0; }
+.rp__trip-text > span { display: block; }
+.rp__link { display: flex; gap: 6px; align-items: center; margin-top: 4px; }
+.rp__link input { margin-top: 0; font-size: 12px; }
+
+/* Narrow room (a phone, or a small slot in a dashboard): map on top, panel below. */
+@container (max-width: 700px) {
+  .rp { flex-direction: column-reverse; }
+  .rp__panel { width: 100%; max-width: none; border-right: 0; border-top: 1px solid var(--rp-line); max-height: 55%; }
+  .rp__map { flex: 1 1 280px; }
+}

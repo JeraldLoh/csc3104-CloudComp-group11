@@ -1,10 +1,11 @@
 """Where saved routes live.
 
-Two stores with the same four methods (JourneyClient doesn't care which it gets):
+Two stores with the same five methods (JourneyClient doesn't care which it gets):
 
     create(route)                       -> RouteExists if the id is taken
     get(route_id)                       -> dict or None
     replace(route, expected_version)    -> RouteNotFound / RouteConflict; atomic compare-and-set
+    delete(route_id, expected_version)  -> RouteNotFound / RouteConflict; version None = whatever is stored
     list_for_traveller(traveller_id)    -> list of routes
 
 DynamoRouteStore is the real one: the table `careroute-routes` from contracts/dynamo-db-tables.md
@@ -87,6 +88,30 @@ class RedisRouteStore:
                 latest = self.get(route["routeId"])
                 raise RouteConflict(latest["version"] if latest else None) from None
 
+    def delete(self, route_id: str, expected_version: int | None = None) -> None:
+        """Removes the route, only if the stored version is still `expected_version` (None: any version)."""
+        import redis
+
+        key = self._key(route_id)
+        with self._r.pipeline() as pipe:
+            pipe.watch(key)
+            raw = pipe.get(key)
+            if raw is None:
+                pipe.unwatch()
+                raise RouteNotFound(route_id)
+            current = _load(raw)
+            if expected_version is not None and current["version"] != expected_version:
+                pipe.unwatch()
+                raise RouteConflict(current["version"])
+            pipe.multi()
+            pipe.delete(key)
+            pipe.srem(self._index(current["travellerId"]), route_id)
+            try:
+                pipe.execute()
+            except redis.WatchError:
+                latest = self.get(route_id)
+                raise RouteConflict(latest["version"] if latest else None) from None
+
     def list_for_traveller(self, traveller_id: str) -> list[dict]:
         ids = sorted(i.decode() if isinstance(i, bytes) else i for i in self._r.smembers(self._index(traveller_id)))
         routes = [self.get(i) for i in ids]
@@ -155,6 +180,21 @@ class DynamoRouteStore:
             current = self.get(route["routeId"])
             if current is None:
                 raise RouteNotFound(route["routeId"]) from None
+            raise RouteConflict(current["version"]) from None
+
+    def delete(self, route_id: str, expected_version: int | None = None) -> None:
+        """One conditional delete: the route must exist, and (if given) still be at `expected_version`."""
+        from botocore.exceptions import ClientError
+        condition = {"ConditionExpression": "attribute_exists(routeId) AND version = :v",
+                     "ExpressionAttributeValues": {":v": expected_version}} if expected_version is not None else                     {"ConditionExpression": "attribute_exists(routeId)"}
+        try:
+            self._table.delete_item(Key={"routeId": route_id}, **condition)
+        except ClientError as e:
+            if not self._failed_condition(e):
+                raise
+            current = self.get(route_id)
+            if current is None:
+                raise RouteNotFound(route_id) from None
             raise RouteConflict(current["version"]) from None
 
     def list_for_traveller(self, traveller_id: str) -> list[dict]:

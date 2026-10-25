@@ -36,7 +36,7 @@ import redis
 from fastapi import Depends, FastAPI, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import aws_resources
@@ -112,7 +112,7 @@ def create_app(
         app.add_middleware(
             CORSMiddleware,
             allow_origins=list(s.cors_origins),
-            allow_methods=["GET", "POST", "PUT"],
+            allow_methods=["GET", "POST", "PUT", "DELETE"],
             allow_headers=["Content-Type", "Authorization"],
             max_age=600,
         )
@@ -247,6 +247,13 @@ def create_app(
                      caller: Caller | None = Depends(current_caller)):
         data = body.model_dump(by_alias=True, exclude={"version"})
         return request.app.state.journey.update_route(route_id_or_404(route_id), data, body.version, caller)
+
+    @app.delete("/api/routes/{route_id}", status_code=204)
+    def delete_route(route_id: str, request: Request, version: int | None = Query(default=None, ge=1),
+                     caller: Caller | None = Depends(current_caller)):
+        """Not in contracts/api.md yet. With `version`, only deletes that version (409 if it has changed)."""
+        request.app.state.journey.delete_route(route_id_or_404(route_id), version, caller)
+        return Response(status_code=204)
 
     @app.post("/api/routes/{route_id}/approve")
     def approve_route(route_id: str, request: Request, caller: Caller | None = Depends(current_caller)):

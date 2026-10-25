@@ -3,7 +3,7 @@
     python make_zip.py <service dir> <staging dir that already holds the pip-installed packages> <output zip>
 
 The Lambda needs only these six files from app/ (the handler imports nothing else of ours, which is also
-checked by a test in tests/test_journey.py), plus httpx and redis. boto3 is already in the Lambda runtime.
+checked by a test in tests/test_disruption.py), plus httpx and redis. boto3 is already in the Lambda runtime.
 """
 import shutil
 import sys
