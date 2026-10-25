@@ -483,27 +483,62 @@ $t off; $t crowd off
 
 Then press **End** on the active trips and **Delete** the demo routes in the web app.
 
-**After the demo**, turn the extras off. If you're finished with AWS, tear everything down instead, in this order:
-the Lambda, then our service, then the platform. Tearing down takes 15-25 minutes and stops the hourly cost.
+### After the demo on AWS
+
+**Keeping it running?** Turn the demo extras off, so the service is back to how it was deployed (no Data box, no
+`demo_tools`, logins off as before). Then start the port-forward again:
 
 ```powershell
-kubectl set env deployment/journey-service -n careroute DEMO_UI- AUTH_MODE=off   # extras off (if you keep it running)
+kubectl set env deployment/journey-service -n careroute DEMO_UI- AUTH_MODE=off
+```
 
+(The command is the same in bash.)
+
+**Finished with AWS? Tear it all down**, because the environment costs about $0.30 an hour even when idle. Run the
+three steps **in this order** and let each one finish first:
+
+| Step | What it removes | It asks you to type |
+|---|---|---|
+| 1. `teardown-lambda` | the disruption checker: stack `careroute-journey-lambda` (function, role, schedule, logs) and its zips in `s3://careroute-files-<account id>/lambda/` | `careroute-journey-lambda` |
+| 2. `teardown-eks` | our Deployment, Service and Secret, our `journey-*` images in ECR, the packs in `s3://.../packs/` | `journey-service` |
+| 3. the platform's `teardown` | everything else: the cluster, the DynamoDB tables (all saved routes and trips), Redis, the queues, the bucket, the load balancer, the VPC. Takes 15-25 minutes | `careroute-stack-1` |
+
+Stop the port-forward (Ctrl+C in its window) first. Add `-Yes` (PowerShell) or `--yes` (bash) to any of them to
+skip the question.
+
+```powershell
 powershell -ExecutionPolicy Bypass -File services\journey-service\deploy\windows\teardown-lambda.ps1
 powershell -ExecutionPolicy Bypass -File services\journey-service\deploy\windows\teardown-eks.ps1
 .\scripts\windows\teardown.ps1
 ```
 
 ```bash
-kubectl set env deployment/journey-service -n careroute DEMO_UI- AUTH_MODE=off   # extras off (if you keep it running)
-
 bash services/journey-service/deploy/macos/teardown-lambda.sh
 bash services/journey-service/deploy/macos/teardown-eks.sh
 ./scripts/macos/teardown.sh
 ```
 
-If the platform's teardown fails on the network, re-run it after a few minutes: the Lambda's network interfaces take
-a while to be released.
+Skipped the Lambda when deploying? Then skip step 1 (it just says the stack wasn't found). Deployed to a region
+other than `ap-southeast-1`? Then add `-Region <region>` (bash: `--region <region>`) to **all three**, or they
+won't find anything to delete and the cluster keeps running.
+
+**If step 3 fails** on a subnet or security group, the Lambda's network interfaces haven't been released yet (AWS
+takes a few minutes after step 1). Wait 5-10 minutes and run step 3 again.
+
+**Check that nothing is left** (the same in bash). Each command should say the stack doesn't exist, or print an
+empty list:
+
+```powershell
+aws cloudformation describe-stacks --stack-name careroute-stack-1          # "does not exist"
+aws cloudformation describe-stacks --stack-name careroute-journey-lambda   # "does not exist"
+aws eks list-clusters                                                      # no careroute-cluster-1
+aws elbv2 describe-load-balancers --query "LoadBalancers[].LoadBalancerName"
+```
+
+A load balancer that is still listed costs money. Delete it in the EC2 console under **Load Balancers**. Deploying
+again straight after a teardown can fail at the bucket step with "A conflicting conditional operation is currently in
+progress". S3 needs a few minutes (up to an hour) before the bucket name can be used again, so wait and re-run the
+deploy.
 
 ## 9. Optional: the traveller's side
 
