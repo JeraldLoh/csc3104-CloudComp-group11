@@ -1,7 +1,8 @@
 // A traveller's trips: make one on an approved route, start or end it, prepare its pack, and
 // copy the link the traveller opens on their phone. Give it to <RoutePlanner sections> next to <SavedRoutes>.
 import { useId, useState } from "react";
-import type { SavedRoute, Trip } from "../journey/types";
+import type { DisruptionCheck, SavedRoute, Trip } from "../journey/types";
+import { DisruptionWarnings } from "./DisruptionWarnings";
 import { todayLocal, travellerLink, tripProblem, type TripsState } from "./useTrips";
 import "./planner.css";
 
@@ -13,12 +14,14 @@ interface Props {
   routesLoaded?: boolean;
   /** Where the traveller app is hosted, e.g. "https://app.example.com". Without it no link is shown. */
   travellerAppUrl?: string;
+  /** Optional: the latest disruption check per route id (useDisruptions); planned and active trips show it. */
+  disruptions?: Record<string, DisruptionCheck>;
 }
 
 /** Only web links from the service are opened; anything else (javascript:, data:) is shown as text. */
 const isWebLink = (url: string) => /^https?:\/\//i.test(url);
 
-export function Trips({ trips, routes, routesLoaded, travellerAppUrl }: Props) {
+export function Trips({ trips, routes, routesLoaded, travellerAppUrl, disruptions }: Props) {
   const routeId = useId();
   const dateId = useId();
   const approved = routes.filter((r) => r.approved);
@@ -60,7 +63,8 @@ export function Trips({ trips, routes, routesLoaded, travellerAppUrl }: Props) {
         ) : (
           <ul className="rp__list">
             {trips.trips.map((t) => (
-              <TripRow key={t.tripId} trip={t} trips={trips} routes={routes} routesLoaded={routesLoaded} travellerAppUrl={travellerAppUrl} />
+              <TripRow key={t.tripId} trip={t} trips={trips} routes={routes} routesLoaded={routesLoaded}
+                travellerAppUrl={travellerAppUrl} disruptions={disruptions} />
             ))}
           </ul>
         )}
@@ -81,7 +85,7 @@ export function Trips({ trips, routes, routesLoaded, travellerAppUrl }: Props) {
   );
 }
 
-function TripRow({ trip, trips, routes, routesLoaded, travellerAppUrl }: { trip: Trip; trips: TripsState } & Pick<Props, "routes" | "routesLoaded" | "travellerAppUrl">) {
+function TripRow({ trip, trips, routes, routesLoaded, travellerAppUrl, disruptions }: { trip: Trip; trips: TripsState } & Pick<Props, "routes" | "routesLoaded" | "travellerAppUrl" | "disruptions">) {
   const problem = tripProblem(trip, routes, routesLoaded);
   const busy = trips.busyId === trip.tripId;
   const link = travellerAppUrl && trip.status !== "completed" && !problem ? travellerLink(travellerAppUrl, trip) : null;
@@ -104,6 +108,7 @@ function TripRow({ trip, trips, routes, routesLoaded, travellerAppUrl }: { trip:
         )}
       </div>
       {problem && <div className="rp__warning">{problem}</div>}
+      {trip.status !== "completed" && !problem && <DisruptionWarnings check={disruptions?.[trip.routeId]} />}
       {link && <TravellerLink url={link} tripId={trip.tripId} />}
     </li>
   );

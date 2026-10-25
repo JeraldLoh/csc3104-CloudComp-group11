@@ -7,13 +7,18 @@
 // `sections` (e.g. saved routes, trips). It fills the height and width of its parent, and
 // keeps its own styles under `.rp`.
 import { useEffect, useId, useState, type KeyboardEvent, type ReactNode } from "react";
-import type { PlannerApi } from "../journey/api";
-import type { SavedRoute } from "../journey/types";
+import type { DisruptionsApi, PlannerApi } from "../journey/api";
+import type { RouteStep, SavedRoute } from "../journey/types";
 import { MapView } from "./MapView";
 import { OptionDetails, OptionList } from "./OptionDetails";
 import { PlaceField } from "./PlaceField";
+import { useDisruptions, withLatest } from "./useDisruptions";
 import { usePlanner, type PlannerOptions } from "./usePlanner";
 import "./planner.css";
+
+/** Which plan option a check belongs to: its steps' modes, lines and stops (a new plan gives a new key). */
+const stepsKey = (steps: RouteStep[]) => JSON.stringify(steps.map((s) => [s.mode, s.line, s.from.code, s.to.code]));
+const NO_CHECKS: DisruptionsApi = { checkDisruptions: () => Promise.reject(new Error("not supported")) };
 
 /** A tab after "Plan". Give the saved routes the id "saved" and saving a route switches to it. */
 export interface PlannerSection {
@@ -25,7 +30,8 @@ export interface PlannerSection {
 }
 
 export interface RoutePlannerProps {
-  api: PlannerApi;
+  /** With `checkDisruptions` (JourneyApi has it), the selected option's disruption warnings are re-checked every minute. */
+  api: PlannerApi & Partial<DisruptionsApi>;
   travellerId: string;
   caregiverId: string;
   initial?: PlannerOptions["initial"];
@@ -51,6 +57,13 @@ export function RoutePlanner({ api, travellerId, caregiverId, initial, onSaved, 
     },
   });
   const ids = { sort: useId(), mode: useId(), name: useId(), tabs: useId() };
+
+  // A plan's disruption warnings are from the moment it was made: keep the selected option re-checked.
+  const selected = p.activeOption;
+  const planKey = selected ? stepsKey(selected.steps) : "";
+  const checks = useDisruptions(api.checkDisruptions ? (api as DisruptionsApi) : NO_CHECKS,
+    selected ? { [planKey]: selected.steps } : {}, { enabled: Boolean(api.checkDisruptions) });
+  const shownOption = selected && { ...selected, warnings: withLatest(selected.warnings, checks[planKey]) };
 
   // Whatever was asked for last is on the map. (Order matters: on first render a route given
   // up front wins over the empty plan.)
@@ -146,10 +159,10 @@ export function RoutePlanner({ api, travellerId, caregiverId, initial, onSaved, 
             </section>
           )}
 
-          {p.activeOption && (
+          {shownOption && (
             <section className="rp__card" aria-label="Steps">
-              <h2 className="rp__heading">{`Steps for option ${p.activeOption.option}`}</h2>
-              <OptionDetails option={p.activeOption} />
+              <h2 className="rp__heading">{`Steps for option ${shownOption.option}`}</h2>
+              <OptionDetails option={shownOption} />
             </section>
           )}
 
@@ -176,7 +189,7 @@ export function RoutePlanner({ api, travellerId, caregiverId, initial, onSaved, 
 
       <MapView
         from={p.points.from} to={p.points.to} focus={p.focus} onMapClick={p.clickMap}
-        option={showSaved ? null : p.activeOption} saved={showSaved ? viewing : null}
+        option={showSaved ? null : shownOption} saved={showSaved ? viewing : null}
       />
     </div>
   );

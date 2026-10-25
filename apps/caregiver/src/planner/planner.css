@@ -68,6 +68,14 @@
 .rp__step { border-left: 5px solid var(--rp-walk); padding: 2px 0 6px 8px; margin-bottom: 4px; }
 .rp__step--bus { border-color: var(--rp-bus); }
 .rp__step--train { border-color: var(--rp-train); }
+/* A disrupted step: the warning is laid over the step (both in one grid cell, so the step grows to fit the
+   longer of the two) and the step's own text fades behind it. */
+.rp__step--disrupted { display: grid; border-color: var(--rp-high); }
+.rp__step--disrupted > * { grid-area: 1 / 1; }
+.rp__step-body { opacity: 0.25; }
+.rp__step-overlay { align-self: center; padding: 4px 8px; border: 1px solid var(--rp-high); border-radius: 4px;
+  background: rgba(254, 242, 242, 0.92); color: #7f1d1d; font-size: 12px; font-weight: 600; }
+.rp__step-overlay::before { content: "Disruption: "; text-transform: uppercase; letter-spacing: 0.03em; }
 .rp__meta { color: var(--rp-muted); font-size: 12px; }
 .rp__live { color: #065f46; font-size: 12px; }
 

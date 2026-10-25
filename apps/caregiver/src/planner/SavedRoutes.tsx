@@ -1,6 +1,8 @@
 // The saved-routes list for one traveller. Give it to <RoutePlanner sections> (as the tab with
 // id "saved") so an opened route is drawn on the planner's map, or use it anywhere else.
 import { useEffect, useState } from "react";
+import type { DisruptionCheck } from "../journey/types";
+import { DisruptedStep, DisruptionWarnings, splitDisruptions } from "./DisruptionWarnings";
 import { RouteEditor } from "./RouteEditor";
 import type { SavedRoutesState } from "./useSavedRoutes";
 import type { TripsState } from "./useTrips";
@@ -10,15 +12,21 @@ interface Props {
   saved: SavedRoutesState;
   /** Optional: lets the editor say how many trips an edit would stop. */
   trips?: TripsState;
+  /** Optional: the latest disruption check per route id (useDisruptions); the opened route shows its warnings. */
+  disruptions?: Record<string, DisruptionCheck>;
 }
 
-export function SavedRoutes({ saved, trips }: Props) {
+export function SavedRoutes({ saved, trips, disruptions }: Props) {
   const { routes, loading, status, opened, approvingId } = saved;
   const [editing, setEditing] = useState(false);
   /** The route whose "Delete?" question is showing. */
   const [asking, setAsking] = useState<string | null>(null);
   // A different route, a reload or a saved edit all end editing.
   useEffect(() => setEditing(false), [opened]);
+
+  // The opened route's current disruptions, laid over the steps they affect.
+  const openedCheck = opened ? disruptions?.[opened.routeId] : undefined;
+  const openedByStep = splitDisruptions(openedCheck?.warnings ?? []).byStep;
 
   const affectedTrips = opened && trips
     ? trips.trips.filter((t) => t.routeId === opened.routeId && t.status !== "completed").length
@@ -150,13 +158,14 @@ export function SavedRoutes({ saved, trips }: Props) {
             <>
               <ol className="rp__steps">
                 {opened.steps.map((step) => (
-                  <li key={step.stepIndex} className={`rp__step rp__step--${step.mode}`}>
+                  <DisruptedStep key={step.stepIndex} className={`rp__step rp__step--${step.mode}`} warnings={openedByStep.get(step.stepIndex)}>
                     <div>{step.instruction}</div>
                     {step.easyRead && <div className="rp__easy">{step.easyRead}</div>}
-                  </li>
+                  </DisruptedStep>
                 ))}
               </ol>
               <div className="rp__meta">The line under each step is the wording the traveller reads.</div>
+              <DisruptionWarnings check={openedCheck} onSteps={false} />
             </>
           )}
         </section>

@@ -41,6 +41,8 @@ export interface RouteStep {
   photoKey?: string | null;
   audioKey?: string | null;
   backup?: { instruction: string; line?: string | null } | null;
+  /** Train steps: every station on the leg, so a disruption between the two ends is noticed. */
+  stops?: { code: string | null; name: string | null }[];
 }
 
 export interface PlanRequest {
@@ -161,4 +163,11 @@ export interface DataModeInfo {
   /** When the saved data was captured (YYYY-MM-DD); null when nothing is saved yet. */
   onemapRecordedAt: string | null;
   ltaRecordedAt: string | null;
+}
+
+/** POST /api/routes/check-disruptions: the disruption warnings for some steps, as LTA reports things now. */
+export interface DisruptionCheck {
+  warnings: PlanWarning[];
+  /** ISO 8601, when the service checked. */
+  checkedAt: string;
 }

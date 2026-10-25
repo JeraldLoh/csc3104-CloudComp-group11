@@ -1,4 +1,5 @@
 import type { PlanOption } from "../journey/types";
+import { DisruptedStep, splitDisruptions, warningClass } from "./DisruptionWarnings";
 import { liveText, minutes, optionLabel } from "./format";
 
 interface ListProps {
@@ -28,23 +29,23 @@ export function OptionList({ options, activeIndex, onSelect }: ListProps) {
 /** The steps of the selected option, with what is known live about each, and the notices. */
 export function OptionDetails({ option }: { option: PlanOption }) {
   const liveByStep = new Map(option.live.map((l) => [l.stepIndex, l]));
+  // Disruptions sit over the step they affect; the other notices (long walks, crowding...) stay below.
+  const { byStep, rest } = splitDisruptions(option.warnings);
   return (
     <>
       <ol className="rp__steps">
         {option.steps.map((step) => {
           const live = liveByStep.get(step.stepIndex);
           return (
-            <li key={step.stepIndex} className={`rp__step rp__step--${step.mode}`}>
+            <DisruptedStep key={step.stepIndex} className={`rp__step rp__step--${step.mode}`} warnings={byStep.get(step.stepIndex)}>
               <div>{step.instruction}</div>
               <div className="rp__meta">{minutes(step.expectedDurationS)} min</div>
               {live && <div className="rp__live">{liveText(live)}</div>}
-            </li>
+            </DisruptedStep>
           );
         })}
       </ol>
-      {option.warnings.map((w, i) => (
-        <div key={i} className={"rp__warning" + (w.severity === "high" ? " rp__warning--high" : "")}>{w.message}</div>
-      ))}
+      {rest.map((w, i) => <div key={i} className={warningClass(w)}>{w.message}</div>)}
     </>
   );
 }

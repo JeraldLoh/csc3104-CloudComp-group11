@@ -1,7 +1,8 @@
 // Talking to the Journey Service. The planner only depends on the PlannerApi interface, so a
 // host app can pass its own client (its own login, base URL or caching) or a fake in tests.
 import type {
-  DataModeInfo, DataSource, PackLink, PlaceResult, PlanOption, PlanRequest, RouteDraft, RouteUpdate, SavedRoute, Trip,
+  DataModeInfo, DataSource, DisruptionCheck, PackLink, PlaceResult, PlanOption, PlanRequest, RouteDraft, RouteStep,
+  RouteUpdate, SavedRoute, Trip,
 } from "./types";
 
 /** What the route planner needs from the backend. */
@@ -41,6 +42,11 @@ export interface TripsApi {
   tripPack(tripId: string): Promise<PackLink>;
 }
 
+/** Re-checking planned or saved steps against LTA's alerts (used by the plan tab, saved routes and trips). */
+export interface DisruptionsApi {
+  checkDisruptions(steps: RouteStep[]): Promise<DisruptionCheck>;
+}
+
 /** An error answer from the service. `status` 0 means it could not be reached at all. */
 export class ApiError extends Error {
   readonly status: number;
@@ -64,7 +70,7 @@ export interface JourneyApiOptions {
   fetchImpl?: typeof fetch;
 }
 
-export class JourneyApi implements PlannerApi, SavedRoutesApi, TripsApi {
+export class JourneyApi implements PlannerApi, SavedRoutesApi, TripsApi, DisruptionsApi {
   private baseUrl: string;
   private getToken: () => string | null;
   private getDevUser: () => string | null;
@@ -135,6 +141,10 @@ export class JourneyApi implements PlannerApi, SavedRoutesApi, TripsApi {
 
   tripPack(tripId: string): Promise<PackLink> {
     return this.request<PackLink>(`/api/trips/${encodeURIComponent(tripId)}/pack`);
+  }
+
+  checkDisruptions(steps: RouteStep[]): Promise<DisruptionCheck> {
+    return this.request<DisruptionCheck>("/api/routes/check-disruptions", { method: "POST", body: JSON.stringify({ steps }) });
   }
 
   /** Local demos only (the service's DEMO_UI): which data is in use. Fails with 404 when it can't be switched. */
