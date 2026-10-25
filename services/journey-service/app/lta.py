@@ -4,6 +4,8 @@ Bus stops, bus arrival, train service alerts and traffic incidents. Every call s
 and is cached for about as long as LTA refreshes the data. Failures raise LtaError subclasses so callers can
 degrade (plan without live data) rather than return a 500.
 """
+import copy
+import dataclasses
 import logging
 import time
 from datetime import datetime, timedelta, timezone
@@ -75,31 +77,59 @@ class LtaClient:
         redis_client=None,                      # optional: used only as a cache
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
-        http: httpx.Client | None = None,
+        http: httpx.Client | None = None,       # given (tests): always used, the data mode is ignored
+        mode=None,                              # data_mode.DataMode; None = LTA_MODE, fixed
     ):
         self._s = settings
         self._cache = JsonCache(redis_client)
         self._sleep = sleep
         self._clock = clock
-        self._recorded = http is None and settings.lta_mode == "recorded"
-        if self._recorded:
-            from .replay import RecordedLta          # only loaded in saved-data mode (see replay.py)
-            http = httpx.Client(base_url=settings.lta_base_url.rstrip("/") + "/", transport=RecordedLta(clock=clock))
+        self._mode = mode
+        self._fixed_live = http is not None
         self._http = http or httpx.Client(
             base_url=settings.lta_base_url.rstrip("/") + "/", timeout=settings.lta_timeout_s)
-        # Saved data must never be served from a cache filled by live data, or the other way round.
-        self._cache_prefix = "recorded:" if self._recorded else ""
+        self._recorded_http: httpx.Client | None = None          # built on first use in saved-data mode
+        self._stops_index: dict[str, tuple[float, dict[str, dict]]] = {}    # cache prefix -> (expiry, {code: stop})
+
+    @property
+    def _recorded(self) -> bool:
+        if self._fixed_live:
+            return False
+        return (self._mode.get("lta") if self._mode else self._s.lta_mode) == "recorded"
+
+    @property
+    def _cache_prefix(self) -> str:
+        """Saved data must never be served from a cache filled by live data, or the other way round."""
+        return "recorded:" if self._recorded else ""
+
+    def _client(self) -> httpx.Client:
+        if not self._recorded:
+            return self._http
+        if self._recorded_http is None:
+            from .replay import RecordedLta          # only loaded in saved-data mode (see replay.py)
+            self._recorded_http = httpx.Client(base_url=self._s.lta_base_url.rstrip("/") + "/",
+                                               transport=RecordedLta(clock=self._clock))
+        return self._recorded_http
+
+    def without_retries(self) -> "LtaClient":
+        """The same client (connection, cache, data mode) but giving up after one attempt: for lookups that are
+        only nice to have, such as the live data added to a plan."""
+        quick = copy.copy(self)
+        quick._s = dataclasses.replace(self._s, lta_retries=0)
+        return quick
 
     def _get(self, path: str, params: dict[str, Any] | None = None) -> dict:
-        if not self._s.lta_account_key and not self._recorded:
+        recorded = self._recorded
+        if not self._s.lta_account_key and not recorded:
             raise LtaAuthError("LTA_API_KEY is not set")
         headers = {"AccountKey": self._s.lta_account_key, "accept": "application/json"}
+        http = self._client()
         last: Exception | None = None
         for attempt in range(self._s.lta_retries + 1):
             if attempt:
                 self._sleep(0.5 * 2 ** (attempt - 1))
             try:
-                r = self._http.get(path, params=params, headers=headers)
+                r = http.get(path, params=params, headers=headers)
             except httpx.HTTPError as e:                      # timeouts, connection errors
                 last = e
                 continue
@@ -137,12 +167,18 @@ class LtaClient:
             skip += PAGE_SIZE
 
     def bus_stop(self, code: str) -> dict | None:
-        return next((s for s in self.bus_stops() if s["code"] == code), None)
+        """One stop by code, from an in-memory index of bus_stops() (rebuilt when it is older than the cache)."""
+        prefix = self._cache_prefix
+        expires, index = self._stops_index.get(prefix, (0.0, {}))
+        if time.monotonic() >= expires:
+            index = {s["code"]: s for s in self.bus_stops()}
+            self._stops_index[prefix] = (time.monotonic() + self._s.bus_stops_ttl_s, index)
+        return index.get(code)
 
     def bus_arrival(self, bus_stop_code: str, service_no: str | None = None) -> dict:
         """Next buses at a stop. `services` is empty outside service hours (not an error)."""
         raw = self._cache.cached(
-            f"bus-arrival:{bus_stop_code}:{service_no or '*'}", self._s.bus_arrival_ttl_s,
+            f"{self._cache_prefix}bus-arrival:{bus_stop_code}:{service_no or '*'}", self._s.bus_arrival_ttl_s,
             lambda: self._get("v3/BusArrival", {
                 "BusStopCode": bus_stop_code, **({"ServiceNo": service_no} if service_no else {})}))
         now = self._clock()
@@ -172,7 +208,8 @@ class LtaClient:
 
     def train_alerts(self) -> dict:
         """{"status": 1|2, "segments": [...], "messages": [...]}; status 2 = disrupted."""
-        raw = self._cache.cached("train-alerts", self._s.train_alerts_ttl_s, lambda: self._get("TrainServiceAlerts"))
+        raw = self._cache.cached(f"{self._cache_prefix}train-alerts", self._s.train_alerts_ttl_s,
+                                 lambda: self._get("TrainServiceAlerts"))
         value = raw.get("value") or {}
         return {
             "status": value.get("Status", 1),
@@ -187,7 +224,7 @@ class LtaClient:
         }
 
     def traffic_incidents(self) -> list[dict]:
-        raw = self._cache.cached("traffic-incidents", self._s.traffic_incidents_ttl_s,
+        raw = self._cache.cached(f"{self._cache_prefix}traffic-incidents", self._s.traffic_incidents_ttl_s,
                                  lambda: self._get("TrafficIncidents"))
         return [{"type": r.get("Type"), "lat": r.get("Latitude"), "lng": r.get("Longitude"),
                  "message": r.get("Message")} for r in raw.get("value", [])]
@@ -195,14 +232,14 @@ class LtaClient:
     def platform_crowd(self, line: str) -> dict[str, str]:
         """Right now: {station code: "low"|"moderate"|"high"} for one line (DataMall TrainLine code, e.g. NEL).
         Stations LTA reports no level for are left out."""
-        raw = self._cache.cached(f"platform-crowd:{line}", self._s.platform_crowd_ttl_s,
+        raw = self._cache.cached(f"{self._cache_prefix}platform-crowd:{line}", self._s.platform_crowd_ttl_s,
                                  lambda: self._get("PCDRealTime", {"TrainLine": line}))
         return {r["Station"]: PLATFORM_LEVEL[r["CrowdLevel"]] for r in raw.get("value", [])
                 if r.get("CrowdLevel") in PLATFORM_LEVEL}
 
     def platform_crowd_forecast(self, line: str, when: datetime) -> dict[str, str]:
         """The forecast for `when`: {station code: level} from the 30-minute interval that contains it."""
-        raw = self._cache.cached(f"platform-forecast:{line}", self._s.platform_forecast_ttl_s,
+        raw = self._cache.cached(f"{self._cache_prefix}platform-forecast:{line}", self._s.platform_forecast_ttl_s,
                                  lambda: self._get("PCDForecast", {"TrainLine": line}))
         levels: dict[str, str] = {}
         for day in raw.get("value", []):

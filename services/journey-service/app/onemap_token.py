@@ -4,12 +4,15 @@ OneMap tokens last 3 days. If ONEMAP_API_EMAIL and ONEMAP_API_PASSWORD (the OneM
 (POST /api/auth/post/getToken -> {access_token, expiry_timestamp}), remembers the token until shortly before it
 expires, and logs in again when it has, or when OneMap rejects it. Redis (when there is one) holds it so every replica
 shares one token instead of each logging in. Without an account the caller falls back to the static ONEMAP_API_KEY.
-The password and the token are never logged.
+The password and the token are never logged. Locally, ONEMAP_TOKEN_ENV_FILE also writes each new token into the .env
+as ONEMAP_API_KEY (write_env_value), so other tools there have a fresh one; on AWS it is unset.
 """
 import json
 import logging
+import os
 import threading
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Callable
 
 import httpx
@@ -20,6 +23,32 @@ log = logging.getLogger("journey.onemap_token")
 
 CACHE_KEY = "journey:onemap-token"
 RENEW_BEFORE_S = 300            # use a fresh token when the current one has less than this left
+
+
+def write_env_value(path: str | os.PathLike, key: str, value: str) -> None:
+    """Sets KEY=value in a .env file: replaces the first `KEY=` line (dropping any repeats) or appends one; every
+    other line, comment and blank line is kept. Written to a temporary file and renamed, so it is never half-written.
+    A bind-mounted file (Docker) can't be renamed over, so then it is rewritten in place instead."""
+    path = Path(path)
+    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    out, done = [], False
+    for line in lines:
+        if line.split("=", 1)[0].strip() == key and not line.lstrip().startswith("#"):
+            if not done:
+                out.append(f"{key}={value}")
+                done = True
+            continue
+        out.append(line)
+    if not done:
+        out.append(f"{key}={value}")
+    text = "\n".join(out) + "\n"
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        path.write_text(text, encoding="utf-8")
 
 
 class OneMapToken:
@@ -79,6 +108,12 @@ class OneMapToken:
             return None
         self._token, self._expires = token, expires
         log.info("OneMap token renewed; valid for about %d hours", (expires - now) // 3600)
+        if self._s.onemap_token_env_file:                    # local only: keep the .env's ONEMAP_API_KEY fresh
+            try:
+                write_env_value(self._s.onemap_token_env_file, "ONEMAP_API_KEY", token)
+            except OSError as e:
+                log.warning("could not write the OneMap token to %s: %s", self._s.onemap_token_env_file,
+                            type(e).__name__)
         if self._r is not None:
             try:
                 self._r.set(CACHE_KEY, json.dumps({"token": token, "exp": expires}),

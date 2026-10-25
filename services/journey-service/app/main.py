@@ -16,35 +16,36 @@ GET /ready                               readiness: Redis and the routes store a
 GET /internal/lta/bus-arrival/{code}     live bus timings at a stop (cluster-only)
 GET /internal/lta/train-alerts           current MRT/LRT disruptions (cluster-only)
 GET /internal/lta/traffic-incidents      current road incidents (cluster-only)
+GET/PUT /api/dev/data-mode               live or saved data, switchable (only with DEMO_UI=true, local demos)
 
 Saved routes and trips live in DynamoDB (ROUTES_STORE=dynamodb) or, with no AWS available, Redis (the
 default); packs live in S3. See route_store.py, trip_store.py and pack_store.py.
 
 Every /api/ endpoint knows who is calling (auth.py, AUTH_MODE) and JourneyClient applies the ownership rules:
-a route belongs to its caregiver and its traveller, anyone else gets 404. /internal/, /health, /ready and /demo
-are not user endpoints and are not checked.
+a route belongs to its caregiver and its traveller, anyone else gets 404. /internal/, /health, /ready and
+/api/dev/ are not user endpoints and are not checked.
 """
 import logging
 import re
 import time
 from contextlib import asynccontextmanager
 from datetime import date as date_type
-from pathlib import Path
 
 import boto3
 import redis
 from fastapi import Depends, FastAPI, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import JSONResponse, Response
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import aws_resources
 from .auth import AuthUnavailable, Authenticator, Caller, Forbidden, Unauthorized
 from .config import Settings, settings as default_settings
+from .data_mode import DataMode
 from .journey_client import JourneyClient, OneMapAuthError, OneMapError, OneMapUnavailable, StorageNotReady
 from .lta import LtaAuthError, LtaUnavailable
-from .models import PlanRequest, RouteIn, RouteUpdate, TripIn
+from .models import DataModeIn, PlanRequest, RouteIn, RouteUpdate, TripIn
 from .pack_store import PackUnavailable, S3PackStorage
 from .replay import RecordedDataMissing, load_manifest
 from .route_store import DynamoRouteStore, RouteConflict, RouteInvalid, RouteNotFound
@@ -65,7 +66,7 @@ def error(status: int, code: str, message: str, details=None) -> JSONResponse:
     return JSONResponse(status_code=status, content=body)
 
 
-def build_journey(s: Settings, redis_client) -> JourneyClient:
+def build_journey(s: Settings, redis_client, mode: DataMode | None = None) -> JourneyClient:
     """The client wired to its storage: DynamoDB when ROUTES_STORE=dynamodb (else Redis) and an S3 bucket for
     route packs. CREATE_RESOURCES=true creates the tables and bucket first (local development only)."""
     aws = dict(region_name=s.aws_region, endpoint_url=s.aws_endpoint_url)
@@ -83,7 +84,7 @@ def build_journey(s: Settings, redis_client) -> JourneyClient:
         if s.create_resources:
             aws_resources.ensure_packs_bucket(pack_store.client, s.packs_bucket, s.aws_region)
     return JourneyClient(s, redis_client=redis_client, route_store=route_store,
-                         trip_store=trip_store, pack_store=pack_store)
+                         trip_store=trip_store, pack_store=pack_store, mode=mode)
 
 
 def create_app(
@@ -98,11 +99,13 @@ def create_app(
     async def lifespan(app: FastAPI):
         r = redis_client or redis.Redis.from_url(s.redis_url)
         app.state.redis = r
-        if s.onemap_mode == "recorded" or s.lta_mode == "recorded":
-            log.warning("SAVED-DATA MODE: onemap=%s lta=%s. Answers come from app/demo_data, not the live APIs.",
-                        s.onemap_mode, s.lta_mode)
+        app.state.mode = mode = DataMode(s, r)
+        now = mode.all()
+        if "recorded" in now.values():
+            log.warning("SAVED-DATA MODE: onemap=%s lta=%s. Answers come from app/saved_data, not the live APIs.",
+                        now["onemap"], now["lta"])
         if journey is None:
-            app.state.journey = build_journey(s, r)
+            app.state.journey = build_journey(s, r, mode)
         else:
             app.state.journey = journey
         yield
@@ -311,24 +314,28 @@ def create_app(
         return {"incidents": request.app.state.journey.traffic_incidents()}
 
     if s.demo_ui:
-        page = (Path(__file__).parent / "demo_map.html").read_text(encoding="utf-8")
-
-        @app.get("/demo", response_class=HTMLResponse, include_in_schema=False)
-        def demo():
-            """Dev-only map page: pick two places, plan, see the route on OneMap's map."""
-            return page
-
-        @app.get("/demo/info", include_in_schema=False)
-        def demo_info():
-            """Which data the page is running on, and the trips that can be planned when it is saved data."""
-            info = {"onemap": s.onemap_mode, "lta": s.lta_mode, "trips": []}
-            if "recorded" in (s.onemap_mode, s.lta_mode):
+        # Local demos only (DEMO_UI): switch between live and saved data without a restart (data_mode.py).
+        def data_mode_info(request: Request) -> dict:
+            info = {**request.app.state.mode.all(), "onemapRecordedAt": None, "ltaRecordedAt": None, "trips": []}
+            try:
                 saved = load_manifest()
-                info["onemapRecordedAt"] = saved["onemap"]["recordedAt"]
-                info["ltaRecordedAt"] = saved["lta"]["recordedAt"][:10]
-                if s.onemap_mode == "recorded":
-                    info["trips"] = saved["trips"]
+            except RecordedDataMissing:
+                return info                                    # nothing captured yet: only live data is possible
+            info["onemapRecordedAt"] = (saved.get("onemap") or {}).get("recordedAt")
+            info["ltaRecordedAt"] = ((saved.get("lta") or {}).get("recordedAt") or "")[:10] or None
+            info["trips"] = saved.get("trips", [])
             return info
+
+        @app.get("/api/dev/data-mode", include_in_schema=False)
+        def get_data_mode(request: Request):
+            """Which data is in use, when the saved data was captured, and the trips it can plan."""
+            return data_mode_info(request)
+
+        @app.put("/api/dev/data-mode", include_in_schema=False)
+        def put_data_mode(body: DataModeIn, request: Request):
+            request.app.state.mode.set(onemap=body.onemap, lta=body.lta)
+            log.warning("data mode switched: %s", request.app.state.mode.all())
+            return data_mode_info(request)
 
     @app.get("/health")
     def health():

@@ -1,6 +1,6 @@
 """Shared setup for the journey-service tests: settings, clocks, mocked OneMap/LTA calls and sample data.
 
-OneMap/LTA responses come from tests/fixtures: real captures made with scripts/capture_data.py
+OneMap/LTA responses come from app/saved_data/fixtures: real captures made with scripts/capture_data.py
 (lta_*.json, onemap_*.json) plus a few hand-built responses for cases that can't be triggered live
 (an MRT outage, no buses at night, upstream errors).
 """
@@ -22,10 +22,11 @@ LTA = "https://datamall2.mytransport.sg/ltaodataservice"
 ONEMAP = "https://www.onemap.gov.sg"
 ROUTE = f"{ONEMAP}/api/public/routingsvc/route"
 SEARCH = f"{ONEMAP}/api/common/elastic/search"
-FIXTURES = Path(__file__).parent / "fixtures"
+FIXTURES = Path(__file__).resolve().parents[1] / "app" / "saved_data" / "fixtures"
 
+# Live mode: the tests answer the real API addresses with respx (saved data is the service's default).
 SETTINGS = Settings(lta_account_key="lta", onemap_api_key="om", onemap_email="", onemap_password="",
-                    lta_retries=0, onemap_retries=0)
+                    lta_retries=0, onemap_retries=0, onemap_mode="live", lta_mode="live")
 NOW = datetime(2026, 10, 22, 8, 0, tzinfo=SST)                  # planning "now": 8:00 AM tomorrow
 LTA_NOW = datetime(2024, 8, 14, 8, 40, tzinfo=timezone.utc)     # 16:40 SST, matches the guide's samples
 

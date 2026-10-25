@@ -50,10 +50,17 @@ class DisruptionChecker:
         if alerts["status"] < self._s.disruption_min_status or not alerts["segments"]:
             return summary
 
-        for trip_id in sorted(_text(t) for t in self._r.smembers("active-trips")):
+        trip_ids = sorted(_text(t) for t in self._r.smembers("active-trips"))
+        pipe = self._r.pipeline(transaction=False)            # every trip's route and context in one round trip
+        for trip_id in trip_ids:
+            pipe.get(f"trip:{trip_id}:route")
+            pipe.hgetall(f"trip:{trip_id}:context")
+        fetched = pipe.execute() if trip_ids else []
+
+        for n, trip_id in enumerate(trip_ids):
             summary["activeTrips"] += 1
-            route = self._load_route(trip_id)
-            traveller_id, current_step = self._load_context(trip_id, route)
+            route = self._parse_route(fetched[2 * n])
+            traveller_id, current_step = self._parse_context(fetched[2 * n + 1], route)
             if route is None or traveller_id is None:
                 log.warning("trip %s: missing route or travellerId, skipped", trip_id)
                 summary["skipped"] += 1
@@ -71,8 +78,9 @@ class DisruptionChecker:
                 log.info("disruption %s sent for trip %s", event["disruptionId"], trip_id)
         return summary
 
-    def _load_route(self, trip_id: str) -> dict | None:
-        raw = self._r.get(f"trip:{trip_id}:route")
+    @staticmethod
+    def _parse_route(raw) -> dict | None:
+        """The value of `trip:{id}:route`."""
         if raw is None:
             return None
         try:
@@ -80,8 +88,10 @@ class DisruptionChecker:
         except ValueError:
             return None
 
-    def _load_context(self, trip_id: str, route: dict | None) -> tuple[str | None, int]:
-        ctx = {_text(k): _text(v) for k, v in self._r.hgetall(f"trip:{trip_id}:context").items()}
+    @staticmethod
+    def _parse_context(raw: dict, route: dict | None) -> tuple[str | None, int]:
+        """The hash `trip:{id}:context`: (travellerId, the current stepIndex)."""
+        ctx = {_text(k): _text(v) for k, v in (raw or {}).items()}
         traveller = ctx.get("travellerId") or (route or {}).get("travellerId")
         try:
             step = int(ctx.get("stepIndex", 0))

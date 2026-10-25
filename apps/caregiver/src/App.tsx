@@ -3,11 +3,49 @@
 // make an API client, say who the traveller and caregiver are, and give the planner room.
 //
 // Shareable link: /?from=1.4043,103.9021&to=1.3040,103.8318&mode=bus plans straight away.
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { JourneyApi, RoutePlanner, SavedRoutes, Trips, useSavedRoutes, useTrips } from "./planner";
 import type { Point } from "./planner/usePlanner";
-import type { TravelMode } from "./journey/types";
+import type { DataModeInfo, DataSource, TravelMode } from "./journey/types";
 import "./app.css";
+
+// Local demos only: switch the service between saved and live data. Hidden when the service can't switch
+// (DEMO_UI off, e.g. on AWS), so the real app never shows it.
+function DataSwitch({ api }: { api: JourneyApi }) {
+  const [info, setInfo] = useState<DataModeInfo | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.getDataMode().then(setInfo, () => setInfo(null));
+  }, [api]);
+  if (!info) return null;
+
+  const source: DataSource = info.onemap === "recorded" && info.lta === "recorded" ? "recorded" : "live";
+  const change = async (next: DataSource) => {
+    setBusy(true);
+    setError(null);
+    try {
+      setInfo(await api.setDataMode(next));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't switch");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <label title="Saved = the API answers recorded by capture_data.py (no keys needed). Live = the real OneMap and LTA.">
+      Data
+      <select value={source} disabled={busy} onChange={(e) => void change(e.target.value as DataSource)}>
+        <option value="recorded">Saved</option>
+        <option value="live">Live</option>
+      </select>
+      {source === "recorded" && info.onemapRecordedAt && <small>saved on {info.onemapRecordedAt}</small>}
+      {error && <small role="alert">{error}</small>}
+    </label>
+  );
+}
 
 // Where the traveller app runs; the trip link is built from it. Set VITE_TRAVELLER_APP_URL when deployed.
 const TRAVELLER_APP_URL: string = import.meta.env.VITE_TRAVELLER_APP_URL ?? "http://localhost:5173";
@@ -46,6 +84,7 @@ export default function App() {
         <label>
           Traveller <input value={travellerId} onChange={(e) => setTravellerId(e.target.value)} placeholder="U-042" autoComplete="off" />
         </label>
+        <DataSwitch api={api} />
       </header>
       <main className="shell__main">
         <RoutePlanner

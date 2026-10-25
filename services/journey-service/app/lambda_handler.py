@@ -17,6 +17,7 @@ import redis
 
 from . import aws_resources
 from .config import Settings
+from .data_mode import DataMode
 from .disruption import DisruptionChecker
 from .lta import LtaClient
 
@@ -33,7 +34,8 @@ def handler(event=None, context=None, s: Settings | None = None) -> dict:
     else:
         queue_url = sqs.get_queue_url(QueueName=s.disruptions_queue)["QueueUrl"]
 
-    checker = DisruptionChecker(r, LtaClient(s, redis_client=r), s)
+    # The data mode only switches with DEMO_UI=true (local runs); on AWS it is LTA_MODE, which the stack sets to live.
+    checker = DisruptionChecker(r, LtaClient(s, redis_client=r, mode=DataMode(s, r)), s)
     summary = checker.check(send=lambda e: sqs.send_message(QueueUrl=queue_url, MessageBody=json.dumps(e)))
     log.info("disruption check done: %s", summary)
     return summary

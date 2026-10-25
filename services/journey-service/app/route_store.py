@@ -114,8 +114,9 @@ class RedisRouteStore:
 
     def list_for_traveller(self, traveller_id: str) -> list[dict]:
         ids = sorted(i.decode() if isinstance(i, bytes) else i for i in self._r.smembers(self._index(traveller_id)))
-        routes = [self.get(i) for i in ids]
-        return [r for r in routes if r is not None]
+        if not ids:
+            return []
+        return [_load(raw) for raw in self._r.mget([self._key(i) for i in ids]) if raw is not None]   # one round trip
 
 
 # --- DynamoDB ------------------------------------------------------------------------

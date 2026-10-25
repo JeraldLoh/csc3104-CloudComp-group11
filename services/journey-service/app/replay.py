@@ -1,4 +1,4 @@
-"""Saved-data ("recorded") mode: answers OneMap and LTA requests from files in app/demo_data/ instead of the internet.
+"""Saved-data ("recorded") mode: answers OneMap and LTA requests from files in app/saved_data/ instead of the internet.
 
 The OneMap token expires every few days, so a demo can run on responses captured earlier (scripts/capture_data.py).
 Each class is an httpx transport, so JourneyClient and LtaClient make the very same calls and parse the very same
@@ -17,7 +17,7 @@ from typing import Any, Callable
 
 import httpx
 
-DATA_DIR = Path(__file__).parent / "demo_data"
+DATA_DIR = Path(__file__).parent / "saved_data"      # gitignored: a fresh clone runs scripts/capture_data.py first
 SST = timezone(timedelta(hours=8))
 MATCH_RADIUS_M = 150            # an endpoint within this distance of a saved one counts as the same place
 TIME_KEYS = ("startTime", "endTime", "arrival", "departure", "date")        # OneMap epoch-millisecond fields
@@ -27,13 +27,22 @@ class RecordedDataMissing(Exception):
     """The requested trip was never recorded. The message lists what was, so the page can offer it."""
 
 
+MISSING = ("No saved data in app/saved_data. Run `python scripts/capture_data.py --target both` (needs the API "
+           "keys), or switch to live data.")
+
+
 @lru_cache(maxsize=1)
 def load_manifest(directory: Path = DATA_DIR) -> dict:
-    return json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
+    return _read(directory, "manifest.json")
 
 
 def _read(directory: Path, name: str) -> Any:
-    return json.loads((directory / name).read_text(encoding="utf-8"))
+    try:
+        return json.loads((directory / name).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        if not (directory / "manifest.json").exists():
+            raise RecordedDataMissing(MISSING) from None
+        raise
 
 
 def _json(request: httpx.Request, body: Any, status: int = 200) -> httpx.Response:
@@ -95,7 +104,7 @@ class RecordedOneMap(httpx.BaseTransport):
         if not recordings:
             raise RecordedDataMissing(
                 "That trip is not in the saved demo data. Saved trips: "
-                f"{describe_saved_trips(self._dir)}. Pick one of those, or run with ONEMAP_MODE=live and a valid token.")
+                f"{describe_saved_trips(self._dir)}. Pick one of those, or switch to live data (needs a valid OneMap login).")
         by_mode = {r["mode"]: r for r in recordings}
         if wanted in by_mode:
             body = _read(self._dir, by_mode[wanted]["file"])

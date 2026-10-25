@@ -31,11 +31,15 @@ class Settings:
     onemap_base_url: str = field(default_factory=lambda: os.getenv("ONEMAP_BASE_URL", "https://www.onemap.gov.sg"))
     onemap_timeout_s: float = field(default_factory=lambda: float(os.getenv("ONEMAP_TIMEOUT_S", "15")))
     onemap_retries: int = field(default_factory=lambda: int(os.getenv("ONEMAP_RETRIES", "1")))
+    # Local only: after each login, write the new token into this .env file as ONEMAP_API_KEY, so tools that read the
+    # .env have a fresh one. Unset (the default, and on AWS) = never written.
+    onemap_token_env_file: str = field(default_factory=lambda: os.getenv("ONEMAP_TOKEN_ENV_FILE", ""))
 
-    # "live" calls the real APIs; "recorded" answers from the responses saved in app/demo_data/ (no internet and no
-    # keys needed), for demos while the OneMap token has expired. See replay.py and scripts/capture_data.py.
-    onemap_mode: str = field(default_factory=lambda: os.getenv("ONEMAP_MODE", "live").strip().lower())
-    lta_mode: str = field(default_factory=lambda: os.getenv("LTA_MODE", "live").strip().lower())
+    # "recorded" (the default) answers from the responses saved in app/saved_data/ by scripts/capture_data.py (no
+    # internet and no keys needed); "live" calls the real APIs, and AWS always sets it. See replay.py. With DEMO_UI the
+    # mode can also be switched at runtime (data_mode.py); these are then only the starting values.
+    onemap_mode: str = field(default_factory=lambda: os.getenv("ONEMAP_MODE", "recorded").strip().lower())
+    lta_mode: str = field(default_factory=lambda: os.getenv("LTA_MODE", "recorded").strip().lower())
 
     places_ttl_s: int = field(default_factory=lambda: int(os.getenv("PLACES_TTL_S", "3600")))
 
@@ -86,7 +90,8 @@ class Settings:
     platform_crowd_ttl_s: int = field(default_factory=lambda: int(os.getenv("PLATFORM_CROWD_TTL_S", "120")))
     platform_forecast_ttl_s: int = field(default_factory=lambda: int(os.getenv("PLATFORM_FORECAST_TTL_S", "21600")))
 
-    # Serve the dev map page at /demo. It has no login, so leave it off outside local demos.
+    # Local demo extras: the live/saved data switch (/api/dev/data-mode) and app/demo_tools.py. Neither has a login,
+    # so leave it off outside local demos.
     demo_ui: bool = field(default_factory=lambda: _bool("DEMO_UI", False))
 
     # Who is calling (see auth.py). AUTH_MODE: "off" = nobody is checked (local demos, the default),

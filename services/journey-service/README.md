@@ -5,8 +5,10 @@ Plans routes (OneMap), serves live bus/train/traffic data (LTA DataMall), and wi
 **Status:** proof of concept. Route planning (OneMap + LTA cross-check), saved and approved routes, trips, route packs and the disruption checker all work, against LocalStack (DynamoDB, S3, SQS) and Redis locally. Not built: AI easy-read, the Profiles lookups (traveller and caregiver names), photos and audio.
 
 **Demoing it:** see [`DEMO.md`](DEMO.md) (a step-by-step script with every command).
-The local demo runs on **saved API responses by default** (see "Saved-data mode"), so it needs no keys, no internet
-and no OneMap token. With live data the service logs in to OneMap itself (see "OneMap login").
+The service runs on **saved API responses by default** (see "Saved-data mode"), so it needs no keys, no internet
+and no OneMap token. The saved data is gitignored: on a fresh clone run `python scripts/capture_data.py --target both`
+once (needs the keys in `.env`). Switch to live data with the caregiver app's **Data** box, without a restart. With live
+data the service logs in to OneMap itself (see "OneMap login"). AWS always runs on live data.
 
 ## Code layout
 
@@ -14,22 +16,24 @@ The service has two deployable parts that share a little code, so the files are 
 
 | File | API container | Lambda (disruption checker) |
 |---|---|---|
-| `main.py` (FastAPI endpoints), `models.py`, `auth.py`, `demo_map.html` | yes | no |
+| `main.py` (FastAPI endpoints), `models.py`, `auth.py` | yes | no |
+| `demo_tools.py` (pretend disruption / crowding, live/saved switch; `DEMO_UI` only) | local demos | no |
 | `journey_client.py` (the API's logic in one class: OneMap, planning, routes, trips, packs) | yes | no |
 | `easy_read.py` (plain-language wording for route steps, no imports from the rest of `app/`) | yes | no |
 | `route_store.py`, `trip_store.py`, `pack_store.py` (DynamoDB / Redis / S3 storage) | yes | no |
-| `lta.py` (LTA DataMall client), `cache.py` (Redis JSON cache), `config.py` (settings) | yes | **yes** (shared) |
+| `lta.py` (LTA DataMall client), `cache.py` (Redis JSON cache), `config.py` (settings), `data_mode.py` (live/saved switch) | yes | **yes** (shared) |
 | `disruption.py` (`DisruptionChecker`), `lambda_handler.py` (entry point) | not used | **yes** |
 | `aws_resources.py` (creates tables, bucket, queue for local runs) | local use | local use |
-| `replay.py` + `demo_data/` (saved API responses for demos, see "Saved-data mode") | only when `*_MODE=recorded` | only when `LTA_MODE=recorded`; never in AWS |
+| `replay.py` + `saved_data/` (saved API responses, see "Saved-data mode") | on saved data (the default) | never: the stack sets `LTA_MODE=live` |
 
 `JourneyClient` uses the LTA client as `client.lta` and keeps thin methods (`bus_arrival()` and so on) that call it.
 The Lambda imports none of the API code: a test (`test_the_lambda_does_not_import_the_api_code`) fails if it ever does,
 so its package needs only `httpx` and `redis` (boto3 is already in the Lambda runtime). The Dockerfile copies all of
-`app/` into the container (including `demo_data/`); the Lambda package lists its 7 files explicitly (`deploy/lambda/make_zip.py`),
+`app/` into the container (including `saved_data/`); the Lambda package lists its 8 files explicitly (`deploy/lambda/make_zip.py`),
 so saved data never ships to AWS. Packaging, schedule and permissions are in `deploy/` (see `deploy/README.md`).
 
-Tests are split by area in `tests/` (`test_planning.py`, `test_routes_trips.py`, `test_disruption.py`, `test_lta.py`, `test_api.py`, `test_auth.py`, `test_replay.py`; shared setup in `helpers.py`), so you can run just the file you changed. `tests/fixtures/` holds real LTA and OneMap responses.
+Tests are split by area in `tests/` (`test_planning.py`, `test_routes_trips.py`, `test_disruption.py`, `test_lta.py`, `test_api.py`, `test_auth.py`, `test_replay.py`; shared setup in `helpers.py`), so you can run just the file you changed. `app/saved_data/fixtures/` holds the real LTA and OneMap responses they use
+(made by `capture_data.py --target tests`; gitignored like the rest of `app/saved_data/`).
 
 ## Endpoints
 
@@ -130,19 +134,30 @@ if the signing keys can't be fetched it is `503`, not `401`.
 | route and trip lists | only what the caller may see (someone else's traveller gives an empty list) |
 | anyone else, any route or trip | `404`, the same as for one that doesn't exist |
 
-`/internal/lta/*`, `/health`, `/ready` and `/demo` are not user endpoints and are not checked.
+`/internal/lta/*`, `/health`, `/ready` and `/api/dev/*` are not user endpoints and are not checked.
 
 Not done yet: checking that a caregiver is really *linked* to the traveller, which needs the Profiles service
 (it would call Profiles' `GET /api/travellers` with the caller's token). Until then a caregiver can save a route for any
 traveller id; they just can't see other caregivers' routes. Try it locally: `$env:AUTH_MODE = "dev"` before
-`docker compose ... up`, then `curl.exe -H "X-Dev-User: G-DEMO" ...` (the demo page has an "Act as" box).
+`docker compose ... up`, then `curl.exe -H "X-Dev-User: G-DEMO" ...` (the caregiver app has an "Act as" box).
 
 ## Saved-data mode (demos without the live APIs)
 
-OneMap access tokens last 3 days, so the demo can run on responses captured earlier (and needs no login at all). Set `ONEMAP_MODE` and
-`LTA_MODE` to `recorded` (compose does by default; `live` is the code's default, and what AWS uses) and the service
-answers from `app/demo_data/` instead of the internet. Everything after the API call is the real code: parsing, planning,
-the plain-language wording, the LTA cross-check, saving, trips, packs and the disruption demo.
+OneMap access tokens last 3 days, so the service runs on responses captured earlier (and needs no login at all). This
+is the **default** (`ONEMAP_MODE` and `LTA_MODE` default to `recorded`): the service answers from `app/saved_data/`
+instead of the internet. Everything after the API call is the real code: parsing, planning, the plain-language wording,
+the LTA cross-check, saving, trips, packs and the disruption demo. AWS sets both to `live` (the EKS manifests and the
+Lambda stack).
+
+`app/saved_data/` is **gitignored**, so a fresh clone has none: run `python scripts/capture_data.py --target both`
+first. Without it, saved-data requests answer `404` saying exactly that.
+
+**Switching while it runs** (with `DEMO_UI=true`, as in compose): the caregiver app's header has a **Data: Saved / Live**
+box, or run `docker exec careroute-journey-service-1 python -m app.demo_tools mode live` (`mode saved` to go back,
+`mode` to show it). Both use `GET/PUT /api/dev/data-mode` (`{"onemap"?, "lta"?}`: `live` or `recorded`), kept in Redis
+(`journey:data-mode`) so every replica follows it; the environment values are only the starting point. Live and saved
+answers are cached under different keys (`journey:cache:` vs `journey:cache:recorded:`), so they never mix. Without
+`DEMO_UI` (AWS) the switch doesn't exist and the environment decides.
 
 - **What is saved:** OneMap place search and routes for nine trips between MRT stations (bus-or-train and bus-only
   recordings; "train only" is filtered out of the first, as OneMap's `RAIL` means no bus):
@@ -159,15 +174,17 @@ the plain-language wording, the LTA cross-check, saving, trips, packs and the di
 - **Times are moved to now:** bus arrivals count from the moment you ask, and trips start at the requested time, so
   nothing looks stale.
 - **Other trips:** a start or end within about 150 m of a saved one matches; anything else answers `404 not_found`
-  with the list of saved trips. The demo page shows a banner and one button per saved trip.
+  with the list of saved trips (`GET /api/dev/data-mode` lists them too, as `trips`).
 - **Adding trips:** add the trip to `TRIPS` in `scripts/capture_data.py` (two `place(...)` calls: the station's search
   text and the text that picks the right result, e.g. `"(EW2)"`) and run
   `python scripts/capture_data.py --target demo --routes live`. It logs in to OneMap with the account in `.env`,
   records every trip's routes, looks up the places (no token needed), and refreshes the LTA data (needs `LTA_API_KEY`).
-  A trip is offered on the demo page only once it has a saved route. `--routes fixtures` rebuilds just the first two
-  trips offline from `tests/fixtures`. Keys and the password are never written to the files. After recording, update
-  the trip list expected in `tests/test_replay.py` if you added trips.
-- `GET /demo/info` (with `DEMO_UI`) says which data is in use. The service logs a `SAVED-DATA MODE` warning at startup.
+  A trip is listed only once it has a saved route. `--routes fixtures` rebuilds just the first two trips offline from
+  `app/saved_data/fixtures`. Keys and the password are never written to the data files (a OneMap token it logs in for
+  is saved to `.env`, see "OneMap login"). After recording, update the trip list expected in `tests/test_replay.py` if
+  you added trips.
+- `GET /api/dev/data-mode` (with `DEMO_UI`) says which data is in use and when it was saved. The service logs a
+  `SAVED-DATA MODE` warning at startup.
 
 ## OneMap login
 
@@ -178,16 +195,20 @@ expires, and logs in again early if OneMap rejects it once. Redis holds the toke
 login fails, or there is no account, it falls back to a pasted `ONEMAP_API_KEY`; with neither, planning answers
 `502 upstream_misconfigured`. The password and the token are never logged or shown (`Settings` hides them from
 `repr`). The code is `app/onemap_token.py`; saved-data mode never logs in. In Kubernetes the two values go in the
-`journey-api-keys` Secret (`deploy-eks.ps1` copies them from `.env`).
+`journey-api-keys` Secret (`deploy-eks.ps1` copies them from `.env`), and the pods renew the token themselves: nothing
+to run or update by hand on AWS.
+
+Locally, each new token is also written back to the root `.env` as `ONEMAP_API_KEY` (only the token line changes; the
+rest of the file is kept): by the service when `ONEMAP_TOKEN_ENV_FILE` is set (compose mounts the `.env` at
+`/app/.env` and sets it), and by `scripts/capture_data.py` when it logs in. Unset on AWS, where nothing is written.
 
 ## Deploying to AWS: resource names
 
 The team's resource prefix is **`careroute`**: `careroute-routes`, `careroute-trips`, queue `careroute-disruptions`, the
 shared bucket `careroute-files-<account id>`. This service's defaults already use it, so the same names work locally and
-on AWS. The platform stack builds its names from its `ResourcePrefix` parameter and its IAM role only allows that prefix;
-its branch still defaults to `csc3104` until its owner changes it, and `deploy/` reads whichever prefix the stack really
-uses (see `deploy/README.md`, which lists what the platform owner has to change). Table keys, index names and the TTL
-attribute already match the template.
+on AWS. The platform stack builds its names from its `ResourcePrefix` parameter (default `careroute`) and its IAM role
+only allows that prefix; `deploy/` reads whichever prefix the stack really uses (see `deploy/README.md`). Table keys,
+index names and the TTL attribute already match the template.
 
 Ready-made files for putting the service (and the disruption Lambda) on that stack are in `deploy/`; see
 `deploy/README.md` for the order, the names to use, and what has and hasn't been checked (nothing has been run on real
@@ -258,14 +279,11 @@ It uses only the step's own facts (bus number, station names, stop count), so no
 routes get it automatically; text a caregiver wrote is kept. Bus and train steps carry an extra `stopCount` field.
 The contract's `POST /internal/easyread` endpoint and an AI rewrite (with this text as the fallback) are not built.
 
-## Map demo page
+## Route geometry
 
-With `DEMO_UI=true` (set in `compose.journey.yaml`) the service serves a small dev page at
-`http://localhost:8006/demo`: search for two places (or click the map), pick bus/train, and the planned route is
-drawn on OneMap's map (walking dashed grey, bus blue, train red) with the steps, live bus times and warnings
-beside it. A link like `/demo?from=1.4043,103.9021&to=1.3040,103.8318&mode=bus` plans straight away.
-The page itself has no login, so leave `DEMO_UI` off anywhere that isn't a local demo. Its "Act as" box sends an
-`X-Dev-User` header, which only matters when the service runs with `AUTH_MODE=dev`.
+The demo UI is the caregiver app (`apps/caregiver`, see its `DEMO.md`). `DEMO_UI=true` (set in `compose.journey.yaml`)
+only turns on the dev extras: the live/saved switch and `app/demo_tools.py`. Neither has a login, so leave `DEMO_UI`
+off anywhere that isn't a local demo.
 
 Each plan option includes `stepPaths`, the `[lat, lng]` path of every step (`path` is all of them joined).
 Each step's path starts at the previous step's end, because OneMap's legs can end up to ~80 m apart.
@@ -286,19 +304,21 @@ that touches a train step the traveller hasn't finished, it sends one `disruptio
 
 ### Demoing a disruption
 
-Real MRT outages are rare, so for a demo you can make LTA *look* disrupted (`app/demo_tools.py`, only runs when
-`DEMO_UI=true`, not part of the Lambda package). Both the planner and the checker read LTA's train alerts through a
-Redis cache; this writes a pretend "major disruption" response into it.
+Real MRT outages are rare (and the saved data is a normal day), so for a demo you can make LTA *look* disrupted
+(`app/demo_tools.py`, only runs when `DEMO_UI=true`, not part of the Lambda package). Both the planner and the checker
+read LTA's train alerts through a Redis cache; this writes a pretend "major disruption" response into it, for live and
+saved data alike.
 
 ```powershell
 $t = "docker exec careroute-journey-service-1 python -m app.demo_tools"
-# 1. plan a route that uses the MRT, save it, approve it, create a trip and start it (the demo page at /demo does this)
+# 1. in the caregiver app: plan a route that uses the MRT, save it, approve it, create a trip and start it
 iex "$t on"                      # pretend the whole North East Line is down (or: on --line NEL --stations NE10,NE11,NE12)
-# 2. plan the route again at /demo: the MRT step gets a red warning and an orange marker on the map
+# 2. plan the route again: the MRT step gets a red warning and an orange marker on the map
 iex "$t check"                   # the disruption Lambda's job: sends a disruption message for each active trip on those stations
 iex "$t check"                   # run again: nothing new is sent (already told); `check --again` sends it once more
 iex "$t check --dry-run"         # show what would be sent without putting it on the queue
-iex "$t off"                     # back to the real LTA feed
+iex "$t off"                     # back to the normal LTA feed
+iex "$t crowd on --stations NE17"   # pretend Punggol's platform is very crowded; `crowd off` removes it
 ```
 
 `on` lasts 30 minutes unless you pass `--minutes`. A normal-day `check` finds nothing, because the checker does
@@ -318,9 +338,11 @@ nothing until LTA reports a disruption. Trips on a different line, or already pa
 | `CREATE_RESOURCES` | `false` | create the table and queue on startup (local only) |
 | `ONEMAP_API_EMAIL`, `ONEMAP_API_PASSWORD` | (none) | the OneMap account; the service logs in and renews its own token, see "OneMap login". Not needed when `ONEMAP_MODE=recorded` |
 | `ONEMAP_API_KEY` | (none) | a pasted OneMap token (lasts 3 days), used when there is no account or the login fails |
+| `ONEMAP_TOKEN_ENV_FILE` | (none; compose: `/app/.env`) | local only: write each new OneMap token to this `.env` as `ONEMAP_API_KEY` |
 | `PLAN_MAX_WALK_M` | `500` | longest single walk before a `long_walk` warning (a request's `maxWalkM` overrides) |
 | `PLATFORM_CROWD_TTL_S`, `PLATFORM_FORECAST_TTL_S` | 120, 21600 | cache lifetimes for platform crowding (real-time, forecast) |
-| `ONEMAP_MODE`, `LTA_MODE` | `live` (compose: `recorded`) | `recorded` answers from the saved responses in `app/demo_data/`, see "Saved-data mode" |
+| `ONEMAP_MODE`, `LTA_MODE` | `recorded` (AWS: `live`) | `recorded` answers from the saved responses in `app/saved_data/`, see "Saved-data mode"; with `DEMO_UI` only the starting value |
+| `DEMO_UI` | `false` (compose: `true`) | local demo extras: the live/saved switch (`/api/dev/data-mode`) and `app/demo_tools.py` |
 | `INCIDENT_RADIUS_M` | `200` | how close a road incident must be to a bus leg to be flagged |
 | `REDIS_URL` | `redis://localhost:6379/0` | response cache |
 | `AUTH_MODE` | `off` | `off`, `dev` or `cognito`, see "Who is calling" |
@@ -364,5 +386,5 @@ kubectl port-forward svc/journey-service 8006:8000 -n csc3104
 
 ```powershell
 $env:LTA_API_KEY = "<your key>"
-python scripts/capture_data.py --target tests  # writes tests/fixtures/lta_*.json and onemap_*.json
+python scripts/capture_data.py --target tests  # writes app/saved_data/fixtures/lta_*.json and onemap_*.json
 ```

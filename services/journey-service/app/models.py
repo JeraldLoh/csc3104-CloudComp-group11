@@ -93,6 +93,12 @@ class TripIn(BaseModel):
     date: date_type                       # "2026-10-12"
 
 
+class DataModeIn(BaseModel):
+    """Body of PUT /api/dev/data-mode (DEMO_UI only): which data each API uses. Leave one out to keep it."""
+    onemap: Literal["live", "recorded"] | None = None
+    lta: Literal["live", "recorded"] | None = None
+
+
 class RouteUpdate(RouteIn):
     """Body of PUT /api/routes/{id}: the route as you last saw it, with your changes. `version` is the
     version you edited; if someone saved in between the server answers 409 instead of overwriting."""

@@ -26,8 +26,7 @@ dist/
 
 # Common build output
 build/
-services/journey-service/app/demo_data/
-services/journey-service/tests/fixtures/
+services/journey-service/app/saved_data/
 
 # AWS
 iam_policy.json

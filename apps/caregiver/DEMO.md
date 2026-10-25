@@ -11,9 +11,9 @@ and the system notices and raises an alert. Along the way: editing a route stops
 two caregivers can't overwrite each other, and a stranger can't see or change anything.
 
 **Data:** by default the service runs on **saved API data** (real OneMap and LTA responses captured earlier, in
-`services/journey-service/app/demo_data/`). It needs no OneMap token and no internet for the data, so an expired
+`services/journey-service/app/saved_data/`). It needs no OneMap token and no internet for the data, so an expired
 token can't break the demo. The real code still runs on that data. Only the nine saved trips (section 3) can be
-planned. To use the live APIs, see "Live data" in `services/journey-service/DEMO.md` section 2.
+planned. To use the live APIs, switch the header's **Data** box to **Live** (section 2).
 
 > **Status of this guide.** The steps and the texts you should see were taken from the code and from
 > `services/journey-service/DEMO.md`, and the web app's behaviour is covered by its 88 automated tests
@@ -25,9 +25,13 @@ planned. To use the live APIs, see "Live data" in `services/journey-service/DEMO
 ## 1. One-time setup
 
 You need: Docker Desktop, Node.js 22 or newer, and the root `.env` with `LOCALSTACK_AUTH_TOKEN` (never commit it).
-No OneMap or LTA keys are needed for saved data.
+No OneMap or LTA keys are needed to run on saved data, but the saved data is gitignored: on a fresh clone, capture it
+once (this one step needs `LTA_API_KEY` and the OneMap account, `ONEMAP_API_EMAIL` / `ONEMAP_API_PASSWORD`, in `.env`).
 
 ```powershell
+# 0. Fresh clone only: capture the saved data into services/journey-service/app/saved_data
+cd services/journey-service; python scripts/capture_data.py --target both --routes live; cd ../..
+
 # 1. Start Docker Desktop, then the backend (Redis and LocalStack start with it):
 docker compose --env-file .env -f services/journey-service/compose.journey.yaml up --build -d journey-service
 
@@ -52,8 +56,10 @@ npm run dev
 ```
 
 Open **http://localhost:5174**. You should see the header **CareRoute caregiver** with *Act as* `G-DEMO` and
-*Traveller* `U-DEMO`, the planner on the left and the OneMap map on the right. (`http://localhost:8006/demo` is
-the service's own older dev page, still available if you want to compare.)
+*Traveller* `U-DEMO`, a **Data: Saved** box (with the date the data was saved), the planner on the left and the
+OneMap map on the right. Switch **Data** to **Live** to use the real OneMap and LTA APIs straight away, no restart
+(needs the keys in `.env`); switch back to **Saved** for the scripted demo. The box only appears when the service runs
+with `DEMO_UI=true`, as compose does.
 
 The web app forwards every `/api/...` call to the service on port 8006 (`apps/caregiver/vite.config.ts`; set
 `JOURNEY_URL` if yours differs), so there is no CORS setup.

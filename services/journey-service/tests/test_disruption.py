@@ -120,5 +120,6 @@ def test_the_lambda_does_not_import_the_api_code():
              "print(','.join(p for p in ('fastapi', 'starlette', 'pydantic', 'jwt') if p in sys.modules))")
     out = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, check=True,
                          cwd=Path(__file__).resolve().parents[1]).stdout.splitlines()
-    assert set(out[0].split(",")) == {"lambda_handler", "aws_resources", "config", "cache", "lta", "disruption"}
+    assert set(out[0].split(",")) == {"lambda_handler", "aws_resources", "config", "cache", "lta", "disruption",
+                                      "data_mode"}
     assert out[1] == ""                                   # none of the API's third-party packages were loaded

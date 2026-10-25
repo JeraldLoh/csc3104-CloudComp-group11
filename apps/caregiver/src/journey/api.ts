@@ -1,6 +1,8 @@
 // Talking to the Journey Service. The planner only depends on the PlannerApi interface, so a
 // host app can pass its own client (its own login, base URL or caching) or a fake in tests.
-import type { PackLink, PlaceResult, PlanOption, PlanRequest, RouteDraft, RouteUpdate, SavedRoute, Trip } from "./types";
+import type {
+  DataModeInfo, DataSource, PackLink, PlaceResult, PlanOption, PlanRequest, RouteDraft, RouteUpdate, SavedRoute, Trip,
+} from "./types";
 
 /** What the route planner needs from the backend. */
 export interface PlannerApi {
@@ -133,6 +135,19 @@ export class JourneyApi implements PlannerApi, SavedRoutesApi, TripsApi {
 
   tripPack(tripId: string): Promise<PackLink> {
     return this.request<PackLink>(`/api/trips/${encodeURIComponent(tripId)}/pack`);
+  }
+
+  /** Local demos only (the service's DEMO_UI): which data is in use. Fails with 404 when it can't be switched. */
+  getDataMode(): Promise<DataModeInfo> {
+    return this.request<DataModeInfo>("/api/dev/data-mode");
+  }
+
+  /** Switches OneMap and LTA together between saved and live data. */
+  setDataMode(source: DataSource): Promise<DataModeInfo> {
+    return this.request<DataModeInfo>("/api/dev/data-mode", {
+      method: "PUT",
+      body: JSON.stringify({ onemap: source, lta: source }),
+    });
   }
 
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {

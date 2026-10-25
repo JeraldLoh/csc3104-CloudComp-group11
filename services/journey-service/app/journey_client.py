@@ -19,6 +19,7 @@ import math
 import re
 import secrets
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from typing import Callable
 
@@ -154,22 +155,40 @@ def distance_to_path_m(lat: float, lng: float, path: list[tuple[float, float]]) 
     return best
 
 
+def _near_box(path: list[tuple[float, float]], radius_m: float) -> Callable[[float, float], bool]:
+    """A cheap first check before distance_to_path_m: is a point inside the path's bounding box, widened by
+    `radius_m`? Points outside it can't be within `radius_m` of the path."""
+    lats, lngs = [p[0] for p in path], [p[1] for p in path]
+    dlat = radius_m / (math.pi * EARTH_RADIUS_M / 180)
+    dlng = dlat / max(0.01, math.cos(math.radians(max(abs(min(lats)), abs(max(lats))))))
+    lo_lat, hi_lat, lo_lng, hi_lng = min(lats) - dlat, max(lats) + dlat, min(lngs) - dlng, max(lngs) + dlng
+    return lambda lat, lng: lo_lat <= lat <= hi_lat and lo_lng <= lng <= hi_lng
+
+
 def _mentions_service(content: str, service: str) -> bool:
     return "bus" in content.lower() and bool(
         re.search(rf"(?<![\w/]){re.escape(service)}(?![\w/])", content))
 
 
 class _LiveData:
-    """Lazy, failure-tolerant LTA lookups for one plan() call."""
+    """Failure-tolerant LTA lookups for one plan() call, each made at most once. prefetch() makes the ones a plan
+    needs in parallel; anything else is looked up on first use. After the first LTA failure the rest are skipped
+    (the plan is `degraded` either way), so an LTA outage costs one timeout, not one per lookup."""
+
+    PARALLEL = 8
 
     def __init__(self, client: "JourneyClient"):
         self._c = client
+        self._lta = client._plan_lta                 # no retries: live data is a bonus
         self.degraded = False
         self._alerts: dict | None = None
         self._incidents: list | None = None
-        self._crowd: dict = {}                       # (line, when) -> {station: level}, one lookup per plan() call
+        self._arrivals: dict = {}                    # (stop, service) -> arrival dict or None
+        self._crowd: dict = {}                       # (line, when) -> {station: level}
 
     def _call(self, fn, *args):
+        if self.degraded:
+            return None
         try:
             return fn(*args)
         except LtaError as e:
@@ -177,25 +196,39 @@ class _LiveData:
             self.degraded = True
             return None
 
+    def prefetch(self, lookups: list[tuple]) -> None:
+        """Runs the given lookups together: ("alerts",), ("incidents",), ("bus", stop, service), ("crowd", line, when)."""
+        jobs = {"alerts": self.alerts, "incidents": self.incidents, "bus": self.bus_arrival, "crowd": self.platform_crowd}
+        unique = list(dict.fromkeys(lookups))
+        if len(unique) <= 1:
+            for kind, *args in unique:
+                jobs[kind](*args)
+            return
+        with ThreadPoolExecutor(max_workers=min(self.PARALLEL, len(unique))) as pool:
+            for f in [pool.submit(jobs[kind], *args) for kind, *args in unique]:
+                f.result()
+
     def alerts(self) -> dict:
         if self._alerts is None:
-            self._alerts = self._call(self._c.train_alerts) or {"status": 1, "segments": [], "messages": []}
+            self._alerts = self._call(self._lta.train_alerts) or {"status": 1, "segments": [], "messages": []}
         return self._alerts
 
     def incidents(self) -> list[dict]:
         if self._incidents is None:
-            self._incidents = self._call(self._c.traffic_incidents) or []
+            self._incidents = self._call(self._lta.traffic_incidents) or []
         return self._incidents
 
     def bus_arrival(self, stop_code: str, service_no: str) -> dict | None:
-        return self._call(self._c.bus_arrival, stop_code, service_no)
+        if (stop_code, service_no) not in self._arrivals:
+            self._arrivals[(stop_code, service_no)] = self._call(self._lta.bus_arrival, stop_code, service_no)
+        return self._arrivals[(stop_code, service_no)]
 
     def platform_crowd(self, line: str, when: datetime | None) -> dict:
         """{station: level} for a line: right now (when is None) or forecast for `when`. Crowding is a bonus, so
         a failure (including a key without that dataset) is logged and means "unknown", never `degraded`."""
         if (line, when) not in self._crowd:
             try:
-                lta = self._c.lta
+                lta = self._lta
                 self._crowd[(line, when)] = lta.platform_crowd(line) if when is None else lta.platform_crowd_forecast(line, when)
             except LtaError as e:
                 log.warning("LTA platform crowding unavailable: %s", type(e).__name__)
@@ -218,6 +251,7 @@ class JourneyClient:
         trip_store=None,
         pack_store=None,
         lta: LtaClient | None = None,
+        mode=None,                                   # data_mode.DataMode; None = ONEMAP_MODE / LTA_MODE, fixed
     ):
         self._s = settings
         self._r = redis_client
@@ -229,22 +263,40 @@ class JourneyClient:
         self._sleep = sleep
         self._clock = clock
         self._cache = JsonCache(redis_client)
+        # Live or saved data (data_mode.py): read on every call, so a switch takes effect without a restart.
+        self._mode = mode
         # LTA data comes from the shared client; the API calls it through the methods below.
-        self.lta = lta or LtaClient(settings, redis_client=redis_client, sleep=sleep, clock=clock, http=lta_http)
-        self._recorded = onemap_http is None and settings.onemap_mode == "recorded"
-        if self._recorded:
-            from .replay import RecordedOneMap       # only loaded in saved-data mode (see replay.py)
-            onemap_http = httpx.Client(base_url=settings.onemap_base_url, transport=RecordedOneMap())
+        self.lta = lta or LtaClient(settings, redis_client=redis_client, sleep=sleep, clock=clock, http=lta_http,
+                                    mode=mode)
+        self._plan_lta = self.lta.without_retries()          # live data in a plan is a bonus: never retried
+        self._onemap_fixed_live = onemap_http is not None    # given (tests): always used, the data mode is ignored
         self._onemap_http = onemap_http or httpx.Client(
             base_url=settings.onemap_base_url, timeout=settings.onemap_timeout_s)
-        # Logs in with the OneMap account when there is one (saved data needs no token at all).
-        self._token = None if self._recorded else OneMapToken(settings, redis_client, clock=clock)
+        self._onemap_recorded_http: httpx.Client | None = None    # built on first use in saved-data mode
+        # Logs in with the OneMap account when there is one, and only when live data is asked for.
+        self._token = OneMapToken(settings, redis_client, clock=clock)
 
     # ===== OneMap transport =====
 
+    @property
+    def _recorded(self) -> bool:
+        if self._onemap_fixed_live:
+            return False
+        return (self._mode.get("onemap") if self._mode else self._s.onemap_mode) == "recorded"
+
+    def _onemap_client(self, recorded: bool) -> httpx.Client:
+        if not recorded:
+            return self._onemap_http
+        if self._onemap_recorded_http is None:
+            from .replay import RecordedOneMap       # only loaded in saved-data mode (see replay.py)
+            self._onemap_recorded_http = httpx.Client(base_url=self._s.onemap_base_url, transport=RecordedOneMap())
+        return self._onemap_recorded_http
+
     def _onemap_get(self, path: str, params: dict, auth: bool = True) -> dict:
+        recorded = self._recorded                   # read once, so one request never mixes modes
+        http = self._onemap_client(recorded)
         headers = {}
-        if auth and not self._recorded:
+        if auth and not recorded:
             token = self._token.get() or self._s.onemap_api_key          # the account's token, else the pasted one
             if not token:
                 raise OneMapAuthError("No OneMap token: set ONEMAP_API_EMAIL and ONEMAP_API_PASSWORD, or ONEMAP_API_KEY")
@@ -255,17 +307,17 @@ class JourneyClient:
             if attempt:
                 self._sleep(0.5 * 2 ** (attempt - 1))
             try:
-                r = self._onemap_http.get(path, params=params, headers=headers)
+                r = http.get(path, params=params, headers=headers)
             except httpx.HTTPError as e:
                 last = e
                 continue
-            if r.status_code in (401, 403) and auth and not self._recorded and self._token.enabled and not renewed:
+            if r.status_code in (401, 403) and auth and not recorded and self._token.enabled and not renewed:
                 renewed = True                       # it expired (or was revoked) early: log in again, once
                 fresh = self._token.get(refresh=True)
                 if fresh:
                     headers["Authorization"] = f"Bearer {fresh}"
                     try:
-                        r = self._onemap_http.get(path, params=params, headers=headers)
+                        r = http.get(path, params=params, headers=headers)
                     except httpx.HTTPError as e:
                         last = e
                         continue
@@ -326,7 +378,7 @@ class JourneyClient:
 
     def route_pt(self, start: tuple[float, float], end: tuple[float, float], when: datetime,
                  mode: str = "TRANSIT", max_walk_m: int | None = None, num_itineraries: int | None = None) -> dict:
-        """OneMap's raw public-transport itineraries: plan.itineraries[].legs[] (see tests/fixtures)."""
+        """OneMap's raw public-transport itineraries: plan.itineraries[].legs[] (see app/saved_data/fixtures)."""
         return self._onemap_get("/api/public/routingsvc/route", {
             "start": f"{start[0]},{start[1]}",
             "end": f"{end[0]},{end[1]}",
@@ -370,6 +422,7 @@ class JourneyClient:
         itineraries = (raw.get("plan") or {}).get("itineraries") or []
 
         live = _LiveData(self)
+        live.prefetch([lookup for it in itineraries for leg in it.get("legs", []) for lookup in self._lookups(leg)])
         walk_limit = max_walk_m or self._s.plan_max_walk_m
         options = [self._option(n, it, live, walk_limit) for n, it in enumerate(itineraries, start=1)]
         if live.degraded:
@@ -432,8 +485,19 @@ class JourneyClient:
         codes.discard(None)
         return codes
 
-    def _check_leg(self, index: int, leg: dict, live: _LiveData) -> tuple[list, list]:
-        """Returns (live entries, warnings) for one leg."""
+    def _lookups(self, leg: dict) -> list[tuple]:
+        """The LTA lookups _check_leg will make for this leg, for _LiveData.prefetch."""
+        mode = leg.get("mode")
+        if mode == "SUBWAY":
+            crowd = self._crowd_lookup(leg)
+            return [("alerts",)] + ([("crowd", crowd[0], crowd[1])] if crowd else [])
+        if mode == "BUS":
+            service, stop = leg.get("route"), leg["from"].get("stopCode")
+            return ([("bus", stop, service), ("alerts",)] if service and stop else []) + [("incidents",)]
+        return []
+
+    def _check_leg(self, index: int, leg: dict, live: _LiveData, path: list[tuple[float, float]]) -> tuple[list, list]:
+        """Returns (live entries, warnings) for one leg; `path` is the leg's decoded line."""
         entries: list[dict] = []
         warnings: list[dict] = []
         mode = leg.get("mode")
@@ -482,9 +546,9 @@ class JourneyClient:
                         warnings.append({"type": "bus_notice", "severity": "info", "stepIndex": index,
                                          "message": m["content"], "serviceNo": service})
 
-            path = self._leg_path(leg)
+            near = _near_box(path, self._s.incident_radius_m)
             for inc in live.incidents():
-                if inc["lat"] is None or inc["lng"] is None:
+                if inc["lat"] is None or inc["lng"] is None or not near(inc["lat"], inc["lng"]):
                     continue
                 d = distance_to_path_m(inc["lat"], inc["lng"], path)
                 if d <= self._s.incident_radius_m:
@@ -496,26 +560,34 @@ class JourneyClient:
                     })
         return entries, warnings
 
-    def _platform_crowd(self, index: int, leg: dict, live: _LiveData) -> dict | None:
-        """How busy the platform is where this train leg starts: LTA's real-time level when the leg starts soon,
-        its forecast for that time when it starts later. None when the line is unknown or LTA has no level."""
-        station = leg["from"].get("stopCode")
+    def _crowd_lookup(self, leg: dict) -> tuple[str, datetime | None] | None:
+        """(DataMall line, None for right now / the time to forecast for) for a train leg, or None if unknown."""
         line = LINE_CODES.get((leg.get("route") or "").upper())
-        if not (station and line):
+        if not (leg["from"].get("stopCode") and line):
             return None
         start = datetime.fromtimestamp(leg["startTime"] / 1000, tz=timezone.utc) if leg.get("startTime") else None
         realtime = start is None or start - self._clock() <= REALTIME_WITHIN
-        level = live.platform_crowd(line, None if realtime else start).get(station)
+        return line, None if realtime else start
+
+    def _platform_crowd(self, index: int, leg: dict, live: _LiveData) -> dict | None:
+        """How busy the platform is where this train leg starts: LTA's real-time level when the leg starts soon,
+        its forecast for that time when it starts later. None when the line is unknown or LTA has no level."""
+        lookup = self._crowd_lookup(leg)
+        if lookup is None:
+            return None
+        station = leg["from"]["stopCode"]
+        level = live.platform_crowd(*lookup).get(station)
         if level is None:
             return None
         return {"stepIndex": index, "station": station, "line": leg["route"], "crowd": level,
-                "source": "real-time" if realtime else "forecast"}
+                "source": "real-time" if lookup[1] is None else "forecast"}
 
     def _option(self, number: int, itinerary: dict, live: _LiveData, walk_limit_m: int) -> dict:
         steps, path, step_paths, live_entries, warnings = [], [], [], [], []
         for i, leg in enumerate(itinerary.get("legs", [])):
             steps.append(self._step(i, leg))
-            pts = [list(pt) for pt in self._leg_path(leg)]
+            leg_path = self._leg_path(leg)                   # decoded once: drawn here, checked in _check_leg
+            pts = [list(pt) for pt in leg_path]
             # OneMap's legs can end up to ~80 m apart (a bus stop sits off the snapped road). Start each
             # step where the previous one ended so the drawn route has no break; that short connector
             # takes the later step's colour.
@@ -532,7 +604,7 @@ class JourneyClient:
             for pt in pts:
                 if not path or path[-1] != pt:
                     path.append(pt)
-            entries, warns = self._check_leg(i, leg, live)
+            entries, warns = self._check_leg(i, leg, live, leg_path)
             live_entries += entries
             warnings += warns
 

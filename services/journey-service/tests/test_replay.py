@@ -1,4 +1,4 @@
-"""Saved-data ("recorded") mode: the demo runs from app/demo_data with no keys and no internet."""
+"""Saved-data ("recorded") mode: the demo runs from app/saved_data with no keys and no internet."""
 import json
 from pathlib import Path
 
@@ -14,7 +14,7 @@ from helpers import AMK, NOW, TOA_PAYOH, make, make_app
 
 SAVED = Settings(onemap_mode="recorded", lta_mode="recorded", lta_retries=0, onemap_retries=0)   # note: no keys
 PUNGGOL, ORCHARD = (1.4043, 103.9021), (1.3040, 103.8318)
-DATA = Path(__file__).resolve().parents[1] / "app" / "demo_data"
+DATA = Path(__file__).resolve().parents[1] / "app" / "saved_data"
 
 
 def saved_client(clock=NOW, redis=None) -> JourneyClient:

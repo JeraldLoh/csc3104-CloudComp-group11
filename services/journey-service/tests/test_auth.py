@@ -103,7 +103,8 @@ def test_dev_mode_trusts_the_header_and_off_mode_checks_nothing():
 
 
 def secured_app(**over):
-    return make_app(settings=Settings(lta_account_key="lta", onemap_api_key="om", auth_mode="dev", **over))
+    return make_app(settings=Settings(lta_account_key="lta", onemap_api_key="om", auth_mode="dev",
+                                      onemap_mode="live", lta_mode="live", **over))
 
 
 def as_user(user: str) -> dict:

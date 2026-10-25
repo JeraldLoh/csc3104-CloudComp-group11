@@ -94,6 +94,7 @@ Resources:
           LTA_API_KEY: !Ref LtaApiKey
           DISRUPTIONS_QUEUE: !Ref DisruptionsQueueName
           DISRUPTION_MIN_STATUS: !Ref DisruptionMinStatus
+          LTA_MODE: live             # the code's default is saved data, which isn't in this package
 
   Schedule:
     Type: AWS::Events::Rule

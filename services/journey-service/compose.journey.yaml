@@ -20,16 +20,20 @@ services:
       ONEMAP_API_KEY: ${ONEMAP_API_KEY:-}                # a pasted token (lasts 3 days); not needed with the account below
       ONEMAP_API_EMAIL: ${ONEMAP_API_EMAIL:-}            # the OneMap account: the service logs in and renews its own token
       ONEMAP_API_PASSWORD: ${ONEMAP_API_PASSWORD:-}
-      # Demo on saved API responses (app/demo_data), so it works offline and after the OneMap token expires.
-      # Set ONEMAP_MODE=live / LTA_MODE=live (in .env or the shell) to use the real APIs again.
+      # Starts on saved API responses (app/saved_data, the default), so it works offline and after the OneMap token
+      # expires. Switch to live in the caregiver app's header or with `python -m app.demo_tools mode live`, or start
+      # live with ONEMAP_MODE=live / LTA_MODE=live in .env or the shell.
       ONEMAP_MODE: ${ONEMAP_MODE:-recorded}
       LTA_MODE: ${LTA_MODE:-recorded}
+      ONEMAP_TOKEN_ENV_FILE: /app/.env   # each new OneMap token is also written to your .env as ONEMAP_API_KEY
       ROUTES_STORE: dynamodb           # saved routes in LocalStack's DynamoDB (use "redis" to run without it)
       CREATE_RESOURCES: "true"         # create the tables, bucket and queue on startup (local only)
       PACKS_BUCKET: careroute-packs    # route packs in LocalStack's S3
       S3_PUBLIC_ENDPOINT_URL: http://localhost:4566   # pack links are opened in your browser, outside Docker
-      DEMO_UI: "true"                  # dev map page at http://localhost:8006/demo
+      DEMO_UI: "true"                  # dev extras: the live/saved switch (/api/dev/data-mode) and app/demo_tools.py
       AUTH_MODE: ${AUTH_MODE:-off}     # off (default) | dev (trust an X-Dev-User header, local only) | cognito
+    volumes:
+      - ../../.env:/app/.env           # the root .env, so ONEMAP_TOKEN_ENV_FILE can update it
     depends_on:
       cloud-redis:
         condition: service_healthy

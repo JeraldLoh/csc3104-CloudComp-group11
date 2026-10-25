@@ -150,3 +150,15 @@ export interface SavedRoute extends RouteDraft {
   /** ISO 8601; set by the service. */
   updatedAt?: string;
 }
+
+/** "recorded" = the saved API responses (app/saved_data in the service), "live" = the real OneMap and LTA. */
+export type DataSource = "live" | "recorded";
+
+/** GET/PUT /api/dev/data-mode: only exists when the service runs with DEMO_UI=true (local demos). */
+export interface DataModeInfo {
+  onemap: DataSource;
+  lta: DataSource;
+  /** When the saved data was captured (YYYY-MM-DD); null when nothing is saved yet. */
+  onemapRecordedAt: string | null;
+  ltaRecordedAt: string | null;
+}

@@ -6,9 +6,11 @@ Run from services/journey-service:
     python scripts/capture_data.py --target demo --routes fixtures
     python scripts/capture_data.py --target both --routes live
 
-The tests target writes raw API responses to tests/fixtures. The demo target
-builds the connected saved-data dataset under app/demo_data. API keys are read
-from the environment or the repository .env file and are never written.
+Everything goes under app/saved_data (gitignored): the tests target writes raw API
+responses to app/saved_data/fixtures, the demo target builds the connected saved-data
+dataset the service answers from by default. API keys are read from the environment or
+the repository .env file and are never written to the data; a OneMap token fetched with
+the account login is written back to the .env as ONEMAP_API_KEY.
 """
 import argparse
 import json
@@ -21,11 +23,13 @@ from pathlib import Path
 import httpx
 
 ROOT = Path(__file__).resolve().parent.parent
-FIXTURES = ROOT / "tests" / "fixtures"
-OUT = ROOT / "app" / "demo_data"
+OUT = ROOT / "app" / "saved_data"
+FIXTURES = OUT / "fixtures"
+ENV_FILE = ROOT.parent.parent / ".env"
 SST = timezone(timedelta(hours=8))
 sys.path.insert(0, str(ROOT))
 from app.lta import LINE_CODES  # noqa: E402
+from app.onemap_token import write_env_value  # noqa: E402
 
 def place(search: str, pick: str, label: str | None = None, at: tuple[float, float] | None = None) -> dict:
     """An MRT station found by OneMap place search: `search` is the query, `pick` text that must be in the result
@@ -35,7 +39,7 @@ def place(search: str, pick: str, label: str | None = None, at: tuple[float, flo
 
 
 # Each trip is recorded for "bus or train" and "bus only" ("train only" is filtered out of the first when replayed).
-# Only the first two have saved OneMap captures in tests/fixtures (--routes fixtures); the rest need --routes live
+# Only the first two have saved OneMap captures in app/saved_data/fixtures (--routes fixtures); the rest need --routes live
 # with a valid OneMap token.
 TRIPS = [
     {"id": "punggol-orchard", "name": "Punggol to Orchard",                       # north-east to the city
@@ -70,9 +74,8 @@ MODES = ("TRANSIT", "BUS")
 
 def load_env() -> dict[str, str]:
     values = dict(os.environ)
-    env_file = ROOT.parent.parent / ".env"
-    if env_file.exists():
-        for line in env_file.read_text(encoding="utf-8").splitlines():
+    if ENV_FILE.exists():
+        for line in ENV_FILE.read_text(encoding="utf-8").splitlines():
             if "=" in line and not line.lstrip().startswith("#"):
                 key, value = line.split("=", 1)
                 values.setdefault(key.strip(), value.strip().strip('"').strip("'"))
@@ -81,13 +84,16 @@ def load_env() -> dict[str, str]:
 
 def onemap_token(env: dict[str, str]) -> str:
     """A OneMap token: logged in fresh with ONEMAP_API_EMAIL / ONEMAP_API_PASSWORD when they are set (tokens last
-    3 days), else the pasted ONEMAP_API_KEY. Never printed."""
+    3 days; the new one is also saved to the .env as ONEMAP_API_KEY), else the pasted ONEMAP_API_KEY. Never printed."""
     email, password = env.get("ONEMAP_API_EMAIL"), env.get("ONEMAP_API_PASSWORD")
     if email and password:
         base = env.get("ONEMAP_BASE_URL", "https://www.onemap.gov.sg").rstrip("/")
         response = httpx.post(f"{base}/api/auth/post/getToken", json={"email": email, "password": password}, timeout=30)
         if response.status_code == 200 and response.json().get("access_token"):
-            return response.json()["access_token"]
+            token = response.json()["access_token"]
+            write_env_value(ENV_FILE, "ONEMAP_API_KEY", token)
+            print(f"OneMap token renewed and saved to {ENV_FILE} as ONEMAP_API_KEY")
+            return token
         print(f"OneMap login failed (HTTP {response.status_code}); trying ONEMAP_API_KEY instead")
     token = env.get("ONEMAP_API_KEY")
     if not token:
@@ -233,7 +239,7 @@ def record_routes(source: str, env: dict[str, str], coords: dict) -> list[dict]:
     token = onemap_token(env) if source == "live" else ""
     for trip in TRIPS:
         if source == "fixtures" and "fixtures" not in trip:
-            print(f"skip {trip['id']}: no saved capture in tests/fixtures (needs --routes live and a valid token)")
+            print(f"skip {trip['id']}: no saved capture in app/saved_data/fixtures (needs --routes live and a valid token)")
             continue
         start, end = point(trip, "from", coords), point(trip, "to", coords)
         for mode in MODES:
@@ -373,9 +379,9 @@ def run_demo(args: argparse.Namespace, env: dict[str, str]) -> None:
     if args.routes != "skip":
         routes = record_routes(args.routes, env, coords)
         manifest["onemap"] = {
-            # a date: the demo page and /demo/info show "saved on <recordedAt>"
+            # a date: /api/dev/data-mode and the caregiver app show "saved on <recordedAt>"
             "recordedAt": datetime.now(SST).strftime("%Y-%m-%d") if args.routes == "live" else "2026-10-21",
-            "source": "live OneMap" if args.routes == "live" else "tests/fixtures (real OneMap responses, 2026-10-21)",
+            "source": "live OneMap" if args.routes == "live" else "fixtures (real OneMap responses, 2026-10-21)",
         }
         manifest["routes"] = routes
     routes = manifest.get("routes", [])

@@ -2,7 +2,7 @@
 
     python make_zip.py <service dir> <staging dir that already holds the pip-installed packages> <output zip>
 
-The Lambda needs only these six files from app/ (the handler imports nothing else of ours, which is also
+The Lambda needs only these files from app/ (the handler imports nothing else of ours, which is also
 checked by a test in tests/test_disruption.py), plus httpx and redis. boto3 is already in the Lambda runtime.
 """
 import shutil
@@ -10,7 +10,8 @@ import sys
 import zipfile
 from pathlib import Path
 
-APP_FILES = ["__init__.py", "config.py", "cache.py", "lta.py", "disruption.py", "lambda_handler.py", "aws_resources.py"]
+APP_FILES = ["__init__.py", "config.py", "cache.py", "lta.py", "disruption.py", "lambda_handler.py", "aws_resources.py",
+             "data_mode.py"]
 SKIP_DIRS = {"__pycache__", "bin"}
 
 

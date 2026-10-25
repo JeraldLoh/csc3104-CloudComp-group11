@@ -76,7 +76,9 @@ class RedisTripStore:
 
     def list_for_traveller(self, traveller_id: str, date: str | None = None) -> list[dict]:
         ids = sorted(i.decode() if isinstance(i, bytes) else i for i in self._r.smembers(self._index(traveller_id)))
-        trips = [t for t in (self.get(i) for i in ids) if t is not None]
+        if not ids:
+            return []
+        trips = [_load(raw) for raw in self._r.mget([self._key(i) for i in ids]) if raw is not None]   # one round trip
         return [t for t in trips if date is None or t["date"] == date]
 
 
