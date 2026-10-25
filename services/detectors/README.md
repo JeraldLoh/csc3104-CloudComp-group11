@@ -13,6 +13,7 @@ and gets back `contracts/examples/detector-vote.json`. Verdicts are `normal`, `p
 |---|---|
 | `detectors/models.py` | Pydantic models matching the contract JSON (camelCase on the wire) |
 | `detectors/config.py` | Settings and thresholds from env vars (`Settings.from_env()`) |
+| `detectors/app.py` | FastAPI app: `POST /internal/detect`, `GET /health` (liveness), `GET /ready` (pings Redis, 503 if down) |
 | `tests/` | pytest; `test_models.py` checks every shared contract example still parses |
 
 ## Run the tests
@@ -23,6 +24,15 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt
 pytest
 ```
+
+## Run the service
+
+```bash
+DETECTOR_ID=route-corridor uvicorn detectors.app:app --reload   # then open /docs
+```
+
+It refuses to start if `DETECTOR_ID` is not a registered detector. Any detection or Redis failure
+returns an `abstain` vote (`internal error: <type>`), never a 500; a malformed body is a 422.
 
 ## Settings
 
