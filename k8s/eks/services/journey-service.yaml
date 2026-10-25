@@ -2,7 +2,8 @@
 # deploy.ps1 fills in the __PLACEHOLDERS__ (see scripts/README.md). It has no placeholder for the account ID, so the
 # pack bucket (careroute-files-<account id>) is not set here and /api/trips/{id}/pack returns 503. It also doesn't
 # create the API-key Secret or the bucket's CORS rule. For all of that, use
-# services/journey-service/deploy/deploy-eks.ps1 instead (same Deployment, from deploy/eks/journey-service.yaml).
+# services/journey-service/deploy/windows/deploy-eks.ps1 (or macos/deploy-eks.sh) instead (same Deployment, from
+# deploy/eks/journey-service.yaml).
 # Before the first -Service deploy, create the Secret once:
 #   kubectl create secret generic journey-api-keys --from-env-file=.env -n careroute
 apiVersion: apps/v1

@@ -1,4 +1,5 @@
-"""Builds the disruption Lambda's zip. Runs inside the Linux container started by build.ps1:
+"""Builds the disruption Lambda's zip. Runs inside the Linux container started by
+deploy/windows/build-lambda.ps1 or deploy/macos/build-lambda.sh:
 
     python make_zip.py <service dir> <staging dir that already holds the pip-installed packages> <output zip>
 

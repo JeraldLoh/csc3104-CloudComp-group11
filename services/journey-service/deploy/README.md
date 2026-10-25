@@ -1,6 +1,7 @@
 # Deploying the Journey Service to the platform's AWS stack
 
-These files add our service to the stack the platform owner's scripts build (`scripts/windows/deploy.ps1`, stack
+These files add our service to the stack the platform owner's scripts build (`scripts/windows/deploy.ps1` or
+`scripts/macos/deploy.sh`, stack
 `careroute-stack-1`, namespace `careroute`). They only add things; they never edit the platform's template, manifests or
 scripts, and they only need what the stack already outputs.
 
@@ -9,15 +10,23 @@ scripts, and they only need what the stack already outputs.
 
 ## Order
 
-| | Command (from the repo root) |
-|---|---|
-| 1. Platform (platform owner's script) | `powershell -ExecutionPolicy Bypass -File scripts\windows\deploy.ps1 -BudgetEmail you@example.com` |
-| 2. Journey Service on the cluster | `powershell -ExecutionPolicy Bypass -File services\journey-service\deploy\deploy-eks.ps1` |
-| 3. Disruption Lambda | `powershell -ExecutionPolicy Bypass -File services\journey-service\deploy\lambda\deploy-lambda.ps1` |
+The scripts come in two sets that do the same thing, like the platform's `scripts/windows` and `scripts/macos`:
+`windows/` (PowerShell) and `macos/` (bash; also works on Linux). Commands from the repo root:
 
-Tear down in **reverse**: `lambda\teardown-lambda.ps1`, then `teardown-eks.ps1`, then the platform's `teardown.ps1`.
-(A Lambda inside a VPC holds network interfaces in the platform's subnets and security group; the platform's
-teardown can fail on them until AWS releases them, a few minutes after the function is deleted. Re-run it if so.)
+| | Windows | macOS / Linux |
+|---|---|---|
+| 1. Platform (platform owner's script) | `.\scripts\windows\deploy.ps1 -BudgetEmail you@example.com` | `./scripts/macos/deploy.sh --email you@example.com` |
+| 2. Journey Service on the cluster | `powershell -ExecutionPolicy Bypass -File services\journey-service\deploy\windows\deploy-eks.ps1` | `bash services/journey-service/deploy/macos/deploy-eks.sh` |
+| 3. Disruption Lambda | `powershell -ExecutionPolicy Bypass -File services\journey-service\deploy\windows\deploy-lambda.ps1` | `bash services/journey-service/deploy/macos/deploy-lambda.sh` |
+
+Tear down in **reverse**: `teardown-lambda`, then `teardown-eks` (both in `windows/` as `.ps1` and `macos/` as
+`.sh`), then the platform's `teardown`. (A Lambda inside a VPC holds network interfaces in the platform's subnets and
+security group; the platform's teardown can fail on them until AWS releases them, a few minutes after the function is
+deleted. Re-run it if so.) The teardowns ask before deleting; `-Yes` / `--yes` skips the question.
+
+The options have the same meaning in both sets: PowerShell `-Region`, `-StackName`, `-ResourcePrefix`, `-Bucket`, ...
+are bash `--region`, `--stack-name`, `--resource-prefix`, `--bucket`, ... (`--help` lists them). Every script
+defaults to region `ap-southeast-1`.
 
 Your `.env` at the repo root needs `LTA_API_KEY` (and `ONEMAP_API_KEY` for planning). The scripts read them without
 printing them.
@@ -27,13 +36,19 @@ printing them.
 | File | What it does |
 |---|---|
 | `eks/journey-service.yaml` | Deployment (2 replicas) and a ClusterIP Service in namespace `careroute`. Runs as the service account `cloud-fastapi`, the only one the platform's IAM role trusts. No AWS keys, no `AWS_ENDPOINT_URL`, no `CREATE_RESOURCES`. **No Ingress** (decided to leave exposure for later; use `kubectl port-forward svc/journey-service 8006:8000 -n careroute`). |
-| `deploy-eks.ps1` | Reads the stack outputs, sets the pack bucket's CORS rule, creates the Secret `journey-api-keys` from `.env`, builds and pushes our image to the stack's ECR repository as tag `journey-<ImageTag>`, fills in the manifest's four placeholders (image, Redis, bucket, prefix) in a temporary copy, applies it, waits for the rollout and checks `/ready` through a port-forward. `-RenderOnly` just renders the manifest (no AWS). |
-| `teardown-eks.ps1` | Deletes our Deployment, Service and Secret, our `journey-*` ECR tags and the `packs/` objects. Nothing of the platform's. |
-| `lambda/build.ps1` | Builds `dist/disruption-lambda.zip` in a `python:3.12` Linux container: our 8 files (`make_zip.py` lists them) plus httpx and redis (about 1 MB). `-Verify` imports it in a clean container and fails if FastAPI or PyJWT came along. |
-| `resource-names.ps1` | Shared by the four scripts: finds the stack's resource prefix (warns if it isn't `careroute`) and derives the shared bucket name. |
 | `lambda/disruption-lambda.yaml` | Our own CloudFormation stack (`careroute-journey-lambda`): the function, its role (SQS send + VPC/logs), a 14-day log group, an EventBridge rule `rate(1 minute)`. |
-| `lambda/deploy-lambda.ps1` | Reads the platform outputs, builds the zip, uploads it to the shared bucket (`lambda/disruption-checker-<hash>.zip`), deploys the stack, invokes the function once. |
-| `lambda/teardown-lambda.ps1` | Deletes the Lambda stack and the uploaded zips. |
+| `lambda/make_zip.py` | Lists our 8 app files and writes the zip (run inside the build container). The zip goes to `lambda/dist/` (gitignored). |
+| `windows/` and `macos/`, one script each (`.ps1` / `.sh`): | |
+| `deploy-eks` | Reads the stack outputs, sets the pack bucket's CORS rule, creates the Secret `journey-api-keys` from `.env`, builds and pushes our image to the stack's ECR repository as tag `journey-<tag>`, fills in the manifest's four placeholders (image, Redis, bucket, prefix) in a temporary copy, applies it, waits for the rollout and checks `/ready` through a port-forward. `-RenderOnly` / `--render-only` just renders the manifest (no AWS). |
+| `teardown-eks` | Deletes our Deployment, Service and Secret, our `journey-*` ECR tags and the `packs/` objects. Nothing of the platform's. |
+| `build-lambda` | Builds `lambda/dist/disruption-lambda.zip` in a `python:3.12` Linux container: our 8 files plus httpx and redis (about 1 MB). `-Verify` / `--verify` imports it in a clean container and fails if FastAPI or PyJWT came along. |
+| `deploy-lambda` | Reads the platform outputs, builds the zip (`build-lambda`), uploads it to the shared bucket (`lambda/disruption-checker-<hash>.zip`), deploys the stack, invokes the function once. |
+| `teardown-lambda` | Deletes the Lambda stack and the uploaded zips. |
+| `resource-names` | Shared by the others (dot-sourced / `source`d): finds the stack's resource prefix (warns if it isn't `careroute`) and derives the shared bucket name. |
+
+What each set needs: Windows: `aws`, `kubectl`, Docker Desktop. macOS: the same plus `curl` and `shasum` (both come
+with macOS). On Apple Silicon, Docker builds the `linux/amd64` image and zip by emulation, which is what Fargate and
+the Lambda run.
 
 ## Names: the team prefix is `careroute`
 
@@ -50,9 +65,10 @@ The team decided on the resource prefix **`careroute`** (`careroute-routes`, `ca
 The platform stack builds every name from its `ResourcePrefix` parameter, and its IAM role only allows resources whose
 names start with it. So our scripts do **not** hardcode a prefix: they read the stack's `ResourcePrefix` (override with
 `-ResourcePrefix`), print it, fill it into the manifest's `<RESOURCE_PREFIX>` placeholder, derive the shared bucket as
-`<prefix>-files-<account id>` (override with `-Bucket`), and `deploy-eks.ps1` checks that `<prefix>-routes` and
+`<prefix>-files-<account id>` (override with `-Bucket`), and `deploy-eks` checks that `<prefix>-routes` and
 `<prefix>-trips` exist before applying anything. The stack's prefix defaults to `careroute`; if it is built with
-anything else they print a warning but still work with it. The logic is in `resource-names.ps1`.
+anything else they print a warning but still work with it. The logic is in `windows/resource-names.ps1` and its bash
+twin `macos/resource-names.sh`.
 
 The pods' role only reaches buckets named `<ResourcePrefix>-*`, so the prefix and the bucket name must match. The
 stack and namespace are parameters (`-StackName`, default `careroute-stack-1`; `-AppNamespace`, default `careroute`).
@@ -70,7 +86,9 @@ stack and namespace are parameters (`-StackName`, default `careroute-stack-1`; `
 
 ## What has and hasn't been checked
 
-Checked (offline or locally): all unit tests (`pytest`); the PowerShell scripts parse; the manifest renders with no
+Checked (offline or locally): all unit tests (`pytest`); the PowerShell scripts parse and the bash scripts pass
+`bash -n` (both only on Windows; the bash set has not been run on a Mac); both `build-lambda` scripts build and verify
+the zip; both `deploy-eks` scripts render the same manifest; the manifest renders with no
 placeholder left and is structurally consistent (labels, ports, probes, service account, env names the service really
 reads); the Lambda template's references resolve; the Lambda zip builds in Linux, imports in a clean container with
 no API packages, and **runs end to end** against local Redis and SQS with the real LTA key; the readiness check works
@@ -84,8 +102,8 @@ were checked against LocalStack by hand, so re-check them after changing `route_
 3. the Lambda's network interfaces reach Redis and LTA (private subnets through the NAT gateway) and a run returns
    `{"activeTrips": 0, ...}` on a normal day;
 4. a message arrives on `careroute-disruptions` when a trip is active and LTA reports a disruption
-   (`python -m app.demo_tools` only works with `DEMO_UI=true`, so on AWS wait for a real one or test with a trip
-   on a line you can see disrupted);
+   (`python -m app.demo_tools` only works with `DEMO_UI=true`: `kubectl set env deployment/journey-service -n careroute
+   DEMO_UI=true`, then `kubectl exec ... python -m app.demo_tools on`; see `apps/caregiver/DEMO.md` section 2b);
 5. a pack downloads from a browser through the signed link (the CORS rule);
 6. `aws cloudformation validate-template` on `lambda/disruption-lambda.yaml`;
 7. the LTA key is in the Lambda's environment variables (visible to anyone who can read its configuration): move it

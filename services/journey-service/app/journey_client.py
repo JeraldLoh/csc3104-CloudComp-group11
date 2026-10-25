@@ -170,6 +170,33 @@ def _mentions_service(content: str, service: str) -> bool:
         re.search(rf"(?<![\w/]){re.escape(service)}(?![\w/])", content))
 
 
+def _train_disruptions(index: int, codes: set[str], alerts: dict) -> list[dict]:
+    """A train_disruption warning for each LTA segment that touches one of the step's station codes."""
+    warnings = []
+    for seg in alerts["segments"]:
+        overlap = sorted(codes & set(seg["stations"]))
+        if overlap:
+            message = alerts["messages"][0]["content"] if alerts["messages"] else f"Disruption on {seg['line']}"
+            warnings.append({
+                "type": "train_disruption",
+                "severity": "high" if alerts["status"] == 2 else "info",
+                "stepIndex": index, "message": message, "line": seg["line"], "affectedStations": overlap,
+            })
+    return warnings
+
+
+def _bus_notices(index: int, service: str, alerts: dict) -> list[dict]:
+    """A bus_notice for each LTA message that names the step's bus service."""
+    return [{"type": "bus_notice", "severity": "info", "stepIndex": index, "message": m["content"], "serviceNo": service}
+            for m in alerts["messages"] if _mentions_service(m["content"], service)]
+
+
+# What check_disruptions() refreshes: the warnings a later LTA alert can add or take away.
+DISRUPTION_WARNINGS = ("train_disruption", "bus_notice", "live_data_unavailable")
+LIVE_DATA_UNAVAILABLE = {"type": "live_data_unavailable", "severity": "info", "stepIndex": None,
+                         "message": "Live bus and disruption information is not available right now."}
+
+
 class _LiveData:
     """Failure-tolerant LTA lookups for one plan() call, each made at most once. prefetch() makes the ones a plan
     needs in parallel; anything else is looked up on first use. After the first LTA failure the rest are skipped
@@ -427,13 +454,33 @@ class JourneyClient:
         options = [self._option(n, it, live, walk_limit) for n, it in enumerate(itineraries, start=1)]
         if live.degraded:
             for opt in options:
-                opt["warnings"].append({
-                    "type": "live_data_unavailable", "severity": "info", "stepIndex": None,
-                    "message": "Live bus and disruption information is not available right now."})
+                opt["warnings"].append(dict(LIVE_DATA_UNAVAILABLE))
         options = sorted(options, key=SORTS[sort_by])           # stable: ties keep OneMap's order
         for n, opt in enumerate(options, start=1):
             opt["option"] = n
         return {"options": options, "sortedBy": sort_by}
+
+    def check_disruptions(self, steps: list[dict]) -> dict:
+        """The disruption warnings for route steps as LTA reports things now: {"warnings": [...], "checkedAt"}.
+
+        For steps already planned or saved (a plan option, a saved route, a trip's route), so a caregiver sees an MRT
+        fault or bus notice that started after planning. Same warnings as plan() (types in DISRUPTION_WARNINGS),
+        matched the same way: a train step by its station codes (`stops`, else its two ends), a bus step by its
+        service number (`line`). Costs one cached LTA call (train alerts), whatever the number of steps."""
+        live = _LiveData(self)
+        warnings: list[dict] = []
+        for step in steps:
+            index, mode = step.get("stepIndex"), step.get("mode")
+            if mode == "train":
+                stops = step.get("stops") or [step.get("from") or {}, step.get("to") or {}]
+                codes = {s.get("code") for s in stops if s.get("code")}
+                if codes:
+                    warnings += _train_disruptions(index, codes, live.alerts())
+            elif mode == "bus" and step.get("line"):
+                warnings += _bus_notices(index, step["line"], live.alerts())
+        if live.degraded:
+            warnings.append(dict(LIVE_DATA_UNAVAILABLE))
+        return {"warnings": warnings, "checkedAt": self._now_iso()}
 
     @staticmethod
     def _point(p: dict) -> dict:
@@ -503,17 +550,7 @@ class JourneyClient:
         mode = leg.get("mode")
 
         if mode == "SUBWAY":
-            alerts = live.alerts()
-            codes = self._leg_stop_codes(leg)
-            for seg in alerts["segments"]:
-                overlap = sorted(codes & set(seg["stations"]))
-                if overlap:
-                    message = alerts["messages"][0]["content"] if alerts["messages"] else f"Disruption on {seg['line']}"
-                    warnings.append({
-                        "type": "train_disruption",
-                        "severity": "high" if alerts["status"] == 2 else "info",
-                        "stepIndex": index, "message": message, "line": seg["line"], "affectedStations": overlap,
-                    })
+            warnings += _train_disruptions(index, self._leg_stop_codes(leg), live.alerts())
             entry = self._platform_crowd(index, leg, live)
             if entry:
                 entries.append(entry)
@@ -541,10 +578,7 @@ class JourneyClient:
                     if entries[-1]["crowd"] == "high":
                         warnings.append({"type": "crowded", "severity": "info", "stepIndex": index, "serviceNo": service,
                                          "message": f"Bus {service} is very full right now. You may have to stand."})
-                for m in live.alerts()["messages"]:
-                    if _mentions_service(m["content"], service):
-                        warnings.append({"type": "bus_notice", "severity": "info", "stepIndex": index,
-                                         "message": m["content"], "serviceNo": service})
+                warnings += _bus_notices(index, service, live.alerts())
 
             near = _near_box(path, self._s.incident_radius_m)
             for inc in live.incidents():

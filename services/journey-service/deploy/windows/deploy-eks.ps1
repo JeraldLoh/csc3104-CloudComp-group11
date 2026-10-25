@@ -18,7 +18,7 @@
   NOT TESTED AGAINST REAL AWS. -RenderOnly checks the manifest without any AWS call.
 
 .EXAMPLE
-  powershell -ExecutionPolicy Bypass -File services\journey-service\deploy\deploy-eks.ps1
+  powershell -ExecutionPolicy Bypass -File services\journey-service\deploy\windows\deploy-eks.ps1
 .EXAMPLE
   .\deploy-eks.ps1 -RenderOnly -Image 123.dkr.ecr.ap-southeast-1.amazonaws.com/x:journey-v1 -RedisEndpoint r.cache.amazonaws.com -Bucket careroute-files-123 -OutFile out.yaml
 #>
@@ -38,9 +38,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$ServiceDir = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$ServiceDir = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $RepoRoot = (Resolve-Path (Join-Path $ServiceDir '..\..')).Path
-$Manifest = Join-Path $PSScriptRoot 'eks\journey-service.yaml'
+$Manifest = Join-Path $PSScriptRoot '..\eks\journey-service.yaml'
 if (-not $EnvFile) { $EnvFile = Join-Path $RepoRoot '.env' }
 $WorkDir = Join-Path ([IO.Path]::GetTempPath()) ("journey-deploy-" + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $WorkDir | Out-Null

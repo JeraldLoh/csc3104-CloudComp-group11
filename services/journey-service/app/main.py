@@ -1,6 +1,7 @@
 """CareRoute Journey Service (Member 6).
 
 POST /api/routes/plan                    route options from OneMap, checked against LTA live data
+POST /api/routes/check-disruptions       re-check steps (plan option / saved route) against LTA's alerts now
 POST /api/routes                         save a route (version 1, not approved)
 GET  /api/routes?travellerId=            a traveller's saved routes (not in the contract yet)
 GET/PUT /api/routes/{routeId}            load / edit a route (edit: version + 1, approval cleared)
@@ -45,7 +46,7 @@ from .config import Settings, settings as default_settings
 from .data_mode import DataMode
 from .journey_client import JourneyClient, OneMapAuthError, OneMapError, OneMapUnavailable, StorageNotReady
 from .lta import LtaAuthError, LtaUnavailable
-from .models import DataModeIn, PlanRequest, RouteIn, RouteUpdate, TripIn
+from .models import DataModeIn, DisruptionCheckIn, PlanRequest, RouteIn, RouteUpdate, TripIn
 from .pack_store import PackUnavailable, S3PackStorage
 from .replay import RecordedDataMissing, load_manifest
 from .route_store import DynamoRouteStore, RouteConflict, RouteInvalid, RouteNotFound
@@ -225,6 +226,11 @@ def create_app(
             (body.from_.lat, body.from_.lng), (body.to.lat, body.to.lng),
             body.departAt, mode=body.mode, max_walk_m=body.maxWalkM, max_options=body.maxOptions, sort_by=body.sortBy,
         )
+
+    @app.post("/api/routes/check-disruptions", dependencies=[Depends(current_caller)])   # any logged-in user
+    def check_disruptions(body: DisruptionCheckIn, request: Request):
+        """Not in contracts/api.md yet: the disruption warnings for these steps now (plan tab, saved route, trips)."""
+        return request.app.state.journey.check_disruptions(body.model_dump(by_alias=True)["steps"])
 
     def route_id_or_404(route_id: str) -> str:
         if not ROUTE_ID.match(route_id):

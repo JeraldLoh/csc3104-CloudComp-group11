@@ -158,7 +158,11 @@ def main(argv: list[str] | None = None) -> int:
                 import boto3
                 from . import aws_resources
                 sqs = boto3.client("sqs", region_name=s.aws_region, endpoint_url=s.aws_endpoint_url)
-                url = aws_resources.ensure_disruptions_queue(sqs, s.disruptions_queue)
+                # As the Lambda does: only create the queue locally; on AWS it is the platform's.
+                if s.create_resources:
+                    url = aws_resources.ensure_disruptions_queue(sqs, s.disruptions_queue)
+                else:
+                    url = sqs.get_queue_url(QueueName=s.disruptions_queue)["QueueUrl"]
                 sqs.send_message(QueueUrl=url, MessageBody=json.dumps(event))
             sent.append(event)
 

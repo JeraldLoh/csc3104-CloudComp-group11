@@ -4,14 +4,14 @@
   stored in the shared S3 bucket. It does not touch the platform's own resources.
 
 .DESCRIPTION
-  Order when tearing everything down:  1. lambda\teardown-lambda.ps1   2. this script   3. the platform's teardown.ps1
+  Order when tearing everything down:  1. teardown-lambda.ps1   2. this script   3. the platform's teardown.ps1
   (The platform's teardown deletes the whole stack, the cluster and the bucket, and fails if our Lambda still holds
   network interfaces in its subnets.)
 
   NOT TESTED AGAINST REAL AWS.
 
 .EXAMPLE
-  powershell -ExecutionPolicy Bypass -File services\journey-service\deploy\teardown-eks.ps1
+  powershell -ExecutionPolicy Bypass -File services\journey-service\deploy\windows\teardown-eks.ps1
 #>
 param(
   [switch]$Yes,

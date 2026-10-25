@@ -22,6 +22,8 @@ from .disruption import DisruptionChecker
 from .lta import LtaClient
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+# In Lambda the runtime has already set up the root logger (at WARNING), so basicConfig does nothing there.
+logging.getLogger().setLevel(logging.INFO)
 log = logging.getLogger("journey.lambda")
 
 

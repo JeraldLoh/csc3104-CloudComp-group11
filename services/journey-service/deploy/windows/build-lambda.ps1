@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Builds dist\disruption-lambda.zip for the disruption checker (handler app.lambda_handler.handler).
+  Builds deploy\lambda\dist\disruption-lambda.zip for the disruption checker (handler app.lambda_handler.handler).
 
 .DESCRIPTION
   Runs in a python:3.12 Linux container so the packages match the Lambda runtime whatever your own machine is.
@@ -9,15 +9,16 @@
   and checks that none of the API's packages (FastAPI, PyJWT) came along.
 
 .EXAMPLE
-  powershell -ExecutionPolicy Bypass -File services\journey-service\deploy\lambda\build.ps1 -Verify
+  powershell -ExecutionPolicy Bypass -File services\journey-service\deploy\windows\build-lambda.ps1 -Verify
 #>
 param(
-  [string]$OutDir = (Join-Path $PSScriptRoot 'dist'),
+  [string]$OutDir = (Join-Path $PSScriptRoot '..\lambda\dist'),
   [switch]$Verify
 )
 
 $ErrorActionPreference = 'Stop'
 $ServiceDir = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+$LambdaDir = (Resolve-Path (Join-Path $PSScriptRoot '..\lambda')).Path   # make_zip.py
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $OutDir = (Resolve-Path $OutDir).Path
 $Zip = Join-Path $OutDir 'disruption-lambda.zip'
@@ -29,7 +30,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Docker is not running. Start Docker Desktop an
 Write-Host '==> Building the package in python:3.12 (linux/amd64)' -ForegroundColor Cyan
 Remove-Item $Zip -ErrorAction SilentlyContinue
 docker run --rm --platform linux/amd64 `
-  -v "${ServiceDir}:/src:ro" -v "${PSScriptRoot}:/tools:ro" -v "${OutDir}:/out" `
+  -v "${ServiceDir}:/src:ro" -v "${LambdaDir}:/tools:ro" -v "${OutDir}:/out" `
   python:3.12-slim bash -c "set -e; pip install --no-cache-dir --quiet --target /build httpx redis; python /tools/make_zip.py /src /build /out/disruption-lambda.zip"
 if ($LASTEXITCODE -ne 0) { throw 'The build failed' }
 

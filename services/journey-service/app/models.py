@@ -93,6 +93,11 @@ class TripIn(BaseModel):
     date: date_type                       # "2026-10-12"
 
 
+class DisruptionCheckIn(BaseModel):
+    """Body of POST /api/routes/check-disruptions: the steps of a plan option or saved route, as they are."""
+    steps: list[Step] = Field(min_length=1, max_length=50)
+
+
 class DataModeIn(BaseModel):
     """Body of PUT /api/dev/data-mode (DEMO_UI only): which data each API uses. Leave one out to keep it."""
     onemap: Literal["live", "recorded"] | None = None

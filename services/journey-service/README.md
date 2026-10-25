@@ -40,6 +40,7 @@ Tests are split by area in `tests/` (`test_planning.py`, `test_routes_trips.py`,
 | Method | Path | Notes |
 |---|---|---|
 | POST | `/api/routes/plan` | `{"from":{lat,lng},"to":{lat,lng},"departAt"?,"mode"?,"maxWalkM"?,"maxOptions"?}` -> `{"options":[...]}`, see below |
+| POST | `/api/routes/check-disruptions` | `{"steps": [...]}` (a plan option's or saved route's steps) -> `{"warnings", "checkedAt"}`: the `train_disruption` / `bus_notice` warnings as LTA reports things now. The caregiver app re-checks the selected plan option, the opened saved route and every unfinished trip's route with it every minute. Not in the contract yet |
 | POST | `/api/routes` | save a route: `route.json` without `routeId` -> `201` with `routeId`, `version` 1, `approved` false |
 | GET | `/api/routes/{routeId}` | load a saved route |
 | PUT | `/api/routes/{routeId}` | edit: send the route plus the `version` you edited -> version + 1, approval cleared; `409` if someone saved first |
