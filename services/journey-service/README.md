@@ -281,7 +281,7 @@ that touches a train step the traveller hasn't finished, it sends one `disruptio
 - Delivery is at-least-once; a marker key `journey:disruption-sent:{id}:{tripId}` (6 h) stops repeats.
 - The checker watches trips that were started (`POST /api/trips/{id}/start` writes the Redis keys above).
 - LTA being down makes the run fail on purpose, so the outage shows up in CloudWatch.
-- Local one-off run: `docker exec -e CREATE_RESOURCES=true csc3104-journey-service-1 python -m app.lambda_handler`
+- Local one-off run: `docker exec -e CREATE_RESOURCES=true careroute-journey-service-1 python -m app.lambda_handler`
 - Not done: Lambda packaging, the EventBridge rule, IAM permissions, and VPC access to Redis.
 
 ### Demoing a disruption
@@ -291,7 +291,7 @@ Real MRT outages are rare, so for a demo you can make LTA *look* disrupted (`app
 Redis cache; this writes a pretend "major disruption" response into it.
 
 ```powershell
-$t = "docker exec csc3104-journey-service-1 python -m app.demo_tools"
+$t = "docker exec careroute-journey-service-1 python -m app.demo_tools"
 # 1. plan a route that uses the MRT, save it, approve it, create a trip and start it (the demo page at /demo does this)
 iex "$t on"                      # pretend the whole North East Line is down (or: on --line NEL --stations NE10,NE11,NE12)
 # 2. plan the route again at /demo: the MRT step gets a red warning and an orange marker on the map

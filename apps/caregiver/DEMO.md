@@ -99,7 +99,7 @@ Orchard Mrt Station*.
 **A crowded platform** (the saved data is all quiet, so pretend one):
 
 ```powershell
-$t = "docker exec csc3104-journey-service-1 python -m app.demo_tools"
+$t = "docker exec careroute-journey-service-1 python -m app.demo_tools"
 iex "$t crowd on --stations NE17 --level high"   # Punggol MRT platform is very crowded (30 minutes)
 # plan Punggol to Orchard again: "Platform at NE17: very busy" under the train step, and "very busy" on the option
 iex "$t crowd off"
@@ -127,8 +127,8 @@ Plan **Punggol to Orchard** with **Travel by: Train only** (the disruption demo 
 **Show what the rest of the system sees** (the detectors and the disruption checker read these):
 
 ```powershell
-docker exec csc3104-cloud-redis-1 redis-cli SMEMBERS active-trips          # the trip is listed while active
-docker exec csc3104-cloud-redis-1 redis-cli KEYS "trip:*:route"            # and its cached route
+docker exec careroute-cloud-redis-1 redis-cli SMEMBERS active-trips          # the trip is listed while active
+docker exec careroute-cloud-redis-1 redis-cli KEYS "trip:*:route"            # and its cached route
 ```
 
 Leave the trip **active** for Demo D. Pressing **End** removes it from both.
@@ -167,7 +167,7 @@ Real MRT breakdowns are rare, so this pretends LTA reports one. You need an **ac
 Punggol to Orchard *Train only* trip from Demo B or C).
 
 ```powershell
-$t = "docker exec csc3104-journey-service-1 python -m app.demo_tools"
+$t = "docker exec careroute-journey-service-1 python -m app.demo_tools"
 iex "$t on"                          # pretend the whole North East Line is down (30 minutes)
 # or just a stretch:  iex "$t on --stations NE10,NE11,NE12"
 ```
@@ -188,7 +188,7 @@ msgs = sqs.receive_message(QueueUrl=url, MaxNumberOfMessages=10, VisibilityTimeo
 print(len(msgs), "message(s) waiting on careroute-disruptions")
 for m in msgs:
     b = json.loads(m["Body"]); print(" -", b["disruptionId"], "| trip", b["tripId"], "| traveller", b["travellerId"], "|", ", ".join(b["affectedStations"]))
-'@ | docker exec -i csc3104-journey-service-1 python -
+'@ | docker exec -i careroute-journey-service-1 python -
 ```
 
 5. **Run `iex "$t check"` again:** nothing new is sent, because the traveller was already told (no repeated alerts).
@@ -234,7 +234,7 @@ docker compose --env-file .env -f services/journey-service/compose.journey.yaml 
 
 ```powershell
 iex "$t off"                                                    # stop pretending (if $t is not set: see Demo D)
-docker exec csc3104-cloud-redis-1 redis-cli FLUSHALL            # clears the cache and any active trips (your local Redis only)
+docker exec careroute-cloud-redis-1 redis-cli FLUSHALL            # clears the cache and any active trips (your local Redis only)
 docker compose --env-file .env -f services/journey-service/compose.journey.yaml restart cloud-localstack
 # wait about 20 seconds for LocalStack, then:
 docker compose --env-file .env -f services/journey-service/compose.journey.yaml restart journey-service

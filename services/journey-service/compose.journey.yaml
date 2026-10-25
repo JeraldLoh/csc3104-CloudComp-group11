@@ -3,7 +3,7 @@
 #   docker compose --env-file .env -f services/journey-service/compose.journey.yaml up --build -d
 # (Paths here are relative to this folder. Redis takes host port 6379, as services/detectors/compose.yaml does,
 # so stop one stack before starting the other.)
-name: csc3104
+name: careroute
 services:
   journey-service:
     image: journey-service:local
