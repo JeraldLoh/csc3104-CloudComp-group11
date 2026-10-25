@@ -341,10 +341,11 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-Docker Compose (from the repo root, with `LTA_API_KEY` in `.env`):
+Docker Compose (from the repo root, with `LTA_API_KEY` and `LOCALSTACK_AUTH_TOKEN` in `.env`; it starts its own Redis
+and LocalStack, so stop `services/detectors/compose.yaml` first, since both use host port 6379):
 
 ```powershell
-docker compose -f compose.yaml -f services/journey-service/compose.journey.yaml up --build -d
+docker compose --env-file .env -f services/journey-service/compose.journey.yaml up --build -d
 curl.exe http://localhost:8006/health
 curl.exe http://localhost:8006/internal/lta/bus-arrival/83139
 ```
@@ -355,7 +356,7 @@ kind:
 docker build -t journey-service:local services/journey-service
 kind load docker-image journey-service:local --name csc3104-local
 kubectl create secret generic journey-api-keys --from-env-file=.env -n csc3104
-kubectl apply -k k8s/base
+kubectl apply -k k8s/local
 kubectl port-forward svc/journey-service 8006:8000 -n csc3104
 ```
 

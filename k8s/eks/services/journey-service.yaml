@@ -1,0 +1,64 @@
+# Journey Service for the platform's quick path:  .\scripts\windows\deploy.ps1 -Service journey-service
+# deploy.ps1 fills in the __PLACEHOLDERS__ (see scripts/README.md). It has no placeholder for the account ID, so the
+# pack bucket (careroute-files-<account id>) is not set here and /api/trips/{id}/pack returns 503. It also doesn't
+# create the API-key Secret or the bucket's CORS rule. For all of that, use
+# services/journey-service/deploy/deploy-eks.ps1 instead (same Deployment, from deploy/eks/journey-service.yaml).
+# Before the first -Service deploy, create the Secret once:
+#   kubectl create secret generic journey-api-keys --from-env-file=.env -n careroute
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: journey-service
+  namespace: __NAMESPACE__
+  labels: { app: journey-service }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: journey-service }
+  template:
+    metadata:
+      labels: { app: journey-service }
+    spec:
+      serviceAccountName: cloud-fastapi   # the only service account the platform's IAM role trusts
+      containers:
+        - name: journey-service
+          image: __IMAGE__
+          ports: [{ containerPort: 8000 }]
+          env:
+            - { name: REDIS_URL, value: "redis://__REDIS_ENDPOINT__:6379/0" }
+            - { name: AWS_DEFAULT_REGION, value: "__REGION__" }
+            - { name: ROUTES_STORE, value: "dynamodb" }
+            - { name: ROUTES_TABLE, value: "careroute-routes" }
+            - { name: TRIPS_TABLE, value: "careroute-trips" }
+            - { name: ONEMAP_MODE, value: "live" }
+            - { name: LTA_MODE, value: "live" }
+            - { name: AUTH_MODE, value: "off" }
+            - name: LTA_API_KEY
+              valueFrom: { secretKeyRef: { name: journey-api-keys, key: LTA_API_KEY, optional: true } }
+            - name: ONEMAP_API_KEY
+              valueFrom: { secretKeyRef: { name: journey-api-keys, key: ONEMAP_API_KEY, optional: true } }
+            - name: ONEMAP_API_EMAIL
+              valueFrom: { secretKeyRef: { name: journey-api-keys, key: ONEMAP_API_EMAIL, optional: true } }
+            - name: ONEMAP_API_PASSWORD
+              valueFrom: { secretKeyRef: { name: journey-api-keys, key: ONEMAP_API_PASSWORD, optional: true } }
+          resources:
+            requests: { cpu: 250m, memory: 512Mi }
+            limits: { cpu: 250m, memory: 512Mi }
+          readinessProbe:
+            httpGet: { path: /ready, port: 8000 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /health, port: 8000 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: journey-service
+  namespace: __NAMESPACE__
+spec:
+  type: ClusterIP
+  selector: { app: journey-service }
+  ports: [{ port: 8000, targetPort: 8000 }]

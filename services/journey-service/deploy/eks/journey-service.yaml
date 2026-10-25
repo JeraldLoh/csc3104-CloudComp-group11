@@ -1,15 +1,15 @@
-# Journey Service on the platform's EKS Fargate cluster (the stack in cloudformation/careroute-vpc-eks-standard.yaml
-# on the platform branch). deploy-eks.ps1 fills in the four upper-case angle-bracket placeholders (image, Redis endpoint,
+# Journey Service on the platform's EKS Fargate cluster (the stack in cloudformation/careroute-vpc-eks-standard.yaml).
+# deploy-eks.ps1 fills in the four upper-case angle-bracket placeholders (image, Redis endpoint,
 # pack bucket, resource prefix) in a temporary copy and applies it; this file stays unchanged in Git so no account-specific value is
 # ever committed.
 #
 # No Ingress on purpose: the Service is ClusterIP only until the team decides how our endpoints are exposed on the
-# load balancer. Try it with:  kubectl port-forward svc/journey-service 8006:8000 -n csc3104
+# load balancer. Try it with:  kubectl port-forward svc/journey-service 8006:8000 -n careroute
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: journey-service
-  namespace: csc3104
+  namespace: careroute
   labels: { app: journey-service }
 spec:
   replicas: 2
@@ -33,8 +33,7 @@ spec:
             # (false): the role cannot create anything, the stack already owns the tables.
             - { name: ROUTES_STORE, value: "dynamodb" }
             # The team's resource prefix is careroute (contracts/dynamo-db-tables.md). The platform stack builds its
-            # names from its ResourcePrefix, so deploy-eks.ps1 fills in the prefix the stack really uses (careroute
-            # once the platform owner changes his default).
+            # names from its ResourcePrefix, so deploy-eks.ps1 fills in the prefix the stack really uses.
             - { name: ROUTES_TABLE, value: "<RESOURCE_PREFIX>-routes" }
             - { name: TRIPS_TABLE, value: "<RESOURCE_PREFIX>-trips" }
             - { name: PACKS_BUCKET, value: "<PACKS_BUCKET>" }                  # <prefix>-files-<account id>; packs go under packs/
@@ -74,7 +73,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: journey-service
-  namespace: csc3104
+  namespace: careroute
 spec:
   type: ClusterIP
   selector: { app: journey-service }

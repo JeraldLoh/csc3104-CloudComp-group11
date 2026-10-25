@@ -2,8 +2,8 @@
 #
 # The team decided on the resource prefix "careroute" (careroute-routes, careroute-trips, careroute-disruptions, ...).
 # The platform stack builds every name from its ResourcePrefix parameter, and its IAM role only allows resources whose
-# names start with it. So instead of hardcoding a prefix, our scripts read the one the stack was really built with:
-# they work before and after the platform owner changes his default, and warn while it is not "careroute".
+# names start with it. So instead of hardcoding a prefix, our scripts read the one the stack was really built with,
+# and warn if it is not "careroute" (the stack's default since main's 55ab5ec).
 
 $TeamPrefix = 'careroute'
 

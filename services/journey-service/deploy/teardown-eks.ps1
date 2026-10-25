@@ -15,9 +15,9 @@
 #>
 param(
   [switch]$Yes,
-  [string]$StackName = 'csc3104-careroute-1',
+  [string]$StackName = 'careroute-stack-1',
   [string]$Region = 'ap-southeast-1',
-  [string]$AppNamespace = 'csc3104',
+  [string]$AppNamespace = 'careroute',
   [string]$ResourcePrefix,
   [string]$Bucket
 )

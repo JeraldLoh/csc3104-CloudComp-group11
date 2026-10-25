@@ -29,7 +29,7 @@ No OneMap or LTA keys are needed for saved data.
 
 ```powershell
 # 1. Start Docker Desktop, then the backend (Redis and LocalStack start with it):
-docker compose -f compose.yaml -f services/journey-service/compose.journey.yaml up --build -d journey-service
+docker compose --env-file .env -f services/journey-service/compose.journey.yaml up --build -d journey-service
 
 # 2. Install the web app:
 cd apps/caregiver
@@ -205,7 +205,7 @@ the web app's **Act as** box sends. **Local only.** Switch the service into dev 
 
 ```powershell
 $env:AUTH_MODE = "dev"
-docker compose -f compose.yaml -f services/journey-service/compose.journey.yaml up -d journey-service
+docker compose --env-file .env -f services/journey-service/compose.journey.yaml up -d journey-service
 ```
 
 Only the service restarts; LocalStack and Redis keep the routes and trips you made earlier, so refresh the web app
@@ -227,7 +227,7 @@ A stranger gets the same "not found" as for a route that doesn't exist, so they 
 
 ```powershell
 Remove-Item Env:AUTH_MODE
-docker compose -f compose.yaml -f services/journey-service/compose.journey.yaml up -d journey-service
+docker compose --env-file .env -f services/journey-service/compose.journey.yaml up -d journey-service
 ```
 
 ## 8. Starting clean between demos
@@ -235,9 +235,9 @@ docker compose -f compose.yaml -f services/journey-service/compose.journey.yaml 
 ```powershell
 iex "$t off"                                                    # stop pretending (if $t is not set: see Demo D)
 docker exec csc3104-cloud-redis-1 redis-cli FLUSHALL            # clears the cache and any active trips (your local Redis only)
-docker compose -f compose.yaml -f services/journey-service/compose.journey.yaml restart cloud-localstack
+docker compose --env-file .env -f services/journey-service/compose.journey.yaml restart cloud-localstack
 # wait about 20 seconds for LocalStack, then:
-docker compose -f compose.yaml -f services/journey-service/compose.journey.yaml restart journey-service
+docker compose --env-file .env -f services/journey-service/compose.journey.yaml restart journey-service
 ```
 
 LocalStack's free edition forgets all saved routes, trips and packs when it restarts, and the service recreates the

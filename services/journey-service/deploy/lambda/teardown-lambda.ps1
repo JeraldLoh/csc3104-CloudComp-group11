@@ -16,7 +16,7 @@
 param(
   [switch]$Yes,
   [string]$LambdaStack = 'careroute-journey-lambda',
-  [string]$PlatformStack = 'csc3104-careroute-1',
+  [string]$PlatformStack = 'careroute-stack-1',
   [string]$Region = 'ap-southeast-1',
   [string]$ResourcePrefix,
   [string]$Bucket

@@ -1,11 +1,13 @@
-# Adds the Journey Service to compose.yaml without editing it.
-# From the repo root (LTA_API_KEY and ONEMAP_API_EMAIL / ONEMAP_API_PASSWORD go in the root .env, next to LOCALSTACK_AUTH_TOKEN):
-#   docker compose -f compose.yaml -f services/journey-service/compose.journey.yaml up --build -d journey-service
-# (Paths here are relative to the repo root, because compose.yaml is the first file.)
+# Local dev/testing only: the Journey Service with its own Redis and LocalStack.
+# From the repo root (LTA_API_KEY, ONEMAP_API_EMAIL / ONEMAP_API_PASSWORD and LOCALSTACK_AUTH_TOKEN go in the root .env):
+#   docker compose --env-file .env -f services/journey-service/compose.journey.yaml up --build -d
+# (Paths here are relative to this folder. Redis takes host port 6379, as services/detectors/compose.yaml does,
+# so stop one stack before starting the other.)
+name: csc3104
 services:
   journey-service:
     image: journey-service:local
-    build: services/journey-service
+    build: .
     ports:
       - "8006:8000"
     environment:
@@ -34,15 +36,34 @@ services:
       cloud-localstack:
         condition: service_healthy
 
+  cloud-redis:
+    image: redis:latest
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    volumes:
+      - cloud-redis-data:/data
+    command: ["redis-server", "--appendonly", "yes"]
+
   cloud-localstack:
+    image: localstack/localstack:latest
+    ports:
+      - "127.0.0.1:4566:4566"
     environment:
-      # compose.yaml only starts s3,sqs; the routes table needs DynamoDB.
-      SERVICES: s3,sqs,dynamodb
-    # Newer LocalStack images don't include curl, so compose.yaml's health check can never pass.
-    # Check with Python instead, and allow time for startup.
+      SERVICES: s3,sqs,dynamodb        # the routes and trips tables need DynamoDB
+      AWS_DEFAULT_REGION: ap-southeast-1
+      LOCALSTACK_AUTH_TOKEN: ${LOCALSTACK_AUTH_TOKEN:?Set LOCALSTACK_AUTH_TOKEN in .env}
+    # Newer LocalStack images don't include curl, so check with Python instead, and allow time for startup.
     healthcheck:
       test: python3 -c "import urllib.request as u; u.urlopen('http://localhost:4566/_localstack/health', timeout=2)"
       interval: 5s
       timeout: 3s
       retries: 10
       start_period: 30s
+
+volumes:
+  cloud-redis-data:

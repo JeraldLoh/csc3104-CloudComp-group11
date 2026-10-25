@@ -1,0 +1,26 @@
+# Fargate built-in log router configuration.
+# Creates the aws-observability namespace and a ConfigMap that tells the
+# Fluent Bit sidecar (injected automatically by Fargate) to send container
+# logs to CloudWatch Logs.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: aws-observability
+  labels:
+    aws-observability: enabled
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aws-logging
+  namespace: aws-observability
+data:
+  flb_log_cw: "true"
+  output.conf: |
+    [OUTPUT]
+        Name              cloudwatch_logs
+        Match             *
+        region            ap-southeast-1
+        log_group_name    /eks/careroute-cluster-1/careroute
+        log_stream_prefix fargate-
+        auto_create_group true

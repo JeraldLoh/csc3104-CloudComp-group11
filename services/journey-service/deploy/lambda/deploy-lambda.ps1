@@ -17,7 +17,7 @@
   powershell -ExecutionPolicy Bypass -File services\journey-service\deploy\lambda\deploy-lambda.ps1
 #>
 param(
-  [string]$PlatformStack = 'csc3104-careroute-1',
+  [string]$PlatformStack = 'careroute-stack-1',
   [string]$LambdaStack = 'careroute-journey-lambda',
   [string]$Region = 'ap-southeast-1',
   [string]$ResourcePrefix,

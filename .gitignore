@@ -17,6 +17,7 @@
 __pycache__/
 *.py[cod]
 .venv/
+.pytest_cache/
 venv/
 
 # Node.js
@@ -27,3 +28,6 @@ dist/
 build/
 services/journey-service/app/demo_data/
 services/journey-service/tests/fixtures/
+
+# AWS
+iam_policy.json

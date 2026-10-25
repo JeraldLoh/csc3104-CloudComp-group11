@@ -23,11 +23,11 @@
   .\deploy-eks.ps1 -RenderOnly -Image 123.dkr.ecr.ap-southeast-1.amazonaws.com/x:journey-v1 -RedisEndpoint r.cache.amazonaws.com -Bucket careroute-files-123 -OutFile out.yaml
 #>
 param(
-  [string]$StackName = 'csc3104-careroute-1',
+  [string]$StackName = 'careroute-stack-1',
   [string]$Region = 'ap-southeast-1',
   [string]$ResourcePrefix,
   [string]$ImageTag = 'v1',
-  [string]$AppNamespace = 'csc3104',
+  [string]$AppNamespace = 'careroute',
   [string]$EnvFile,
   [string]$CorsOrigin = '*',
   [switch]$RenderOnly,

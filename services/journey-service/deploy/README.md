@@ -1,7 +1,7 @@
 # Deploying the Journey Service to the platform's AWS stack
 
-These files add our service to the stack the platform owner's scripts build (`scripts/windows/deploy.ps1` on branch
-`jerald-platform-and-failure-detection`). They only add things; they never edit the platform's template, manifests or
+These files add our service to the stack the platform owner's scripts build (`scripts/windows/deploy.ps1`, stack
+`careroute-stack-1`, namespace `careroute`). They only add things; they never edit the platform's template, manifests or
 scripts, and they only need what the stack already outputs.
 
 > **Status: checked offline, never run against real AWS.** Deploying costs money and uses your AWS credentials, so
@@ -26,7 +26,7 @@ printing them.
 
 | File | What it does |
 |---|---|
-| `eks/journey-service.yaml` | Deployment (2 replicas) and a ClusterIP Service in namespace `csc3104`. Runs as the service account `cloud-fastapi`, the only one the platform's IAM role trusts. No AWS keys, no `AWS_ENDPOINT_URL`, no `CREATE_RESOURCES`. **No Ingress** (decided to leave exposure for later; use `kubectl port-forward svc/journey-service 8006:8000 -n csc3104`). |
+| `eks/journey-service.yaml` | Deployment (2 replicas) and a ClusterIP Service in namespace `careroute`. Runs as the service account `cloud-fastapi`, the only one the platform's IAM role trusts. No AWS keys, no `AWS_ENDPOINT_URL`, no `CREATE_RESOURCES`. **No Ingress** (decided to leave exposure for later; use `kubectl port-forward svc/journey-service 8006:8000 -n careroute`). |
 | `deploy-eks.ps1` | Reads the stack outputs, sets the pack bucket's CORS rule, creates the Secret `journey-api-keys` from `.env`, builds and pushes our image to the stack's ECR repository as tag `journey-<ImageTag>`, fills in the manifest's four placeholders (image, Redis, bucket, prefix) in a temporary copy, applies it, waits for the rollout and checks `/ready` through a port-forward. `-RenderOnly` just renders the manifest (no AWS). |
 | `teardown-eks.ps1` | Deletes our Deployment, Service and Secret, our `journey-*` ECR tags and the `packs/` objects. Nothing of the platform's. |
 | `lambda/build.ps1` | Builds `dist/disruption-lambda.zip` in a `python:3.12` Linux container: our 7 files (`make_zip.py` lists them) plus httpx and redis (about 1 MB). `-Verify` imports it in a clean container and fails if FastAPI or PyJWT came along. |
@@ -51,21 +51,11 @@ The platform stack builds every name from its `ResourcePrefix` parameter, and it
 names start with it. So our scripts do **not** hardcode a prefix: they read the stack's `ResourcePrefix` (override with
 `-ResourcePrefix`), print it, fill it into the manifest's `<RESOURCE_PREFIX>` placeholder, derive the shared bucket as
 `<prefix>-files-<account id>` (override with `-Bucket`), and `deploy-eks.ps1` checks that `<prefix>-routes` and
-`<prefix>-trips` exist before applying anything. While the stack's prefix is not `careroute` they print a warning but
-still work with whatever it is. The logic is in `resource-names.ps1`.
+`<prefix>-trips` exist before applying anything. The stack's prefix defaults to `careroute`; if it is built with
+anything else they print a warning but still work with it. The logic is in `resource-names.ps1`.
 
-**Still to change on the platform branch** (the platform owner's files; we don't edit them), as of its last commit
-(`80366ab`), where the prefix is still `csc3104`:
-
-| File | What |
-|---|---|
-| `cloudformation/careroute-vpc-eks-standard.yaml` | `ResourcePrefix` default `csc3104` (line ~47) -> `careroute` (and its description example) |
-| `scripts/windows/deploy.ps1` (~L185), `scripts/macos/deploy.sh` (~L168) | bucket `csc3104-files-$AccountId` -> `careroute-files-$AccountId` |
-| `scripts/windows/teardown.ps1` (~L138, ~L221), `scripts/macos/teardown.sh` (~L142, ~L223) | same bucket name |
-
-The bucket matters most: the pods' role only reaches buckets named `<ResourcePrefix>-*`, so the prefix and the bucket
-name must change together. The platform's namespace, cluster and stack names (`csc3104`, `csc3104-careroute-1`) are
-separate settings and unaffected; our scripts take them as parameters (`-AppNamespace`, `-StackName`).
+The pods' role only reaches buckets named `<ResourcePrefix>-*`, so the prefix and the bucket name must match. The
+stack and namespace are parameters (`-StackName`, default `careroute-stack-1`; `-AppNamespace`, default `careroute`).
 
 ## How the stack's permissions shaped the design
 
