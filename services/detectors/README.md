@@ -57,6 +57,19 @@ docker compose down
 to any port. `dev/seed.py` also runs on the host (`python dev/seed.py --redis redis://localhost:6379/0`)
 to re-seed. `long_dwell` makes dwell-time abstain: Redis only keeps 10 check-ins (see the dwell-time docstring).
 
+### Replay a whole scenario
+
+With the compose stack up, from the repo root (needs the detectors venv for `redis`):
+
+```bash
+python -m tools.simulator replay --scenario off_route      # per-check-in table + results/<scenario>-<time>.csv
+python -m tools.simulator replay --all                     # every scenario, then a summary per detector
+```
+
+Flags: `--redis`, `--detectors` (comma-separated URLs), `--speed` (0 = fast, 1 = real time),
+`--no-browser` (clean check-ins), `--seed`. The summary lists true positives, false alarms, abstains and the
+detection delay in check-ins (only for the problem each detector owns). `results/` is git-ignored.
+
 ## Settings
 
 Each env var is the field name in upper case. Defaults are in `detectors/config.py`.

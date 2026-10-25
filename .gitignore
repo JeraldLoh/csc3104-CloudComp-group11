@@ -29,3 +29,6 @@ build/
 
 # AWS
 iam_policy.json
+
+# Simulator replay output
+results/
