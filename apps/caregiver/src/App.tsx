@@ -4,6 +4,7 @@
 //
 // Shareable link: /?from=1.4043,103.9021&to=1.3040,103.8318&mode=bus plans straight away.
 import { useEffect, useMemo, useState } from "react";
+import { AlertsPage } from "./alerts";
 import { JourneyApi, RoutePlanner, SavedRoutes, Trips, tripProblem, useDisruptions, useSavedRoutes, useTrips } from "./planner";
 import type { Point } from "./planner/usePlanner";
 import type { DataModeInfo, DataSource, RouteStep, TravelMode } from "./journey/types";
@@ -64,7 +65,16 @@ function readLink(search = location.search): { from: Point; to: Point; mode?: Tr
   };
 }
 
+// The two pages. #alerts in the address opens the alerts page directly.
+type Page = "plan" | "alerts";
+const pageFromHash = (): Page => (location.hash === "#alerts" ? "alerts" : "plan");
+
 export default function App() {
+  const [page, setPage] = useState<Page>(pageFromHash);
+  const openPage = (next: Page) => {
+    setPage(next);
+    history.replaceState(null, "", next === "alerts" ? "#alerts" : location.pathname + location.search);
+  };
   // Dev only: with AUTH_MODE=dev the service believes this header. Real login replaces it.
   const [actAs, setActAs] = useState("G-DEMO");
   const [travellerId, setTravellerId] = useState("U-DEMO");
@@ -87,6 +97,10 @@ export default function App() {
     <div className="shell">
       <header className="shell__bar">
         <strong>CareRoute caregiver</strong>
+        <nav className="shell__tabs">
+          <button type="button" aria-pressed={page === "plan"} onClick={() => openPage("plan")}>Plan routes</button>
+          <button type="button" aria-pressed={page === "alerts"} onClick={() => openPage("alerts")}>Alerts</button>
+        </nav>
         <label>
           Act as <input value={actAs} onChange={(e) => setActAs(e.target.value)} placeholder="G-003" autoComplete="off" />
         </label>
@@ -96,7 +110,7 @@ export default function App() {
         <DataSwitch api={api} />
       </header>
       <main className="shell__main">
-        <RoutePlanner
+        {page === "alerts" ? <AlertsPage travellerId={travellerId} caregiverId={caregiverId} /> : <RoutePlanner
           api={api} travellerId={travellerId} caregiverId={caregiverId} initial={initial}
           viewing={saved.opened} onSaved={() => void saved.refresh()}
           sections={[
@@ -106,7 +120,7 @@ export default function App() {
               content: <Trips trips={trips} routes={saved.routes} routesLoaded={saved.loaded} travellerAppUrl={TRAVELLER_APP_URL}
                 disruptions={disruptions} /> },
           ]}
-        />
+        />}
       </main>
     </div>
   );

@@ -12,7 +12,9 @@
   With -Service NAME, only that service is built and deployed onto an existing
   stack (no CloudFormation or Load Balancer Controller steps):
     services\NAME\Dockerfile      image build context
-    k8s\eks\services\NAME.yaml    manifest (any number of Deployments/Services).
+    k8s\eks\services\NAME.yaml    manifest; a Deployment named NAME, or (one image run as several
+                                  Deployments, e.g. detectors) every Deployment labelled
+                                  app.kubernetes.io/part-of: NAME.
                                   Placeholders: __IMAGE__ __NAMESPACE__ __REGION__
                                   __REDIS_ENDPOINT__ __CHECKINS_QUEUE_URL__
                                   __DISRUPTIONS_QUEUE_URL__
@@ -64,6 +66,15 @@ function Invoke-Quiet([scriptblock]$Command) {
   $prev = $ErrorActionPreference
   $ErrorActionPreference = 'SilentlyContinue'
   try { & $Command 2>$null } finally { $ErrorActionPreference = $prev }
+}
+
+# kubectl arguments selecting this service's Deployment(s), or $null if there are none.
+function Get-ServiceTarget {
+  Invoke-Quiet { kubectl get deployment $Service -n $AppNamespace } | Out-Null
+  if ($LASTEXITCODE -eq 0) { return @("deployment/$Service") }
+  $labelled = Invoke-Quiet { kubectl get deployment -n $AppNamespace -l "app.kubernetes.io/part-of=$Service" -o name }
+  if ($labelled) { return @('deployment', '-l', "app.kubernetes.io/part-of=$Service") }
+  return $null
 }
 
 try {
@@ -135,21 +146,19 @@ try {
     $text = [IO.File]::ReadAllText($ServiceManifest)
     foreach ($key in $Placeholders.Keys) { $text = $text.Replace($key, [string]$Placeholders[$key]) }
     [IO.File]::WriteAllText($Rendered, $text, $Utf8NoBom)
-    # Deployments in this manifest that already exist (a manifest may hold several).
-    $Existing = @(Invoke-Quiet { kubectl get -f $Rendered -o name } | Where-Object { $_ -like 'deployment*' })
+    $DeploymentExisted = $null -ne (Get-ServiceTarget)
     Invoke-Checked { kubectl apply -f $Rendered }
+    $Target = Get-ServiceTarget
+    if ($null -eq $Target) { throw "The manifest has no Deployment named $Service or labelled app.kubernetes.io/part-of=$Service" }
     # Re-pushing the same tag does not change the spec, so force new pods to pull it.
-    foreach ($d in $Existing) {
-      Invoke-Checked { kubectl rollout restart $d -n $AppNamespace }
+    if ($DeploymentExisted) {
+      Invoke-Checked { kubectl rollout restart @Target -n $AppNamespace }
     }
-    $Deployments = @(Invoke-Checked { kubectl get -f $Rendered -o name } | Where-Object { $_ -like 'deployment*' })
-    foreach ($d in $Deployments) {
-      Invoke-Checked { kubectl rollout status $d -n $AppNamespace --timeout=10m }
-    }
+    Invoke-Checked { kubectl rollout status @Target -n $AppNamespace --timeout=10m }
 
     Write-Host ''
     Write-Host "Service $Service deployed." -ForegroundColor Green -NoNewline
-    Write-Host " Pods: kubectl get pods -n $AppNamespace"
+    Write-Host " Logs: kubectl logs -n $AppNamespace deploy/$Service -f"
     return
   }
 

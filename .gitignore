@@ -30,3 +30,6 @@ services/journey-service/app/saved_data/
 
 # AWS
 iam_policy.json
+
+# Simulator replay output
+results/

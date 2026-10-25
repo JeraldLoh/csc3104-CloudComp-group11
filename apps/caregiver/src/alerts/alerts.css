@@ -1,0 +1,173 @@
+/* Alerts page (issue 5.3). Every class starts with "al" so nothing clashes with the planner (rp…)
+   or the shell (shell…). */
+.al {
+  --al-accent: #1d4ed8;
+  --al-muted: #5b6478;
+  --al-border: #dde2ec;
+  --al-urgent: #c81e1e;
+  --al-urgent-bg: #fdecec;
+  --al-ack: #a15c00;
+  --al-ack-bg: #fff4e0;
+  --al-ok: #15803d;
+  --al-fresh: #fff8c5;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 16px;
+  overflow-y: auto;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+.al__bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.al__count {
+  margin: 0;
+  font-size: 1.1rem;
+  margin-right: auto;
+}
+
+.al__toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.al__connection {
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-weight: 600;
+  background: var(--al-ack-bg);
+  color: var(--al-ack);
+}
+
+.al__connection--live {
+  background: #e3f6ea;
+  color: var(--al-ok);
+}
+
+.al__error {
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--al-urgent-bg);
+  color: var(--al-urgent);
+}
+
+.al__empty {
+  color: var(--al-muted);
+}
+
+.al__cards {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.al__card {
+  padding: 12px 14px;
+  border: 1px solid var(--al-border);
+  border-left: 5px solid var(--al-accent);
+  border-radius: 10px;
+  background: #fff;
+  transition: background-color 1s;
+}
+
+.al__card--urgent {
+  border-left-color: var(--al-urgent);
+  background: var(--al-urgent-bg);
+}
+
+.al__card--acknowledged {
+  border-left-color: var(--al-ack);
+}
+
+.al__card--resolved {
+  border-left-color: var(--al-ok);
+  opacity: 0.7;
+}
+
+.al__card--fresh {
+  background: var(--al-fresh);
+  box-shadow: 0 0 0 3px #f5d90a;
+}
+
+.al__card-top {
+  display: flex;
+  justify-content: space-between;
+  color: var(--al-muted);
+  font-size: 0.85rem;
+}
+
+.al__badge {
+  font-weight: 700;
+  text-transform: capitalize;
+}
+
+.al__badge--urgent {
+  color: var(--al-urgent);
+  text-transform: uppercase;
+}
+
+.al__badge--acknowledged {
+  color: var(--al-ack);
+}
+
+.al__badge--resolved {
+  color: var(--al-ok);
+}
+
+.al__title {
+  margin: 6px 0 4px;
+  font-size: 1.05rem;
+}
+
+.al__text {
+  margin: 4px 0;
+}
+
+.al__details {
+  margin: 4px 0 0;
+  color: var(--al-muted);
+}
+
+.al__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end; /* buttons on the right, with or without the location link */
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.al__actions a {
+  margin-right: auto; /* the link, when there is one, sits on the left */
+  color: var(--al-accent);
+}
+
+.al__btn {
+  padding: 6px 12px;
+  border: 1px solid var(--al-accent);
+  border-radius: 8px;
+  background: var(--al-accent);
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.al__btn--secondary {
+  background: transparent;
+  color: var(--al-accent);
+}
+
+.al__btn:disabled {
+  opacity: 0.5;
+  cursor: progress;
+}
