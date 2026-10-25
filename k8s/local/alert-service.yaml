@@ -1,0 +1,54 @@
+# Alert Service (Member 5) on the local kind cluster, using LocalStack and the Redis pod.
+# Not in kustomization.yaml, so teammates without this image aren't affected. To run it:
+#   docker build -t alert-service:local services/alert-service
+#   kind load docker-image alert-service:local --name csc3104-local
+#   kubectl apply -f k8s/local/alert-service.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alert-service
+  namespace: csc3104
+  labels: { app: alert-service }
+spec:
+  replicas: 2   # two replicas, to test duplicate handling and failover
+  selector:
+    matchLabels: { app: alert-service }
+  template:
+    metadata:
+      labels: { app: alert-service }
+    spec:
+      containers:
+        - name: alert-service
+          image: alert-service:local
+          imagePullPolicy: IfNotPresent   # kind: use the image loaded with `kind load`
+          ports: [{ containerPort: 8000 }]
+          env:
+            - { name: REDIS_URL, value: "redis://cloud-redis:6379/0" }
+            - { name: AWS_ENDPOINT_URL, value: "http://cloud-localstack:4566" }
+            - { name: AWS_ACCESS_KEY_ID, value: "csc3104" }
+            - { name: AWS_SECRET_ACCESS_KEY, value: "csc3104" }
+            - { name: AWS_DEFAULT_REGION, value: "ap-southeast-1" }
+            - { name: CREATE_RESOURCES, value: "true" }   # local only; on AWS the platform stack has them
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+          # Ready = Redis and DynamoDB reachable. Not ready -> no traffic, but not restarted.
+          readinessProbe:
+            httpGet: { path: /ready, port: 8000 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          # Alive = process responds. Doesn't check dependencies, so a Redis outage
+          # doesn't make Kubernetes restart every replica at once.
+          livenessProbe:
+            httpGet: { path: /health, port: 8000 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alert-service   # other services call http://alert-service:8000 (contracts/api.md)
+  namespace: csc3104
+spec:
+  selector: { app: alert-service }
+  ports: [{ port: 8000, targetPort: 8000 }]
