@@ -1,0 +1,97 @@
+# Check-in analysis (Member 3) running locally with fakes for everyone else's services.
+#
+#   docker compose -f services/analysis-dev/compose.yaml up --build -d
+#   docker compose -f services/analysis-dev/compose.yaml run --rm send --seq 1
+#
+# See README.md in this folder.
+name: careroute-analysis
+
+x-aws: &aws
+  AWS_ENDPOINT_URL: http://elasticmq:9324   # local SQS; unset on AWS
+  AWS_DEFAULT_REGION: ap-southeast-1
+  AWS_ACCESS_KEY_ID: local                   # ElasticMQ ignores these
+  AWS_SECRET_ACCESS_KEY: local
+
+x-fake-detector: &fake-detector
+  build: ../fake-detector
+  image: careroute-fake-detector:dev
+
+services:
+  redis:
+    image: redis:7.4-alpine
+    ports: ["127.0.0.1:6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      retries: 15
+
+  elasticmq:
+    image: softwaremill/elasticmq-native:1.6.11
+    volumes:
+      - ./elasticmq.conf:/opt/elasticmq.conf:ro
+    ports: ["127.0.0.1:9324:9324", "127.0.0.1:9325:9325"]   # 9325: ElasticMQ's web UI
+
+  coordinator:
+    build: ../coordinator
+    image: careroute-coordinator:dev
+    environment:
+      <<: *aws
+      REDIS_URL: redis://redis:6379/0
+      CHECKINS_QUEUE: careroute-checkins
+      REDUNDANCY_MODE: ${REDUNDANCY_MODE:-adaptive}
+      # Detector and Aggregator URLs: the defaults match the service names below.
+    ports: ["127.0.0.1:8000:8000"]
+    depends_on:
+      redis: { condition: service_healthy }
+      elasticmq: { condition: service_started }
+      aggregator: { condition: service_started }
+
+  aggregator:
+    build: ../aggregator
+    image: careroute-aggregator:dev
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      ALERT_SERVICE_URL: http://alert-service:8000
+    ports: ["127.0.0.1:8001:8000"]
+    depends_on:
+      redis: { condition: service_healthy }
+
+  # --- fakes for other members' services -------------------------------------------------
+  # Names match contracts/api.md, so the Coordinator finds them without extra config.
+  # Change behaviour live: curl -X POST localhost:9001/control -d '{"mode":"wrong"}' -H 'Content-Type: application/json'
+
+  detector-route:
+    <<: *fake-detector
+    environment: { DETECTOR_ID: route-corridor, MODE: auto, PROBLEM_TYPE: off_route, CONFIDENCE: "0.8" }
+    ports: ["127.0.0.1:9001:8000"]
+
+  detector-dwell:
+    <<: *fake-detector
+    # Always "normal": an off-route check-in then splits 1-1 and the Coordinator escalates.
+    environment: { DETECTOR_ID: dwell-time, MODE: normal, CONFIDENCE: "0.8" }
+    ports: ["127.0.0.1:9002:8000"]
+
+  detector-heading:
+    <<: *fake-detector
+    environment: { DETECTOR_ID: heading-speed, MODE: auto, PROBLEM_TYPE: off_route, CONFIDENCE: "0.7" }
+    ports: ["127.0.0.1:9003:8000"]
+
+  detector-ml:
+    <<: *fake-detector
+    environment: { DETECTOR_ID: ml-anomaly, MODE: auto, PROBLEM_TYPE: off_route, CONFIDENCE: "0.6" }
+    ports: ["127.0.0.1:9004:8000"]
+
+  alert-service:
+    build: ../fake-alert
+    image: careroute-fake-alert:dev
+    ports: ["127.0.0.1:8004:8000"]
+
+  # --- tool: put a check-in on the queue ---------------------------------------------------
+  send:
+    image: careroute-coordinator:dev        # reuses its Python + boto3
+    profiles: ["tools"]
+    environment: *aws
+    volumes:
+      - ./send_checkin.py:/tools/send_checkin.py:ro
+    entrypoint: ["python", "/tools/send_checkin.py"]
+    depends_on: [elasticmq]
