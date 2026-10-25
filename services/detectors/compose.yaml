@@ -1,0 +1,45 @@
+# Local dev/testing only (deployment is Kubernetes): Redis seeded with mock trips + the three detectors.
+#   docker compose up --build -d
+#   python dev/seed.py --request off_route | curl -s -X POST localhost:8101/internal/detect -H 'content-type: application/json' -d @-
+name: careroute-detectors
+
+x-detector: &detector
+  image: detectors:local
+  build: .
+  depends_on:
+    cloud-redis:
+      condition: service_healthy
+    seed:
+      condition: service_completed_successfully
+
+services:
+  cloud-redis:
+    image: redis:latest
+    ports: ["127.0.0.1:6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+  seed:
+    image: detectors:local
+    build: .
+    depends_on:
+      cloud-redis:
+        condition: service_healthy
+    volumes:
+      - ./dev:/seed/dev:ro,z
+      - ./tests/fixtures:/seed/tests/fixtures:ro,z
+    command: ["python", "/seed/dev/seed.py", "--redis", "redis://cloud-redis:6379/0"]
+  detector-route-corridor:
+    <<: *detector
+    ports: ["8101:8000"]
+    environment: {DETECTOR_ID: route-corridor, REDIS_URL: "redis://cloud-redis:6379/0"}
+  detector-heading-speed:
+    <<: *detector
+    ports: ["8102:8000"]
+    environment: {DETECTOR_ID: heading-speed, REDIS_URL: "redis://cloud-redis:6379/0"}
+  detector-dwell-time:
+    <<: *detector
+    ports: ["8103:8000"]
+    environment: {DETECTOR_ID: dwell-time, REDIS_URL: "redis://cloud-redis:6379/0"}

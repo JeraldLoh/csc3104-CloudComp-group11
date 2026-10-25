@@ -1,0 +1,87 @@
+"""FastAPI app: one image, ``DETECTOR_ID`` picks the detector this container runs.
+
+- ``POST /internal/detect``  DetectorRequest in, DetectorVote out (never 500 for a valid body)
+- ``GET /health``            liveness, does not touch Redis
+- ``GET /ready``             readiness, pings Redis (503 if unreachable)
+"""
+
+import json
+import logging
+import time
+from contextlib import asynccontextmanager
+from typing import Callable, Dict, Optional
+
+import redis as redis_lib
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+
+from detectors import dwell_time, heading_speed, route_corridor
+from detectors.config import Settings, get_settings
+from detectors.context import TripContext, load_context
+from detectors.models import DetectorRequest, DetectorVote
+
+log = logging.getLogger("detectors")
+
+Detect = Callable[[DetectorRequest, TripContext, Settings], DetectorVote]
+
+REGISTRY: Dict[str, Detect] = {
+    route_corridor.DETECTOR_ID: route_corridor.detect,
+    heading_speed.DETECTOR_ID: heading_speed.detect,
+    dwell_time.DETECTOR_ID: dwell_time.detect,
+}
+
+
+def _log(**fields) -> None:
+    log.info(json.dumps(fields))
+
+
+def create_app(settings: Optional[Settings] = None, redis_client=None) -> FastAPI:
+    """Build the app. Tests pass ``settings`` and a fakeredis client."""
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        cfg = settings or get_settings()
+        if cfg.detector_id not in REGISTRY:
+            raise RuntimeError(f"DETECTOR_ID must be one of {sorted(REGISTRY)}, got {cfg.detector_id!r}")
+        app.state.settings = cfg
+        app.state.detect = REGISTRY[cfg.detector_id]
+        # Short timeouts: the Coordinator treats a slow detector as abstain anyway
+        app.state.redis = redis_client or redis_lib.Redis.from_url(
+            cfg.redis_url, socket_connect_timeout=1, socket_timeout=1
+        )
+        yield
+
+    app = FastAPI(title="CareRoute detector", lifespan=lifespan)
+
+    @app.post("/internal/detect", response_model=DetectorVote, response_model_by_alias=True)
+    def detect(body: DetectorRequest, request: Request) -> DetectorVote:
+        start = time.perf_counter()
+        cfg: Settings = request.app.state.settings
+        try:
+            ctx = load_context(request.app.state.redis, body)
+            vote = request.app.state.detect(body, ctx, cfg)
+        except Exception as exc:  # any failure becomes an abstain, never a 500
+            log.exception("detection failed")
+            vote = DetectorVote.abstain(body.request_id, cfg.detector_id, f"internal error: {type(exc).__name__}")
+        vote = vote.model_copy(
+            update={"detector_id": cfg.detector_id, "latency_ms": round((time.perf_counter() - start) * 1000, 2)}
+        )
+        _log(requestId=vote.request_id, detectorId=vote.detector_id, verdict=vote.verdict, latencyMs=vote.latency_ms)
+        return vote
+
+    @app.get("/health")
+    def health():
+        return {"status": "ok"}
+
+    @app.get("/ready")
+    def ready(request: Request):
+        try:
+            request.app.state.redis.ping()
+        except Exception as exc:
+            return JSONResponse({"status": "unavailable", "reason": type(exc).__name__}, status_code=503)
+        return {"status": "ok"}
+
+    return app
+
+
+app = create_app()
