@@ -1,16 +1,27 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
-  CareRoute network and compute baseline for a standard AWS account.
+  CareRoute full infrastructure for a standard AWS account.
   VPC (2 AZs, public + private subnets, IGW, 1 NAT), S3 and DynamoDB gateway
-  endpoints, security groups, ElastiCache Redis in the private subnets, and an
+  endpoints, security groups, ElastiCache Redis, SQS queues (checkins +
+  disruptions, each with a DLQ), 8 DynamoDB tables (on-demand billing), and an
   EKS cluster running on Fargate or on a managed node group. Creates its own
   IAM roles and the IAM OIDC provider needed for IRSA (per-service roles).
   Deploy with CAPABILITY_IAM acknowledged.
 
 Parameters:
+  BudgetAlertEmail:
+    Type: String
+    Default: ""
+    Description: >
+      Email address for budget alerts. Leave empty to skip creating the budget.
+      The email must be confirmed via the link AWS sends after stack creation.
+  BudgetAmountUSD:
+    Type: Number
+    Default: 80
+    Description: Monthly cost budget in USD. Alerts fire at 80% and 100% of this amount.
   ClusterName:
     Type: String
-    Default: csc3104
+    Default: careroute-cluster-1
     Description: EKS cluster name. Also used in the subnet discovery tags.
   ComputeMode:
     Type: String
@@ -21,7 +32,7 @@ Parameters:
       nodegroup = fallback managed node group on EC2 if Fargate is blocked in the lab.
   AppNamespace:
     Type: String
-    Default: csc3104
+    Default: careroute
     Description: Kubernetes namespace scheduled onto Fargate.
   AppPort:
     Type: Number
@@ -33,10 +44,10 @@ Parameters:
     Description: Kubernetes service account allowed to assume the API role (IRSA).
   ResourcePrefix:
     Type: String
-    Default: csc3104
+    Default: careroute
     Description: >
       The API role may only touch S3 buckets, SQS queues and DynamoDB tables
-      whose names start with this prefix (e.g. csc3104-checkins).
+      whose names start with this prefix (e.g. careroute-checkins).
   RedisNodeType:
     Type: String
     Default: cache.t3.micro
@@ -48,6 +59,7 @@ Parameters:
 Conditions:
   UseFargate: !Equals [!Ref ComputeMode, fargate]
   UseNodeGroup: !Equals [!Ref ComputeMode, nodegroup]
+  CreateBudget: !Not [!Equals [!Ref BudgetAlertEmail, ""]]
 
 Resources:
   # ------------------------------- VPC ---------------------------------
@@ -260,7 +272,7 @@ Resources:
           CidrIp: 0.0.0.0/0
       Tags:
         - Key: Name
-          Value: csc3104-alb-sg
+          Value: careroute-alb-sg
 
   RedisSecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -269,7 +281,7 @@ Resources:
       VpcId: !Ref Vpc
       Tags:
         - Key: Name
-          Value: csc3104-redis-sg
+          Value: careroute-redis-sg
 
   # Fargate pods use the EKS cluster security group, so the rules below
   # reference it instead of a custom pod security group.
@@ -342,6 +354,18 @@ Resources:
                 aws:SourceArn: !Sub arn:${AWS::Partition}:eks:${AWS::Region}:${AWS::AccountId}:fargateprofile/${ClusterName}/*
       ManagedPolicyArns:
         - !Sub arn:${AWS::Partition}:iam::aws:policy/AmazonEKSFargatePodExecutionRolePolicy
+      Policies:
+        - PolicyName: fargate-cloudwatch-logs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:DescribeLogStreams
+                  - logs:PutLogEvents
+                Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:*
 
   NodeRole:
     Type: AWS::IAM::Role
@@ -405,6 +429,21 @@ Resources:
         - !Ref PrivateSubnetB
       Selectors:
         - Namespace: !Ref AppNamespace
+
+  # Fargate profile for the aws-observability namespace (built-in log router).
+  FargateProfileObservability:
+    Type: AWS::EKS::FargateProfile
+    Condition: UseFargate
+    DependsOn: FargateProfileApp
+    Properties:
+      ClusterName: !Ref EksCluster
+      FargateProfileName: aws-observability
+      PodExecutionRoleArn: !GetAtt FargatePodExecutionRole.Arn
+      Subnets:
+        - !Ref PrivateSubnetA
+        - !Ref PrivateSubnetB
+      Selectors:
+        - Namespace: aws-observability
 
   # CoreDNS must be told to run on Fargate in a Fargate-only cluster.
   CoreDnsAddon:
@@ -492,6 +531,302 @@ Resources:
                   - !Sub arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ResourcePrefix}-*
                   - !Sub arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ResourcePrefix}-*/index/*
 
+  # -------------------------- CloudWatch Observability --------------------------
+  # Container Insights: cluster-level CPU, memory, network metrics per pod.
+  CloudWatchObservabilityAddon:
+    Type: AWS::EKS::Addon
+    Condition: UseFargate
+    DependsOn: FargateProfileKubeSystem
+    Properties:
+      ClusterName: !Ref EksCluster
+      AddonName: amazon-cloudwatch-observability
+      ResolveConflicts: OVERWRITE
+
+  # CloudWatch log group for application logs (Fargate log router sends here).
+  AppLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /eks/${ClusterName}/${AppNamespace}
+      RetentionInDays: 14
+
+  # -------------------------- CloudWatch Alarms --------------------------------
+  # Alert when messages land in a dead-letter queue (means processing failed).
+  CheckinsDlqAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: CreateBudget          # reuse the email condition
+    Properties:
+      AlarmName: !Sub ${ResourcePrefix}-checkins-dlq-not-empty
+      AlarmDescription: Messages in the checkins dead-letter queue — check-in processing is failing
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt CheckinsDlq.QueueName
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmSnsTopic
+
+  DisruptionsDlqAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: CreateBudget
+    Properties:
+      AlarmName: !Sub ${ResourcePrefix}-disruptions-dlq-not-empty
+      AlarmDescription: Messages in the disruptions dead-letter queue — disruption processing is failing
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt DisruptionsDlq.QueueName
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmSnsTopic
+
+  # SNS topic for CloudWatch alarm notifications (uses the same email).
+  AlarmSnsTopic:
+    Type: AWS::SNS::Topic
+    Condition: CreateBudget
+    Properties:
+      TopicName: !Sub ${ResourcePrefix}-alarms
+
+  AlarmSnsSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: CreateBudget
+    Properties:
+      TopicArn: !Ref AlarmSnsTopic
+      Protocol: email
+      Endpoint: !Ref BudgetAlertEmail
+
+  # -------------------------- SQS Queues ------------------------------------
+  # Dead-letter queues first (referenced by the main queues).
+  CheckinsDlq:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub ${ResourcePrefix}-checkins-dlq
+      MessageRetentionPeriod: 1209600        # 14 days
+
+  DisruptionsDlq:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub ${ResourcePrefix}-disruptions-dlq
+      MessageRetentionPeriod: 1209600
+
+  CheckinsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub ${ResourcePrefix}-checkins
+      VisibilityTimeout: 30
+      ReceiveMessageWaitTimeSeconds: 20      # long polling
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt CheckinsDlq.Arn
+        maxReceiveCount: 5
+
+  DisruptionsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub ${ResourcePrefix}-disruptions
+      VisibilityTimeout: 60
+      ReceiveMessageWaitTimeSeconds: 20
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt DisruptionsDlq.Arn
+        maxReceiveCount: 5
+
+  # ------------------------- DynamoDB Tables ---------------------------------
+  # All tables use on-demand (PAY_PER_REQUEST) billing.
+  CheckinsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete
+    Properties:
+      TableName: !Sub ${ResourcePrefix}-checkins
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: tripId,     AttributeType: S }
+        - { AttributeName: seq,        AttributeType: N }
+        - { AttributeName: pending,    AttributeType: S }
+        - { AttributeName: receivedAt, AttributeType: S }
+      KeySchema:
+        - { AttributeName: tripId,     KeyType: HASH }
+        - { AttributeName: seq,        KeyType: RANGE }
+      # Used by the check-in service's clean-up task to find stuck check-ins.
+      GlobalSecondaryIndexes:
+        - IndexName: pending-index
+          KeySchema:
+            - { AttributeName: pending,    KeyType: HASH }
+            - { AttributeName: receivedAt, KeyType: RANGE }
+          Projection: { ProjectionType: ALL }
+      TimeToLiveSpecification:
+        AttributeName: expiresAt
+        Enabled: true
+
+  RoutesTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete
+    Properties:
+      TableName: !Sub ${ResourcePrefix}-routes
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: routeId,      AttributeType: S }
+        - { AttributeName: travellerId,  AttributeType: S }
+      KeySchema:
+        - { AttributeName: routeId,      KeyType: HASH }
+      GlobalSecondaryIndexes:
+        - IndexName: travellerId-index
+          KeySchema:
+            - { AttributeName: travellerId, KeyType: HASH }
+          Projection: { ProjectionType: ALL }
+
+  TripsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete
+    Properties:
+      TableName: !Sub ${ResourcePrefix}-trips
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: tripId,       AttributeType: S }
+        - { AttributeName: travellerId,  AttributeType: S }
+        - { AttributeName: date,         AttributeType: S }
+        - { AttributeName: status,       AttributeType: S }
+      KeySchema:
+        - { AttributeName: tripId,       KeyType: HASH }
+      GlobalSecondaryIndexes:
+        - IndexName: travellerId-date-index
+          KeySchema:
+            - { AttributeName: travellerId, KeyType: HASH }
+            - { AttributeName: date,        KeyType: RANGE }
+          Projection: { ProjectionType: ALL }
+        - IndexName: status-index
+          KeySchema:
+            - { AttributeName: status,      KeyType: HASH }
+          Projection: { ProjectionType: ALL }
+      TimeToLiveSpecification:
+        AttributeName: expiresAt
+        Enabled: true
+
+  IncidentsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete
+    Properties:
+      TableName: !Sub ${ResourcePrefix}-incidents
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: incidentId,   AttributeType: S }
+        - { AttributeName: travellerId,  AttributeType: S }
+        - { AttributeName: createdAt,    AttributeType: S }
+      KeySchema:
+        - { AttributeName: incidentId,   KeyType: HASH }
+      GlobalSecondaryIndexes:
+        - IndexName: travellerId-createdAt-index
+          KeySchema:
+            - { AttributeName: travellerId, KeyType: HASH }
+            - { AttributeName: createdAt,   KeyType: RANGE }
+          Projection: { ProjectionType: ALL }
+      TimeToLiveSpecification:
+        AttributeName: expiresAt
+        Enabled: true
+
+  TravellersTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete
+    Properties:
+      TableName: !Sub ${ResourcePrefix}-travellers
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: travellerId, AttributeType: S }
+      KeySchema:
+        - { AttributeName: travellerId, KeyType: HASH }
+
+  CaregiverLinksTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete
+    Properties:
+      TableName: !Sub ${ResourcePrefix}-caregiver-links
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: caregiverId,  AttributeType: S }
+        - { AttributeName: travellerId,  AttributeType: S }
+      KeySchema:
+        - { AttributeName: caregiverId,  KeyType: HASH }
+        - { AttributeName: travellerId,  KeyType: RANGE }
+      GlobalSecondaryIndexes:
+        - IndexName: travellerId-index
+          KeySchema:
+            - { AttributeName: travellerId, KeyType: HASH }
+          Projection: { ProjectionType: ALL }
+
+  SafeLocationsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete
+    Properties:
+      TableName: !Sub ${ResourcePrefix}-safe-locations
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: travellerId, AttributeType: S }
+        - { AttributeName: locationId,  AttributeType: S }
+      KeySchema:
+        - { AttributeName: travellerId, KeyType: HASH }
+        - { AttributeName: locationId,  KeyType: RANGE }
+
+  DeviceTokensTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete
+    Properties:
+      TableName: !Sub ${ResourcePrefix}-device-tokens
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: userId, AttributeType: S }
+        - { AttributeName: token,  AttributeType: S }
+      KeySchema:
+        - { AttributeName: userId, KeyType: HASH }
+        - { AttributeName: token,  KeyType: RANGE }
+
+  # -------------------------- Budget Alert -----------------------------
+  # Created only when BudgetAlertEmail is provided.
+  MonthlyCostBudget:
+    Type: AWS::Budgets::Budget
+    Condition: CreateBudget
+    Properties:
+      Budget:
+        BudgetName: !Sub ${ResourcePrefix}-monthly-cost
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit:
+          Amount: !Ref BudgetAmountUSD
+          Unit: USD
+      NotificationsWithSubscribers:
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 80
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref BudgetAlertEmail
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 100
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref BudgetAlertEmail
+        - Notification:
+            NotificationType: FORECASTED
+            ComparisonOperator: GREATER_THAN
+            Threshold: 100
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref BudgetAlertEmail
+
 Outputs:
   ApiServiceRoleArn:
     Value: !GetAtt ApiServiceRole.Arn
@@ -515,3 +850,11 @@ Outputs:
     Value: !GetAtt EksCluster.Endpoint
   RedisEndpoint:
     Value: !GetAtt RedisCluster.RedisEndpoint.Address
+  CheckinsQueueUrl:
+    Value: !Ref CheckinsQueue
+  CheckinsQueueArn:
+    Value: !GetAtt CheckinsQueue.Arn
+  DisruptionsQueueUrl:
+    Value: !Ref DisruptionsQueue
+  DisruptionsQueueArn:
+    Value: !GetAtt DisruptionsQueue.Arn

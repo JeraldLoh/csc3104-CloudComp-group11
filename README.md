@@ -4,7 +4,7 @@
 
 The system runs on AWS in `ap-southeast-1` (Singapore). A VPC spans two Availability Zones with public and private subnets. The public subnets hold the Application Load Balancer and a NAT gateway. The private subnets hold an EKS Fargate cluster running the microservices and an ElastiCache Redis instance for low-latency caching.
 
-Infrastructure is defined as code in `cloudformation/careroute-vpc-eks-standard.yaml`. It creates the VPC, subnets, internet gateway, NAT gateway, S3 and DynamoDB gateway endpoints, security groups, ElastiCache Redis, IAM roles, the EKS cluster with Fargate profiles, and an ECR repository.
+Infrastructure is defined as code in `cloudformation/careroute-vpc-eks-standard.yaml`. It creates the VPC, subnets, internet gateway, NAT gateway, S3 and DynamoDB gateway endpoints, security groups, ElastiCache Redis, SQS queues (checkins and disruptions, each with a dead-letter queue), 8 DynamoDB tables (on-demand billing), IAM roles, the EKS cluster with Fargate profiles, an ECR repository, and an optional monthly cost budget alert.
 
 ## Prerequisites
 
@@ -14,23 +14,46 @@ Infrastructure is defined as code in `cloudformation/careroute-vpc-eks-standard.
 - [eksctl](https://eksctl.io/installation/) (`winget install -e --id eksctl.eksctl`)
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed and running
 
+## Automated deploy and teardown
+
+The scripts in `scripts/` run every step in the sections below, from the
+CloudFormation stack to the `/health` check, and the full teardown. Both are
+safe to re-run. `deploy` creates or updates the stack from the current template,
+so changes to the YAML are applied on the next run. `teardown` looks up S3
+buckets and ECR repositories from the live stack, so resources added to the
+template later are removed too.
+
+| | Windows (PowerShell) | macOS (bash) |
+|---|---|---|
+| Deploy | `powershell -ExecutionPolicy Bypass -File scripts\windows\deploy.ps1 -BudgetEmail you@example.com` | `bash scripts/macos/deploy.sh --email you@example.com` |
+| Teardown | `powershell -ExecutionPolicy Bypass -File scripts\windows\teardown.ps1` | `bash scripts/macos/teardown.sh` |
+
+Options: `-ImageTag` / `--tag` (default `v1`), `-StackName` / `--stack-name`,
+`-Region` / `--region`, and `-Yes` / `--yes` to skip the teardown confirmation.
+The deploy scripts fill in the `k8s/eks` placeholders in a temporary copy, so
+the committed manifests stay unchanged.
+
 ## Deploy the infrastructure
 
 ### 1. Deploy the CloudFormation stack
 
 Open the AWS Console, go to CloudFormation, and create a stack from
-`cloudformation/careroute-vpc-eks-standard.yaml`. Set `ClusterName` to `csc3104`,
-`ComputeMode` to `fargate`, and `AppPort` to `8000`. Tick the IAM acknowledgement box.
+`cloudformation/careroute-vpc-eks-standard.yaml`. Set `ClusterName` to `careroute-cluster-1`,
+`ComputeMode` to `fargate`, `AppPort` to `8000`, and `BudgetAlertEmail` to your
+email address (this creates a monthly cost budget with alerts at 80% and 100% of
+$80 USD — confirm the subscription email AWS sends after stack creation). Tick
+the IAM acknowledgement box.
 
 Alternatively, deploy from the CLI:
 
 ```powershell
 aws cloudformation create-stack `
-  --stack-name csc3104-careroute-1 `
+  --stack-name careroute-stack-1 `
   --template-body file://cloudformation/careroute-vpc-eks-standard.yaml `
-  --parameters ParameterKey=ClusterName,ParameterValue=csc3104 `
+  --parameters ParameterKey=ClusterName,ParameterValue=careroute-cluster-1 `
                ParameterKey=ComputeMode,ParameterValue=fargate `
                ParameterKey=AppPort,ParameterValue=8000 `
+               ParameterKey=BudgetAlertEmail,ParameterValue=your-email@example.com `
   --capabilities CAPABILITY_IAM `
   --region ap-southeast-1
 ```
@@ -38,13 +61,13 @@ aws cloudformation create-stack `
 Wait for the stack to reach `CREATE_COMPLETE` (15–25 minutes):
 
 ```powershell
-aws cloudformation wait stack-create-complete --stack-name csc3104-careroute-1 --region ap-southeast-1
+aws cloudformation wait stack-create-complete --stack-name careroute-stack-1 --region ap-southeast-1
 ```
 
 ### 2. Collect the stack outputs
 
 ```powershell
-aws cloudformation describe-stacks --stack-name csc3104-careroute-1 --region ap-southeast-1 --query "Stacks[0].Outputs" --output table
+aws cloudformation describe-stacks --stack-name careroute-stack-1 --region ap-southeast-1 --query "Stacks[0].Outputs" --output table
 ```
 
 Note the following values for later steps:
@@ -56,11 +79,13 @@ Note the following values for later steps:
 | `RedisEndpoint` | `k8s/eks/fastapi.yaml` |
 | `AlbSecurityGroupId` | `k8s/eks/ingress.yaml` |
 | `VpcId` | Helm install of the load balancer controller |
+| `CheckinsQueueUrl` | `k8s/eks/fastapi.yaml` (env var) |
+| `DisruptionsQueueUrl` | `k8s/eks/fastapi.yaml` (env var) |
 
 ### 3. Connect kubectl to the cluster
 
 ```powershell
-aws eks update-kubeconfig --region ap-southeast-1 --name csc3104
+aws eks update-kubeconfig --region ap-southeast-1 --name careroute-cluster-1
 kubectl get pods -A
 ```
 
@@ -87,7 +112,7 @@ Create the controller's service account and IAM role:
 
 ```powershell
 eksctl create iamserviceaccount `
-  --cluster csc3104 `
+  --cluster careroute-cluster-1 `
   --namespace kube-system `
   --name aws-load-balancer-controller `
   --attach-policy-arn arn:aws:iam::<ACCOUNT_ID>:policy/AWSLoadBalancerControllerIAMPolicy `
@@ -101,7 +126,7 @@ Install the Helm chart with the `VpcId` output from step 2:
 ```powershell
 helm install aws-load-balancer-controller eks/aws-load-balancer-controller `
   -n kube-system `
-  --set clusterName=csc3104 `
+  --set clusterName=careroute-cluster-1 `
   --set serviceAccount.create=false `
   --set serviceAccount.name=aws-load-balancer-controller `
   --set region=ap-southeast-1 `
@@ -126,11 +151,13 @@ docker build --platform linux/amd64 -t "$ECR/cloud-fastapi:v1" .
 docker push "$ECR/cloud-fastapi:v1"
 ```
 
-### 2. Create the AWS resources
+### 2. Create the S3 bucket
+
+SQS queues and DynamoDB tables are created by the CloudFormation stack. The S3
+bucket is the only resource created manually:
 
 ```powershell
-aws s3 mb s3://csc3104-files-<ACCOUNT_ID> --region ap-southeast-1
-aws sqs create-queue --queue-name csc3104-checkins --region ap-southeast-1
+aws s3 mb s3://careroute-files-<ACCOUNT_ID> --region ap-southeast-1
 ```
 
 ### 3. Fill in the placeholders
@@ -148,7 +175,7 @@ Update the following files in `k8s/eks/` with the stack outputs:
 
 ```powershell
 kubectl apply -k k8s/eks
-kubectl get pods -n csc3104 -w
+kubectl get pods -n careroute -w
 ```
 
 Fargate pods take 1–2 minutes to start. Press `Ctrl+C` once both replicas show `1/1 Running`.
@@ -158,7 +185,7 @@ Fargate pods take 1–2 minutes to start. Press `Ctrl+C` once both replicas show
 Test through the ALB:
 
 ```powershell
-kubectl get ingress -n csc3104
+kubectl get ingress -n careroute
 curl.exe http://<ALB_ADDRESS>/health
 ```
 
@@ -168,7 +195,7 @@ The ALB address appears within a few minutes. The health endpoint should return
 To confirm the IRSA role is wired up:
 
 ```powershell
-kubectl exec -n csc3104 deploy/cloud-fastapi -- env | findstr AWS_
+kubectl exec -n careroute deploy/cloud-fastapi -- env | findstr AWS_
 ```
 
 You should see `AWS_ROLE_ARN` and `AWS_WEB_IDENTITY_TOKEN_FILE`.
@@ -193,17 +220,16 @@ kubectl delete -k k8s/eks
 
 # 2. Uninstall the load balancer controller
 helm uninstall aws-load-balancer-controller -n kube-system
-eksctl delete iamserviceaccount --cluster csc3104 --namespace kube-system --name aws-load-balancer-controller --region ap-southeast-1
+eksctl delete iamserviceaccount --cluster careroute-cluster-1 --namespace kube-system --name aws-load-balancer-controller --region ap-southeast-1
 
 # 3. Wait a few minutes for the ALB and its network interfaces to be deleted
 
-# 4. Delete the CloudFormation stack (removes VPC, EKS, Redis, IAM roles, ECR)
-aws cloudformation delete-stack --stack-name csc3104-careroute-1 --region ap-southeast-1
-aws cloudformation wait stack-delete-complete --stack-name csc3104-careroute-1 --region ap-southeast-1
-v
+# 4. Delete the CloudFormation stack (removes VPC, EKS, Redis, SQS, DynamoDB, IAM roles, ECR)
+aws cloudformation delete-stack --stack-name careroute-stack-1 --region ap-southeast-1
+aws cloudformation wait stack-delete-complete --stack-name careroute-stack-1 --region ap-southeast-1
+
 # 5. Clean up resources created outside the stack
-aws s3 rb s3://csc3104-files-<ACCOUNT_ID> --force --region ap-southeast-1
-aws sqs delete-queue --queue-url <QUEUE_URL> --region ap-southeast-1
+aws s3 rb s3://careroute-files-<ACCOUNT_ID> --force --region ap-southeast-1
 aws iam delete-policy --policy-arn arn:aws:iam::<ACCOUNT_ID>:policy/AWSLoadBalancerControllerIAMPolicy
 ```
 

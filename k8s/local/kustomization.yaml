@@ -5,3 +5,7 @@ resources:
   - localstack.yaml
   - fastapi.yaml
   - checkin-service.yaml
+  - detectors/route-corridor
+  - detectors/heading-speed
+  - detectors/dwell-time
+  - journey-service.yaml

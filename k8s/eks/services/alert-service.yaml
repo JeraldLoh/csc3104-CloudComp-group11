@@ -1,0 +1,68 @@
+# Alert Service (Member 5) on EKS. Deployed with:
+#   .\scripts\windows\deploy.ps1 -Service alert-service
+# The script fills in the __PLACEHOLDERS__ from the platform stack (scripts/README.md).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alert-service
+  namespace: __NAMESPACE__
+  labels: { app: alert-service }
+spec:
+  replicas: 2   # an alert must not be lost if one replica crashes
+  selector:
+    matchLabels: { app: alert-service }
+  template:
+    metadata:
+      labels: { app: alert-service }
+    spec:
+      serviceAccountName: cloud-fastapi   # shared AWS permissions (careroute-* tables and queues) for now
+      # Put the replicas in different Availability Zones where possible, so losing a zone doesn't
+      # take the service down.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: { app: alert-service }
+      containers:
+        - name: alert-service
+          image: __IMAGE__
+          ports: [{ containerPort: 8000 }]
+          env:
+            - { name: REDIS_URL, value: "redis://__REDIS_ENDPOINT__:6379/0" }
+            - { name: AWS_DEFAULT_REGION, value: "__REGION__" }
+            - { name: DISRUPTIONS_QUEUE_URL, value: "__DISRUPTIONS_QUEUE_URL__" }
+            - { name: CREATE_RESOURCES, value: "false" }   # the platform stack creates the tables and queue
+            # No AWS_ENDPOINT_URL and no keys: boto3 uses real AWS and the service account's role.
+          # Fargate sizes the pod from requests (minimum 0.25 vCPU / 0.5 GB).
+          resources:
+            requests: { cpu: 250m, memory: 512Mi }
+            limits: { cpu: 250m, memory: 512Mi }
+          readinessProbe:
+            httpGet: { path: /ready, port: 8000 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /health, port: 8000 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alert-service   # other services call http://alert-service:8000 (contracts/api.md)
+  namespace: __NAMESPACE__
+spec:
+  selector: { app: alert-service }
+  ports: [{ port: 8000, targetPort: 8000 }]
+---
+# Keep at least one replica running during voluntary disruptions (e.g. Fargate patching).
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: alert-service
+  namespace: __NAMESPACE__
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app: alert-service }

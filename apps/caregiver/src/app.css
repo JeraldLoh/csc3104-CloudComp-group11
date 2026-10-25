@@ -1,0 +1,12 @@
+html, body, #root { height: 100%; margin: 0; }
+body { background: #fff; color: #111; font: 14px/1.4 system-ui, sans-serif; }
+.shell { display: flex; flex-direction: column; height: 100%; }
+.shell__bar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 8px 14px; border-bottom: 1px solid #ddd; }
+.shell__bar label { display: flex; align-items: center; gap: 6px; font-weight: 600; }
+.shell__bar input { width: 110px; padding: 4px 6px; font: inherit; }
+.shell__bar select { padding: 3px 4px; font: inherit; }
+.shell__bar small { font-weight: 400; color: #555; }
+.shell__main { flex: 1; min-height: 0; }
+.shell__tabs { display: flex; gap: 4px; }
+.shell__tabs button { padding: 4px 10px; border: 1px solid #ccc; border-radius: 6px; background: #f6f6f6; font: inherit; cursor: pointer; }
+.shell__tabs button[aria-pressed="true"] { background: #1d4ed8; border-color: #1d4ed8; color: #fff; font-weight: 600; }

@@ -2,7 +2,7 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: cloud-fastapi
-  namespace: csc3104
+  namespace: careroute
   annotations:
     # One ALB for every service (IngressGroup). Each service adds its own Ingress with this
     # group.name and a lower group.order; this catch-all "/" is evaluated last.

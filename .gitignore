@@ -17,6 +17,7 @@
 __pycache__/
 *.py[cod]
 .venv/
+.pytest_cache/
 venv/
 
 # Node.js
@@ -25,6 +26,7 @@ dist/
 
 # Common build output
 build/
+services/journey-service/app/saved_data/
 
 # AWS
 iam_policy.json
@@ -38,3 +40,5 @@ dump.rdb
 # Evaluation raw runs and server logs (large; recreate with evaluation/run.py)
 evaluation/results/*
 !evaluation/results/summary.json
+# Simulator replay output
+results/
