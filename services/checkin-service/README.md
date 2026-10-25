@@ -22,16 +22,17 @@ seconds), `401 unauthorized` (only when `AUTH_REQUIRED=true`).
 
 ## Run it
 
-**Docker Compose** (from the repo root, alongside Jerald's stack; the override also fixes
-LocalStack's health check):
+**Docker Compose** (from the repo root). `compose.checkin.yaml` brings its own Redis and
+LocalStack, and reads `LOCALSTACK_AUTH_TOKEN` from the `.env` file at the repo root:
 
 ```powershell
-$env:COMPOSE_FILE = "compose.yaml;services/checkin-service/compose.checkin.yaml"
-docker compose up -d --build checkin-service
+$env:COMPOSE_FILE = "services/checkin-service/compose.checkin.yaml"
+docker compose up -d --build
 curl.exe http://localhost:8001/ready
 ```
 
-Naming `checkin-service` starts only this service plus Redis and LocalStack (what it depends on).
+Set `COMPOSE_FILE` once per PowerShell window; then `docker compose stop checkin-service`,
+`docker compose logs checkin-service`, `docker compose down` and so on all use this file.
 
 **kind (local Kubernetes):** `k8s/local/checkin-service.yaml` is already listed in
 `k8s/local/kustomization.yaml`. Follow the kind steps in the root README, plus:

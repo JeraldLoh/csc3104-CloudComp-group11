@@ -42,12 +42,12 @@ Results and figures: **[RESULTS.md](RESULTS.md)**.
 
 ## Run it yourself
 
-Needs the team's Docker stack (Redis + LocalStack), Node 22 and Python 3.12.
+Needs Docker (for Redis + LocalStack), Node 22 and Python 3.12.
 
 ```powershell
-# 1. Redis and LocalStack (from the repo root)
-$env:COMPOSE_FILE = "compose.yaml;services/checkin-service/compose.checkin.yaml"
-docker compose up -d checkin-service
+# 1. Redis and LocalStack (from the repo root; needs LOCALSTACK_AUTH_TOKEN in .env)
+$env:COMPOSE_FILE = "services/checkin-service/compose.checkin.yaml"
+docker compose up -d --build
 
 # 2. Python packages (the service's venv is fine)
 cd services\checkin-service

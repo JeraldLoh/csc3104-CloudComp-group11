@@ -53,10 +53,10 @@ export interface RoutePack {
   packVersion: string;
   routeId: string;
   routeVersion: number;
-  travellerName: string;
+  travellerName: string | null; // null until Profiles (M5) provides it
   steps: RoutePackStep[];
   path: [number, number][];
-  caregiver: { name: string; phone: string };
+  caregiver: { name: string | null; phone: string | null }; // null until Profiles (M5) provides them
   messages: { somethingChanged: string; offRoute: string; help: string };
   generatedAt: string;
 }

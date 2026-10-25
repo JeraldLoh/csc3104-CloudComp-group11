@@ -62,8 +62,15 @@ describe("validatePack", () => {
     ["empty instruction", { ...DEMO_PACK, steps: [{ ...DEMO_PACK.steps[0], easyRead: "  " }] }],
     ["no caregiver phone", { ...DEMO_PACK, caregiver: { name: "Sam" } }],
     ["path too short", { ...DEMO_PACK, path: [[1, 2]] }],
+    ["empty traveller name", { ...DEMO_PACK, travellerName: " " }],
+    ["no traveller name field", (({ travellerName: _t, ...rest }) => rest)(DEMO_PACK)],
   ])("rejects %s", (_name, bad) => {
     expect(() => validatePack(bad)).toThrow(PackError);
+  });
+  it("accepts names that aren't known yet (null), as the Journey Service sends until Profiles exists", () => {
+    const p = validatePack({ ...structuredClone(DEMO_PACK), travellerName: null, caregiver: { name: null, phone: null } });
+    expect(p.travellerName).toBeNull();
+    expect(p.caregiver.phone).toBeNull();
   });
 });
 

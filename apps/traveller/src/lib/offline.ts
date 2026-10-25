@@ -44,7 +44,11 @@ export function validatePack(x: unknown): RoutePack {
   };
   if (!x || typeof x !== "object") fail("not an object");
   const p = x as Record<string, unknown>;
-  for (const k of ["packVersion", "routeId", "travellerName"]) if (typeof p[k] !== "string" || !p[k]) fail(`missing ${k}`);
+  for (const k of ["packVersion", "routeId"]) if (typeof p[k] !== "string" || !p[k]) fail(`missing ${k}`);
+  // Names come from Profiles (M5). Until that exists the Journey Service sends null, which the
+  // contracts allow ("unknown values: use null, don't leave the field out"). Missing is still wrong.
+  const nameOrNull = (v: unknown) => v === null || (typeof v === "string" && v.trim() !== "");
+  if (!("travellerName" in p) || !nameOrNull(p.travellerName)) fail("missing travellerName (null if unknown)");
   if (typeof p.routeVersion !== "number") fail("missing routeVersion");
   if (!Array.isArray(p.steps) || p.steps.length === 0) fail("no steps");
   (p.steps as unknown[]).forEach((s, i) => {
@@ -55,7 +59,9 @@ export function validatePack(x: unknown): RoutePack {
   });
   if (!Array.isArray(p.path) || p.path.length < 2) fail("path needs at least 2 points");
   const c = p.caregiver as Record<string, unknown> | undefined;
-  if (!c || typeof c.name !== "string" || typeof c.phone !== "string") fail("missing caregiver name/phone");
+  if (!c || typeof c !== "object" || !("name" in c) || !("phone" in c) || !nameOrNull(c.name) || !nameOrNull(c.phone)) {
+    fail("missing caregiver name/phone (null if unknown)");
+  }
   if (!p.messages || typeof p.messages !== "object") fail("missing messages");
   return x as RoutePack;
 }

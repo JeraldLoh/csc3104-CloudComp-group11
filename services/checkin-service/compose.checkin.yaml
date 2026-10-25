@@ -1,11 +1,22 @@
-# Adds the Check-in Service to Jerald's compose.yaml without editing it.
-# From the repo root:
-#   docker compose -f compose.yaml -f services/checkin-service/compose.checkin.yaml up --build -d
-# (Paths here are relative to the repo root, because compose.yaml is the first file.)
+# Runs the Check-in Service locally with its own Redis and LocalStack (emulated
+# DynamoDB + SQS). Self-contained, because the shared compose.yaml was removed from the
+# repo (the team now uses kind for local Kubernetes: see the root README).
+#
+# From the repo root, once per PowerShell window:
+#   $env:COMPOSE_FILE = "services/checkin-service/compose.checkin.yaml"
+# then:
+#   docker compose up -d --build        start (or rebuild after code changes)
+#   docker compose stop checkin-service stop just the service (e.g. to test retries)
+#   docker compose down                 stop everything
+#
+# Needs LOCALSTACK_AUTH_TOKEN in the .env file at the repo root (never commit it).
+# Paths below are relative to this file's folder.
+name: careroute-checkin
+
 services:
   checkin-service:
     image: checkin-service:local
-    build: services/checkin-service
+    build: .
     ports:
       - "8001:8000"
     environment:
@@ -21,11 +32,26 @@ services:
       cloud-localstack:
         condition: service_healthy
 
-  cloud-localstack:
-    # compose.yaml's health check runs curl, which newer LocalStack images don't include,
-    # so it never passes and nothing that waits for LocalStack starts. Check with Python
-    # instead, and allow time for startup. (Remove once compose.yaml is fixed.)
+  cloud-redis:
+    image: redis:7
+    ports:
+      - "127.0.0.1:6379:6379"
     healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  cloud-localstack:
+    image: localstack/localstack:latest
+    ports:
+      - "127.0.0.1:4566:4566"
+    environment:
+      SERVICES: sqs,dynamodb
+      AWS_DEFAULT_REGION: ap-southeast-1
+    env_file: ../../.env            # LOCALSTACK_AUTH_TOKEN
+    healthcheck:
+      # Newer LocalStack images don't include curl, so check with Python.
       test: python3 -c "import urllib.request as u; u.urlopen('http://localhost:4566/_localstack/health', timeout=2)"
       interval: 5s
       timeout: 3s

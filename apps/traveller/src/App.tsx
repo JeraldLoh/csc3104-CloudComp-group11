@@ -65,7 +65,7 @@ function Journey({ session, demo, debug }: { session: Session; demo: boolean; de
     return (
       <Screen>
         <div className="message">
-          <h1>Hi {pack.travellerName}</h1>
+          <h1>{pack.travellerName ? `Hi ${pack.travellerName}` : "Hi there"}</h1>
           <p className="lead">Your trip has {pack.steps.length} steps.</p>
           {first && <p>First: {first.easyRead}</p>}
           <p className="note">While you travel, {caregiver} can see where you are. Your phone will ask to use your location.</p>

@@ -41,7 +41,7 @@ to Amplify (which gives https).
 ## Tests
 
 ```powershell
-npm test          # 97 tests: outbox, sender, tracker, request queue, HTTP, offline, route updates, wake lock, backoff, partial batches, shutdown
+npm test          # 103 tests: outbox, sender, tracker, request queue, HTTP, offline, route updates, wake lock, backoff, partial batches, shutdown, Help sheet
 npm run typecheck
 ```
 
@@ -182,6 +182,9 @@ and nothing else, and the Help button never moves. Status messages are calm and 
 
 ## Not done yet
 
-- The pack builder (backend half of 2.4): waiting to agree the interface with the Journey Service owner.
+- The pack is built by the Journey Service (M6) at `GET /api/trips/{tripId}/pack` (stored in S3, temporary link).
+  Until Profiles (M5) exists it sends `travellerName` and the caregiver's name and phone as `null`; the app
+  accepts that, greets with "Hi there", and the Help sheet has no Call button (it tells the traveller to ask
+  someone nearby if help can't get through).
 - Login: issue 1.5. `HttpTransport` already takes a `getToken` function for it.
 - Actually deploying to Amplify needs the team's AWS account (steps above).
