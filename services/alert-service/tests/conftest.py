@@ -1,7 +1,8 @@
 """Tests run against the local cluster's LocalStack, so conditional writes behave like real DynamoDB.
 
-Needs the LocalStack port-forward running:
+Needs both port-forwards running (Redis for the live-alert tests):
     kubectl port-forward svc/cloud-localstack 4566:4566 -n csc3104
+    kubectl port-forward svc/cloud-redis 6379:6379 -n csc3104
 Each test uses its own random traveller ID, so tests don't see each other's incidents.
 """
 import json
@@ -17,6 +18,7 @@ os.environ.setdefault("AWS_DEFAULT_REGION", "ap-southeast-1")
 
 import boto3  # noqa: E402
 import pytest  # noqa: E402
+import redis  # noqa: E402
 from botocore.config import Config  # noqa: E402
 
 from app.aws_resources import ensure_tables  # noqa: E402
@@ -46,6 +48,21 @@ def dynamodb():
 @pytest.fixture(scope="session")
 def sqs(dynamodb):  # dynamodb: checks LocalStack is reachable first
     return boto3.client("sqs", region_name=settings.aws_region, endpoint_url=settings.aws_endpoint_url)
+
+
+@pytest.fixture(scope="session")
+def redis_client():
+    client = redis.Redis.from_url(settings.redis_url, socket_timeout=2, decode_responses=True)
+    try:
+        client.ping()
+    except Exception as e:
+        pytest.exit(f"Redis isn't reachable at {settings.redis_url}. Is the port-forward running? ({e})", 1)
+    return client
+
+
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"
 
 
 @pytest.fixture

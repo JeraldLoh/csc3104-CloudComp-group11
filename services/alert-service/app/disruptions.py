@@ -11,6 +11,7 @@ import threading
 
 from pydantic import ValidationError
 
+from app.events import EVENT_FOR_OUTCOME
 from app.incidents import IncidentStore
 from app.models import Disruption
 
@@ -18,10 +19,11 @@ log = logging.getLogger("alert.disruptions")
 
 
 class DisruptionConsumer:
-    def __init__(self, sqs_client, queue_url: str, incidents: IncidentStore, wait_s: int = 20):
+    def __init__(self, sqs_client, queue_url: str, incidents: IncidentStore, wait_s: int = 20, publisher=None):
         self.sqs = sqs_client
         self.queue_url = queue_url
         self.incidents = incidents
+        self.publisher = publisher  # AlertPublisher: live events to dashboards (optional, e.g. in tests)
         self.wait_s = wait_s  # long polling: wait up to this long for a message instead of busy-looping
         self._stop = threading.Event()
 
@@ -37,6 +39,8 @@ class DisruptionConsumer:
             disruption.as_problem(), details={"disruption": disruption.details()}
         )
         log.info("%s %s from %s", outcome, incident["incidentId"], disruption.disruptionId)
+        if self.publisher:
+            self.publisher.publish(EVENT_FOR_OUTCOME[outcome], incident)
         return True
 
     def poll_once(self) -> int:

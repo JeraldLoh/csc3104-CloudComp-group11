@@ -4,24 +4,29 @@ from contextlib import asynccontextmanager
 
 import boto3
 import redis
+import redis.asyncio as redis_async
 from fastapi import Depends, FastAPI, Header, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.aws_resources import ensure_queue, ensure_tables
 from app.config import settings
 from app.disruptions import DisruptionConsumer
 from app.errors import ApiError
+from app.events import EVENT_FOR_OUTCOME, AlertPublisher
 from app.incidents import IncidentStore
 from app.models import ProblemReport
+from app.stream import event_stream
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("alert.api")
 
 r = redis.Redis.from_url(settings.redis_url, socket_timeout=2)
+r_async = redis_async.Redis.from_url(settings.redis_url, decode_responses=True)  # for /api/stream
 dynamodb = boto3.client("dynamodb", region_name=settings.aws_region, endpoint_url=settings.aws_endpoint_url)
 sqs = boto3.client("sqs", region_name=settings.aws_region, endpoint_url=settings.aws_endpoint_url)
 incidents = IncidentStore(dynamodb)
+publisher = AlertPublisher(r, dynamodb, settings.travellers_table)
 
 
 @asynccontextmanager
@@ -32,7 +37,7 @@ async def lifespan(app: FastAPI):
     consumer = None
     if settings.disruptions_consumer_enabled:
         queue_url = settings.disruptions_queue_url or sqs.get_queue_url(QueueName=settings.disruptions_queue)["QueueUrl"]
-        consumer = DisruptionConsumer(sqs, queue_url, incidents)
+        consumer = DisruptionConsumer(sqs, queue_url, incidents, publisher=publisher)
         consumer.start()
     yield
     if consumer:
@@ -84,6 +89,7 @@ def receive_problem(report: ProblemReport):
     """From the Aggregator and the Heartbeat Monitor. Safe to retry: the same problem is one incident."""
     incident, outcome = incidents.record_problem(report)
     log.info("%s %s (detections: %s)", outcome, incident["incidentId"], incident["detectionCount"])
+    publisher.publish(EVENT_FOR_OUTCOME[outcome], incident)
     return {"incidentId": incident["incidentId"], "created": outcome == "created"}
 
 
@@ -96,9 +102,24 @@ def list_incidents(travellerId: str, limit: int = Query(50, ge=1, le=200)):
 @app.post("/api/incidents/{incident_id}/ack")
 def acknowledge_incident(incident_id: str, user_id: str | None = Depends(current_user)):
     # The ID contains '#', so callers must URL-encode it: U-042%23T-001%23off_route%232
-    return incidents.acknowledge(incident_id, user_id)
+    incident = incidents.acknowledge(incident_id, user_id)
+    publisher.publish("acknowledged", incident)
+    return incident
 
 
 @app.post("/api/incidents/{incident_id}/resolve")
 def resolve_incident(incident_id: str, user_id: str | None = Depends(current_user)):
-    return incidents.resolve(incident_id, user_id)
+    incident = incidents.resolve(incident_id, user_id)
+    publisher.publish("resolved", incident)
+    return incident
+
+
+# ---------------------------------------------------------------------------- live alerts
+@app.get("/api/stream")
+async def stream(request: Request, travellerId: str | None = None):
+    """Live alert-event.json messages as Server-Sent Events. Optional: only one traveller's."""
+    return StreamingResponse(
+        event_stream(r_async, request, travellerId),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},  # don't let proxies buffer it
+    )
