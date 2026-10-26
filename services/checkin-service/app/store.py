@@ -92,4 +92,7 @@ class CheckinStore:
         return resp.get("Items", [])
 
     def ping(self) -> None:
-        self.table.load()
+        """Readiness: the table exists and we may read it. A GetItem on a key that never exists,
+        rather than DescribeTable, because the team's shared role (careroute-* tables) allows
+        reads and writes but not DescribeTable."""
+        self.table.get_item(Key={"tripId": "__ready__", "seq": 0})

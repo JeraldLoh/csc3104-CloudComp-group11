@@ -6,13 +6,8 @@ resources:
   - aws-logging.yaml
   - fastapi.yaml
   - ingress.yaml
-  - checkin-service.yaml
 images:
   - name: cloud-fastapi
     # TODO: EcrRepositoryUri output from the stack, and the tag you pushed
     newName: <ACCOUNT_ID>.dkr.ecr.ap-southeast-1.amazonaws.com/cloud-fastapi
-    newTag: v1
-  - name: checkin-service
-    # TODO: RepositoryUri output of the checkin-service stack, and the tag you pushed
-    newName: <ACCOUNT_ID>.dkr.ecr.ap-southeast-1.amazonaws.com/checkin-service
     newTag: v1

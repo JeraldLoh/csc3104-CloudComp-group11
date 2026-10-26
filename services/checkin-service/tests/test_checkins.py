@@ -109,6 +109,13 @@ def test_health_and_ready(env):
     assert env.client.get("/ready").json() == {"status": "ready"}
 
 
+def test_ready_reports_a_missing_table(env):
+    """Readiness must fail (503) if the table isn't there, using only calls the shared role allows."""
+    env.service.store.table.delete()
+    res = env.client.get("/ready")
+    assert res.status_code == 503 and "dynamodb" in res.text
+
+
 # ---------- duplicates and retries ----------
 
 def test_retry_of_same_seq_is_ignored(env):

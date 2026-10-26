@@ -181,79 +181,34 @@ so they'd distort the gap distribution. When a buffered batch arrives, `lastseen
 | `CORS_ORIGINS` | empty | web addresses allowed to call from a browser, comma-separated (e.g. the Amplify URL). Not needed locally: the app's dev server proxies `/api`. |
 
 Locally the table and queues are created on startup (`CREATE_RESOURCES=true`). On AWS they
-come from the CloudFormation stack below, and the service's role isn't allowed to create anything.
+come from the team's platform stack (see "Deploy to AWS" below).
 
 ## Deploy to AWS (EKS)
 
-Do the platform first (root README: platform stack, `kubectl` connected, Load Balancer Controller).
-
-**1. Create this service's stack** (DynamoDB table with TTL, SQS queue + dead-letter queue, ECR
-repository, and an IAM role only this service's pods can use):
-
-```powershell
-$OIDC = aws cloudformation describe-stacks --stack-name csc3104-careroute-1 --region ap-southeast-1 `
-  --query "Stacks[0].Outputs[?OutputKey=='OidcProviderArn'].OutputValue" --output text
-aws cloudformation create-stack `
-  --stack-name careroute-checkin-service `
-  --template-body file://services/checkin-service/infra/checkin-stack.yaml `
-  --parameters ParameterKey=OidcProviderArn,ParameterValue=$OIDC `
-  --capabilities CAPABILITY_IAM `
-  --region ap-southeast-1
-aws cloudformation wait stack-create-complete --stack-name careroute-checkin-service --region ap-southeast-1
-aws cloudformation describe-stacks --stack-name careroute-checkin-service --region ap-southeast-1 `
-  --query "Stacks[0].Outputs" --output table
-```
-
-**2. Build and push the image** (`RepositoryUri` output):
+Uses the team platform and scripts (`scripts/README.md`). The platform stack creates the
+`careroute-checkins` table (with `pending-index`) and queue, the Redis cluster, and the shared
+service account `cloud-fastapi` whose role the pods use.
 
 ```powershell
-$ECR = "<ACCOUNT_ID>.dkr.ecr.ap-southeast-1.amazonaws.com"
-aws ecr get-login-password --region ap-southeast-1 | docker login --username AWS --password-stdin $ECR
-docker build --platform linux/amd64 -t "$ECR/checkin-service:v1" services/checkin-service
-docker push "$ECR/checkin-service:v1"
-```
-
-**3. Fill in the placeholders:**
-
-| File | Placeholder | Value |
-|---|---|---|
-| `k8s/eks/kustomization.yaml` | `checkin-service` → `newName` | `RepositoryUri` (this stack) |
-| `k8s/eks/checkin-service.yaml` | ServiceAccount `role-arn` | `CheckinServiceRoleArn` (this stack) |
-| `k8s/eks/checkin-service.yaml` | `<REDIS_ENDPOINT>` | `RedisEndpoint` (platform stack) |
-| `k8s/eks/checkin-service.yaml` | `sg-REPLACE_ME` | `AlbSecurityGroupId` (platform stack) |
-
-**4. Apply and check:**
-
-```powershell
-kubectl apply -k k8s/eks
-kubectl get pods -n csc3104 -l app=checkin-service -w     # 2 pods 1/1 Running
-kubectl get ingress -n csc3104                            # both ingresses show the SAME address
+# 1. Create the environment (once per session, ~25-35 min; tear down when finished)
+.\scripts\windows\deploy.ps1 -BudgetEmail you@gmail.com
+# 2. Build, push and deploy this service (~2-3 min; run again after code changes)
+.\scripts\windows\deploy.ps1 -Service checkin-service
+# 3. Check
+kubectl get pods -n careroute -l app=checkin-service     # 2 pods 1/1 Running
+kubectl get ingress -n careroute                         # the shared ALB address
 curl.exe -X POST http://<ALB_ADDRESS>/api/checkins -H "Content-Type: application/json" -d "{}"
+# 4. Delete everything (the cluster, NAT gateway, ALB and Redis cost money every hour)
+.\scripts\windows\teardown.ps1
 ```
 
-The last command should return `422 invalid_request`, which proves the request reached this
-service through the shared load balancer.
+The `curl` should return `422 invalid_request`, which proves the request reached this service
+through the shared load balancer. The manifest is `k8s/eks/services/checkin-service.yaml`; the
+script fills in its `__PLACEHOLDERS__`.
 
-**Teardown** (the cluster, NAT gateway, ALB and Redis cost money every hour, so tear down after demos):
-`kubectl delete -k k8s/eks` first (removes the ALB), then
-`aws cloudformation delete-stack --stack-name careroute-checkin-service --region ap-southeast-1`,
-then the platform stack as in the root README. Deleting this stack deletes the table, the queues
-and the images in the repository.
-
-**How it fits the platform**
-
-- **Least privilege per service.** The platform's `ApiServiceRole` is for `cloud-fastapi`. This
-  service has its own role (IRSA, service account `checkin-service`) that can only put/get/update
-  items in its table, describe it (the `/ready` check), query its `pending-index` (the clean-up
-  task), and send to its queue. It can't read the
-  queue (the Coordinator's job) or touch anything else.
-- **One load balancer for everyone.** Every service's Ingress joins the IngressGroup `careroute`,
-  so they share one ALB. Rules run lowest `group.order` first: specific paths use small numbers
-  (this one is `20`), and the catch-all `/` in `ingress.yaml` is `1000`.
-- **Two Availability Zones.** The two replicas are spread across zones where possible, and a
-  PodDisruptionBudget keeps at least one running while Fargate patches pods.
-- **Redis** is the platform's ElastiCache node (single node, no cluster mode, so the multi-key
-  Lua scripts work; they need Redis 6.2 or newer).
+`infra/checkin-stack.yaml` is a standalone alternative for deploying this service without the team
+platform: its own table, queue and a least-privilege role for this service only. Don't deploy it
+next to the platform stack: both create `careroute-checkins`.
 
 ## Not done yet
 
