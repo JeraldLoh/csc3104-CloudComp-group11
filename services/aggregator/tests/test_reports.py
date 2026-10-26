@@ -43,8 +43,9 @@ def test_values_match_the_contract_example(contract_case):
     for field in ("reportId", "source", "travellerId", "tripId", "stepIndex", "problemType",
                   "detectorsUsed", "votes", "location", "batteryPct", "timestamp"):
         assert report[field] == expected[field], field
-    # The example's 0.81 is illustrative; ours is computed from its votes.
-    assert report["confidence"] == round(2.33 / 2.93, 2)
+    # The example's 0.81 is illustrative; ours is computed from its votes. dwell-time's
+    # "normal" says nothing about the route, so every detector judging off_route agrees.
+    assert report["confidence"] == 1.0
 
 
 def test_is_json_serialisable(contract_case):

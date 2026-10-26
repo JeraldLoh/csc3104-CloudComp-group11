@@ -145,7 +145,8 @@ spec:
           ports: [{ containerPort: 8000 }]
           env:
             - { name: DETECTOR_ID, value: "ml-anomaly" }
-            - { name: MODE, value: "auto" }
+            # Not built yet and judges every problem type: abstain unless switched on for a demo.
+            - { name: MODE, value: "abstain" }
             - { name: PROBLEM_TYPE, value: "off_route" }
             - { name: CONFIDENCE, value: "0.6" }
           resources:

@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CareRoute Detection</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #1d2330; --muted: #677085; --line: #e3e6ec;
+    --ok: #1f8a4c; --ok-bg: #e5f5ec; --bad: #c0392b; --bad-bg: #fbe9e7;
+    --warn: #b9690b; --warn-bg: #fdf1e1; --idle: #7a8194; --idle-bg: #eef0f4;
+    --accent: #2f5bd3; --accent-bg: #e8eefc; --flash: #fff6c7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #11141a; --panel: #1a1f28; --text: #e6e9ef; --muted: #98a1b3; --line: #2a313d;
+      --ok: #4cc77f; --ok-bg: #173325; --bad: #ff7a6b; --bad-bg: #3a1d1a;
+      --warn: #f2a541; --warn-bg: #3a2a14; --idle: #9aa1b2; --idle-bg: #262c37;
+      --accent: #7ea2ff; --accent-bg: #1d2742; --flash: #3a3517;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px;
+           padding: 16px 24px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  header h1 { margin: 0; font-size: 18px; }
+  header .sub { color: var(--muted); font-size: 13px; }
+  .spacer { flex: 1; }
+  .conn { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--idle); }
+  .dot.live { background: var(--ok); }
+  .dot.down { background: var(--bad); }
+  button { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--text);
+           padding: 5px 12px; border-radius: 6px; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  main { padding: 20px 24px 40px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px;
+         max-width: 1400px; margin: 0 auto; }
+  main > * { min-width: 0; }   /* wide tables scroll inside their section instead of widening the page */
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+  .tile { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+  .tile .label { color: var(--muted); font-size: 12px; }
+  .tile .value { font-size: 24px; font-weight: 600; margin-top: 2px; }
+  .tile .hint { color: var(--muted); font-size: 12px; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  section h2 { margin: 0; padding: 12px 16px; font-size: 15px; border-bottom: 1px solid var(--line);
+               display: flex; align-items: center; gap: 10px; }
+  section h2 .note { font-weight: 400; color: var(--muted); font-size: 13px; }
+  .scroll { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; white-space: nowrap; }
+  tr:last-child td { border-bottom: none; }
+  tbody tr.clickable { cursor: pointer; }
+  tbody tr.clickable:hover { background: var(--accent-bg); }
+  tbody tr.selected { background: var(--accent-bg); }
+  tr.problem td:first-child { box-shadow: inset 3px 0 0 var(--bad); }
+  tr.fresh td { animation: flash 2.5s ease-out; }
+  @keyframes flash { from { background: var(--flash); } to { background: transparent; } }
+  .badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px;
+           font-weight: 600; white-space: nowrap; }
+  .b-ok { color: var(--ok); background: var(--ok-bg); }
+  .b-bad { color: var(--bad); background: var(--bad-bg); }
+  .b-warn { color: var(--warn); background: var(--warn-bg); }
+  .b-idle { color: var(--idle); background: var(--idle-bg); }
+  .b-accent { color: var(--accent); background: var(--accent-bg); }
+  .k { display: inline-flex; align-items: center; justify-content: center; min-width: 28px; height: 24px;
+       border-radius: 6px; font-weight: 700; }
+  .k2 { background: var(--idle-bg); color: var(--text); }
+  .k4 { background: var(--warn-bg); color: var(--warn); }
+  .votes { display: flex; flex-wrap: wrap; gap: 4px; }
+  .vote { display: inline-flex; gap: 6px; align-items: baseline; padding: 2px 8px; border-radius: 6px;
+          font-size: 12px; border: 1px solid transparent; }
+  .vote .det { font-weight: 600; }
+  .vote .meta { color: var(--muted); }
+  .v-problem { background: var(--bad-bg); color: var(--bad); }
+  .v-normal { background: var(--ok-bg); color: var(--ok); }
+  .v-abstain { background: var(--idle-bg); color: var(--idle); border-style: dashed; border-color: var(--idle); }
+  .muted { color: var(--muted); }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; white-space: nowrap; }
+  .bar { width: 90px; height: 6px; background: var(--idle-bg); border-radius: 3px; overflow: hidden;
+         display: inline-block; vertical-align: middle; margin-right: 6px; }
+  .bar > span { display: block; height: 100%; background: var(--accent); }
+  .bar.hot > span { background: var(--warn); }
+  .change { font-weight: 600; color: var(--warn); }
+  .empty { padding: 24px 16px; color: var(--muted); text-align: center; }
+  .filter { display: none; }
+  .filter.on { display: inline-flex; align-items: center; gap: 8px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 10px; padding: 10px 16px; border-top: 1px solid var(--line);
+            color: var(--muted); font-size: 12px; }
+  @media (max-width: 640px) {
+    header, main { padding-left: 16px; padding-right: 16px; }
+    th, td { padding: 6px 8px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>CareRoute: check-in analysis</h1>
+    <div class="sub">Coordinator + Aggregator · adaptive redundancy (2 detectors normally, 4 when risk is elevated)</div>
+  </div>
+  <div class="spacer"></div>
+  <span class="conn"><span id="dot" class="dot"></span><span id="conn">connecting…</span></span>
+  <button id="pause" type="button">Pause</button>
+</header>
+
+<main>
+  <div class="tiles">
+    <div class="tile"><div class="label">Avg detectors per decision</div>
+      <div class="value" id="t-k">–</div><div class="hint" id="t-k-hint">fixed redundancy would be 4.00</div></div>
+    <div class="tile"><div class="label">Problems detected</div>
+      <div class="value" id="t-problems">–</div><div class="hint" id="t-alerts">&nbsp;</div></div>
+    <div class="tile"><div class="label">Escalations (asked more detectors)</div>
+      <div class="value" id="t-esc">–</div><div class="hint">split votes or too few answers</div></div>
+    <div class="tile"><div class="label">Detector abstains</div>
+      <div class="value" id="t-abstain">–</div><div class="hint" id="t-timeouts">&nbsp;</div></div>
+    <div class="tile"><div class="label">Travellers at elevated risk</div>
+      <div class="value" id="t-elevated">–</div><div class="hint" id="t-travellers">&nbsp;</div></div>
+  </div>
+
+  <section>
+    <h2>Travellers <span class="note">click a row to show only their decisions</span></h2>
+    <div class="scroll">
+      <table>
+        <thead><tr>
+          <th>Traveller</th><th>Trip</th><th>Risk</th><th>Score</th><th>Next check-in</th>
+          <th>Calm streak</th><th>Last decision</th><th>Updated</th>
+        </tr></thead>
+        <tbody id="travellers"></tbody>
+      </table>
+    </div>
+    <div id="travellers-empty" class="empty">No travellers yet. Send a check-in and it will appear here.</div>
+  </section>
+
+  <section>
+    <h2>Decisions <span class="note">newest first</span>
+      <span id="filter" class="filter"><span class="badge b-accent" id="filter-name"></span>
+        <button id="clear" type="button">Show all</button></span>
+    </h2>
+    <div class="scroll">
+      <table>
+        <thead><tr>
+          <th>Time</th><th>Check-in</th><th>k</th><th>Votes (verdict · confidence · latency)</th>
+          <th>Decision</th><th>Risk</th><th>Alert</th>
+        </tr></thead>
+        <tbody id="decisions"></tbody>
+      </table>
+    </div>
+    <div id="decisions-empty" class="empty">No decisions yet.</div>
+    <div class="legend">
+      <span><span class="vote v-normal">normal</span></span>
+      <span><span class="vote v-problem">problem</span></span>
+      <span><span class="vote v-abstain">abstain</span> no answer in time / error / can't decide</span>
+      <span><span class="k k2">2</span> diverse pair</span>
+      <span><span class="k k4">4</span> all detectors</span>
+      <span><span class="badge b-warn">escalated</span> asked the remaining detectors</span>
+    </div>
+  </section>
+</main>
+
+<script>
+"use strict";
+const POLL_MS = 2000;
+const SHORT = { "route-corridor": "route", "heading-speed": "heading", "dwell-time": "dwell", "ml-anomaly": "ml" };
+let paused = false, traveller = null, seen = new Set(), firstLoad = true;
+
+const $ = (id) => document.getElementById(id);
+
+// Every value from the API is inserted as text nodes, never parsed as HTML.
+function el(tag, attrs, ...children) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === "class") node.className = v;
+    else if (k === "title") node.title = v;
+    else node.setAttribute(k, v);
+  }
+  for (const c of children) {
+    if (c === null || c === undefined) continue;
+    node.append(c instanceof Node ? c : document.createTextNode(String(c)));
+  }
+  return node;
+}
+
+function time(iso) {
+  if (!iso) return "–";
+  const d = new Date(iso);
+  return isNaN(d) ? iso : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+function pct(x) { return x === null || x === undefined ? "–" : Math.round(x * 100) + "%"; }
+
+function riskBadge(level) {
+  return el("span", { class: "badge " + (level === "elevated" ? "b-warn" : "b-ok") }, level || "–");
+}
+
+function decisionBadge(d) {
+  if (d.decision === "problem") return el("span", { class: "badge b-bad" }, "problem" + (d.problemType ? " · " + d.problemType : ""));
+  if (d.decision === "normal") return el("span", { class: "badge b-ok" }, "normal");
+  return el("span", { class: "badge b-idle", title: d.reason ? "reason: " + d.reason : "" }, d.decision || "–");
+}
+
+function voteChip(v) {
+  const verdict = ["problem", "normal", "abstain"].includes(v.verdict) ? v.verdict : "abstain";
+  const meta = verdict === "abstain" ? (v.reason || "abstain") : pct(v.confidence);
+  const latency = v.latencyMs !== null && v.latencyMs !== undefined ? Math.round(v.latencyMs) + " ms" : "";
+  return el("span", { class: "vote v-" + verdict, title: (v.detectorId || "?") + ": " + verdict + (v.reason ? " (" + v.reason + ")" : "") },
+    el("span", { class: "det" }, SHORT[v.detectorId] || v.detectorId || "?"),
+    el("span", {}, meta),
+    latency ? el("span", { class: "meta" }, latency) : null);
+}
+
+function riskCell(d) {
+  const before = d.riskBefore || {}, after = d.riskAfter || {};
+  if (before.level && after.level && before.level !== after.level) {
+    return el("span", { class: "change" }, before.level + " → " + after.level);
+  }
+  return el("span", { class: "muted" }, after.level || "–");
+}
+
+function alertCell(d) {
+  if (!d.incidentId) return el("span", { class: "muted" }, "–");
+  return d.alertCreated
+    ? el("span", { class: "badge b-bad", title: d.incidentId }, "new alert")
+    : el("span", { class: "badge b-idle", title: d.incidentId }, "repeat");
+}
+
+function renderTravellers(rows) {
+  const body = $("travellers");
+  body.replaceChildren(...rows.map((r) => {
+    const score = Math.max(0, Math.min(1, Number(r.riskScore) || 0));
+    const bar = el("span", { class: "bar" + (r.riskLevel === "elevated" ? " hot" : "") }, el("span"));
+    bar.firstChild.style.width = (score * 100).toFixed(0) + "%";
+    const tr = el("tr", { class: "clickable" + (r.travellerId === traveller ? " selected" : "") },
+      el("td", { class: "mono" }, r.travellerId),
+      el("td", { class: "mono" }, r.tripId || "–"),
+      el("td", {}, riskBadge(r.riskLevel)),
+      el("td", {}, bar, score.toFixed(2)),
+      el("td", {}, el("span", { class: "k " + (r.nextDetectors === 4 ? "k4" : "k2") }, r.nextDetectors), " detectors"),
+      el("td", {}, r.calmStreak),
+      el("td", {}, r.lastDecision ? decisionBadge({ decision: r.lastDecision }) : "–", r.lastSeq !== null && r.lastSeq !== undefined ? el("span", { class: "muted" }, " #" + r.lastSeq) : null),
+      el("td", { class: "muted" }, time(r.updatedAt)));
+    tr.addEventListener("click", () => setFilter(r.travellerId === traveller ? null : r.travellerId));
+    return tr;
+  }));
+  $("travellers-empty").style.display = rows.length ? "none" : "block";
+  const elevated = rows.filter((r) => r.riskLevel === "elevated").length;
+  $("t-elevated").textContent = rows.length ? elevated : "–";
+  $("t-travellers").textContent = rows.length ? "of " + rows.length + " traveller" + (rows.length === 1 ? "" : "s") : " ";
+}
+
+function renderDecisions(rows) {
+  const body = $("decisions");
+  body.replaceChildren(...rows.map((d) => {
+    const fresh = !firstLoad && !seen.has(d.requestId);
+    const checkin = el("td", {},
+      el("div", { class: "mono" }, d.requestId || "–"),
+      el("div", { class: "muted" }, (d.travellerId || "?") + (d.stepIndex !== null && d.stepIndex !== undefined ? " · step " + d.stepIndex : "")));
+    const k = el("td", {}, el("span", { class: "k " + (d.k >= 4 ? "k4" : "k2") }, d.k ?? "–"),
+      d.escalated ? el("div", {}, el("span", { class: "badge b-warn" }, "escalated")) : null);
+    const score = Number(d.problemScore);
+    return el("tr", { class: [fresh ? "fresh" : "", d.decision === "problem" ? "problem" : ""].join(" ").trim() },
+      el("td", { class: "muted" }, time(d.decidedAt)),
+      checkin, k,
+      el("td", {}, el("div", { class: "votes" }, ...(d.votes || []).map(voteChip))),
+      el("td", {}, decisionBadge(d), score > 0
+        ? el("div", { class: "muted" }, "problem score " + score.toFixed(2)) : null),
+      el("td", {}, riskCell(d)),
+      el("td", {}, alertCell(d)));
+  }));
+  $("decisions-empty").style.display = rows.length ? "none" : "block";
+  rows.forEach((d) => seen.add(d.requestId));
+  firstLoad = false;
+
+  // Tiles: over the decisions currently listed.
+  const n = rows.length;
+  const avgK = n ? rows.reduce((s, d) => s + (d.k || 0), 0) / n : null;
+  $("t-k").textContent = avgK === null ? "–" : avgK.toFixed(2);
+  $("t-k-hint").textContent = n ? "over last " + n + " · fixed redundancy would be 4.00" : "fixed redundancy would be 4.00";
+  const problems = rows.filter((d) => d.decision === "problem");
+  $("t-problems").textContent = n ? problems.length : "–";
+  const newAlerts = problems.filter((d) => d.alertCreated).length;
+  $("t-alerts").textContent = n ? newAlerts + " new alert" + (newAlerts === 1 ? "" : "s") + ", " + (problems.length - newAlerts) + " repeat" : " ";
+  $("t-esc").textContent = n ? rows.filter((d) => d.escalated).length : "–";
+  const votes = rows.flatMap((d) => d.votes || []);
+  const abstains = votes.filter((v) => v.verdict === "abstain");
+  $("t-abstain").textContent = n ? abstains.length : "–";
+  const timeouts = abstains.filter((v) => v.reason === "timeout").length;
+  $("t-timeouts").textContent = n ? "of " + votes.length + " votes · " + timeouts + " timeout" + (timeouts === 1 ? "" : "s") : " ";
+}
+
+function setFilter(id) {
+  traveller = id;
+  $("filter").classList.toggle("on", !!id);
+  $("filter-name").textContent = id || "";
+  seen = new Set(); firstLoad = true;
+  refresh();
+}
+
+function setConnection(ok, text) {
+  $("dot").className = "dot " + (ok ? "live" : "down");
+  $("conn").textContent = text;
+}
+
+async function getJSON(url) {
+  const r = await fetch(url, { cache: "no-store" });
+  if (!r.ok) throw new Error(url + " → HTTP " + r.status);
+  return r.json();
+}
+
+async function refresh() {
+  try {
+    const q = traveller ? "?travellerId=" + encodeURIComponent(traveller) + "&limit=50" : "?limit=50";
+    const [travellers, decisions] = await Promise.all([getJSON("api/status/travellers"), getJSON("api/decisions" + q)]);
+    renderTravellers(travellers);
+    renderDecisions(decisions);
+    setConnection(true, "live · updated " + new Date().toLocaleTimeString());
+  } catch (e) {
+    setConnection(false, "can't reach the Aggregator (" + e.message + ")");
+  }
+}
+
+$("pause").addEventListener("click", () => {
+  paused = !paused;
+  $("pause").textContent = paused ? "Resume" : "Pause";
+  if (!paused) refresh();
+});
+$("clear").addEventListener("click", () => setFilter(null));
+
+refresh();
+setInterval(() => { if (!paused && !document.hidden) refresh(); }, POLL_MS);
+</script>
+</body>
+</html>

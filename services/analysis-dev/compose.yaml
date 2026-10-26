@@ -78,7 +78,9 @@ services:
 
   detector-ml:
     <<: *fake-detector
-    environment: { DETECTOR_ID: ml-anomaly, MODE: auto, PROBLEM_TYPE: off_route, CONFIDENCE: "0.6" }
+    # ml-anomaly isn't built yet (Member 4). It judges every problem type, so a made-up vote
+    # here would sway real decisions: abstain by default, switch it on live for a demo.
+    environment: { DETECTOR_ID: ml-anomaly, MODE: abstain, PROBLEM_TYPE: off_route, CONFIDENCE: "0.6" }
     ports: ["127.0.0.1:9004:8000"]
 
   alert-service:

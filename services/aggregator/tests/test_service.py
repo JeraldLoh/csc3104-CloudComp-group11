@@ -33,7 +33,9 @@ def v(detector, verdict, confidence=0.8, problem_type=None):
 
 BOTH_PROBLEM = [v("route-corridor", "problem", 0.9), v("dwell-time", "problem", 0.7)]
 BOTH_NORMAL = [v("route-corridor", "normal", 0.9), v("dwell-time", "normal", 0.7)]
-SPLIT = [v("route-corridor", "problem", 0.8), v("dwell-time", "normal", 0.8)]
+# The first pair on an off-route check-in: dwell-time can't judge the route, so the
+# Aggregator wants a second opinion from a detector that can (ml-anomaly).
+FIRST_PAIR_OFF_ROUTE = [v("route-corridor", "problem", 0.8), v("dwell-time", "normal", 0.8)]
 
 
 class AlertService:
@@ -138,16 +140,16 @@ def test_keys_expire_after_a_day():
 # --- close calls change nothing -------------------------------------------------------------------
 
 def test_close_call_asks_for_more_votes_without_side_effects():
-    [reply], state, alert = run([("T-001#17", SPLIT)])
+    [reply], state, alert = run([("T-001#17", FIRST_PAIR_OFF_ROUTE)])
     assert reply["decision"] == "inconclusive"
-    assert reply["needsMoreVotes"] is True and reply["reason"] == "split"
+    assert reply["needsMoreVotes"] is True and reply["reason"] == "single_voter"
     assert alert.reports == []
     assert state["risk"] == {} and state["decisions"] == [] and state["answers"] == {}
 
 
 def test_close_call_then_four_votes_decides():
-    four = SPLIT + [v("heading-speed", "problem", 0.7), v("ml-anomaly", "problem", 0.6)]
-    replies, state, alert = run([("T-001#17", SPLIT), ("T-001#17", four, True)])
+    four = FIRST_PAIR_OFF_ROUTE + [v("heading-speed", "problem", 0.7), v("ml-anomaly", "problem", 0.6)]
+    replies, state, alert = run([("T-001#17", FIRST_PAIR_OFF_ROUTE), ("T-001#17", four, True)])
     assert [r["decision"] for r in replies] == ["inconclusive", "problem"]
     assert len(alert.reports) == 1 and alert.reports[0]["detectorsUsed"] == 4
     assert len(state["decisions"]) == 1 and state["decisions"][0]["k"] == 4
@@ -219,9 +221,11 @@ def test_alert_failure_saves_nothing_and_the_retry_succeeds_cleanly():
 # --- reliability weights ---------------------------------------------------------------------------
 
 def test_detector_weights_from_redis_are_used():
-    votes = [v("route-corridor", "problem", 0.5), v("dwell-time", "normal", 0.9)]
+    # ml-anomaly is the only other detector that judges off_route.
+    votes = [v("route-corridor", "problem", 0.5), v("ml-anomaly", "normal", 0.9),
+             v("dwell-time", "normal", 0.9), v("heading-speed", "normal", 0.9)]
     [plain], _, _ = run([("T-001#17", votes)])
-    [weighted], _, _ = run([("T-001#17", votes)], seed={WEIGHTS_KEY: {"dwell-time": "0.3"}})
+    [weighted], _, _ = run([("T-001#17", votes)], seed={WEIGHTS_KEY: {"ml-anomaly": "0.3"}})
     assert plain["decision"] == "normal"
     assert weighted["decision"] == "problem"
 
