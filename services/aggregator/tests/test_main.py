@@ -134,3 +134,8 @@ def test_not_ready_when_redis_is_down():
     r = call("GET", "/ready", redis=BrokenRedis())
     assert r.status_code == 503
     assert r.json()["error"]["code"] == "not_ready"
+
+
+def test_situation_is_accepted_and_optional():
+    assert call("POST", "/internal/votes", {**BODY, "situation": "riding"}).status_code == 200
+    assert call("POST", "/internal/votes", {k: v for k, v in BODY.items() if k != "situation"}).status_code == 200

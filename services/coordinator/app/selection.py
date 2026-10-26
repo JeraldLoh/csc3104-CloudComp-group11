@@ -1,10 +1,20 @@
 """Which detectors to ask about a check-in. Pure functions, no I/O.
 
 k = 2 when the traveller's risk is normal, k = 4 (every detector) when it's elevated
-(adaptive mode). The pair used for k = 2 is deliberately diverse: route-corridor looks
-at *where* the traveller is, dwell-time at *how long* they've been there, so one blind
-spot doesn't hide a problem from both.
+(adaptive mode).
+
+Which pair is asked at k = 2 depends on PAIR_STRATEGY:
+
+    step   (default) route-corridor plus the detector that fits the current journey step:
+               walking                      + heading-speed   (wrong direction)
+               bus/train step, slow         + dwell-time      (waiting too long for it)
+               bus/train step, moving       + route-progress  (missed stop)
+               step unknown                 + route-progress  (covers the most problem types)
+           A bus/train step covers both waiting at the stop and riding, so the check-in's
+           speed tells them apart.
+    fixed  the same pair for every check-in (NORMAL_PAIR, default route-corridor + dwell-time).
 """
+import json
 
 # detectorId (contracts/examples/detector-vote.json) -> service name (contracts/api.md)
 DETECTOR_SERVICES = {
@@ -17,6 +27,42 @@ ALL_DETECTORS = tuple(DETECTOR_SERVICES)
 DEFAULT_PAIR = ("route-corridor", "dwell-time")
 
 MODES = ("adaptive", "fixed2", "fixed4")
+STRATEGIES = ("step", "fixed")
+
+# Step modes in contracts/examples/route.json; "train" as the detectors use it, "mrt" just in case.
+TRANSIT_MODES = frozenset({"bus", "train", "mrt"})
+WALKING_PAIR = ("route-corridor", "heading-speed")
+WAITING_PAIR = ("route-corridor", "dwell-time")
+RIDING_PAIR = ("route-corridor", "route-progress")
+UNKNOWN_STEP_PAIR = ("route-corridor", "route-progress")
+
+
+def step_mode(route_json: str | None, step_index) -> str | None:
+    """Mode ("walk", "bus", ...) of step `step_index` in trip:{tripId}:route, or None if unknown."""
+    if not route_json or step_index is None:
+        return None
+    try:
+        steps = json.loads(route_json)["steps"]
+        i = int(step_index)
+    except (ValueError, TypeError, KeyError):
+        return None
+    if not isinstance(steps, list) or not 0 <= i < len(steps) or not isinstance(steps[i], dict):
+        return None
+    mode = steps[i].get("mode")
+    return mode.lower() if isinstance(mode, str) else None
+
+
+def pair_for_step(mode: str | None, speed_mps, waiting_below_mps: float = 2.0) -> tuple[tuple[str, ...], str]:
+    """(pair, situation) for the journey step. situation is for logs and the dashboard."""
+    if mode == "walk":
+        return WALKING_PAIR, "walking"
+    if mode in TRANSIT_MODES:
+        try:
+            moving = speed_mps is not None and float(speed_mps) >= waiting_below_mps
+        except (TypeError, ValueError):
+            moving = False
+        return (RIDING_PAIR, "riding") if moving else (WAITING_PAIR, "waiting")
+    return UNKNOWN_STEP_PAIR, "unknown step"
 
 
 def choose_detectors(risk_level: str, mode: str = "adaptive",

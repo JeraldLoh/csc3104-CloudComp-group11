@@ -49,6 +49,7 @@ class VotesRequest(BaseModel):
     votes: list[dict]
     riskLevel: str | None = None
     escalated: bool = False
+    situation: str | None = None   # why the Coordinator asked that pair ("walking", "riding", ...)
 
 
 def error(status: int, code: str, message: str, details=None) -> JSONResponse:
@@ -94,7 +95,8 @@ def create_app(service: AggregatorService | None = None, s: Settings = default_s
     @app.post("/internal/votes")
     async def votes(body: VotesRequest, request: Request):
         svc: AggregatorService = request.app.state.service
-        return await svc.handle(body.requestId, body.checkin.model_dump(), body.votes, body.escalated)
+        return await svc.handle(body.requestId, body.checkin.model_dump(), body.votes, body.escalated,
+                                situation=body.situation)
 
     @app.get("/api/status/travellers")
     async def status_travellers(request: Request):

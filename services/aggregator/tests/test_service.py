@@ -249,3 +249,16 @@ def test_decision_lists_are_trimmed():
     _, state, _ = run(calls, decisions_per_traveller=3, decisions_recent=4)
     assert [d["seq"] for d in state["decisions"]] == [5, 4, 3]
     assert len(state["recent"]) == 4
+
+
+def test_situation_from_the_coordinator_is_kept_in_the_record():
+    async def go():
+        redis = fakeredis.FakeAsyncRedis(decode_responses=True)
+        async with httpx.AsyncClient(transport=httpx.MockTransport(AlertService().handler)) as http:
+            svc = AggregatorService(redis, http, settings())
+            await svc.handle("T-001#17", CHECKIN, BOTH_NORMAL, now=NOW, situation="walking")
+            await svc.handle("T-001#18", {**CHECKIN, "seq": 18}, BOTH_NORMAL, now=NOW)
+            return [json.loads(x) for x in await redis.lrange(traveller_decisions_key("U-042"), 0, -1)]
+    newest, oldest = asyncio.run(go())
+    assert oldest["situation"] == "walking"
+    assert newest["situation"] is None

@@ -152,7 +152,7 @@
       <span><span class="vote v-normal">normal</span></span>
       <span><span class="vote v-problem">problem</span></span>
       <span><span class="vote v-abstain">abstain</span> no answer in time / error / can't decide</span>
-      <span><span class="k k2">2</span> diverse pair</span>
+      <span><span class="k k2">2</span> pair for the journey step (walking / waiting / riding)</span>
       <span><span class="k k4">4</span> all detectors</span>
       <span><span class="badge b-warn">escalated</span> asked the remaining detectors</span>
     </div>
@@ -257,6 +257,7 @@ function renderDecisions(rows) {
       el("div", { class: "mono" }, d.requestId || "–"),
       el("div", { class: "muted" }, (d.travellerId || "?") + (d.stepIndex !== null && d.stepIndex !== undefined ? " · step " + d.stepIndex : "")));
     const k = el("td", {}, el("span", { class: "k " + (d.k >= 4 ? "k4" : "k2") }, d.k ?? "–"),
+      d.situation ? el("div", { class: "muted" }, d.situation) : null,
       d.escalated ? el("div", {}, el("span", { class: "badge b-warn" }, "escalated")) : null);
     const score = Number(d.problemScore);
     return el("tr", { class: [fresh ? "fresh" : "", d.decision === "problem" ? "problem" : ""].join(" ").trim() },

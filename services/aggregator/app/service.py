@@ -67,7 +67,8 @@ def answer(d: Decision, risk_level: str | None) -> dict:
 
 
 def decision_record(request_id: str, checkin: dict, votes: list[dict], d: Decision, escalated: bool,
-                    risk_before: Risk, risk_after: Risk, incident: dict | None, now: datetime) -> dict:
+                    risk_before: Risk, risk_after: Risk, incident: dict | None, now: datetime,
+                    situation: str | None = None) -> dict:
     """One entry of decisions:{travellerId}: what the dashboard and the experiment read."""
     return {
         "requestId": request_id,
@@ -78,6 +79,7 @@ def decision_record(request_id: str, checkin: dict, votes: list[dict], d: Decisi
         "decidedAt": iso_z(now),
         "k": len(votes),
         "escalated": escalated,
+        "situation": situation,
         "votes": [{"detectorId": v.get("detectorId"), "verdict": v.get("verdict"),
                    "confidence": v.get("confidence"), "latencyMs": v.get("latencyMs"),
                    "reason": v.get("reason")} for v in votes],
@@ -106,7 +108,7 @@ class AggregatorService:
         return resp.json()
 
     async def handle(self, request_id: str, checkin: dict, votes: list[dict], escalated: bool = False,
-                     now: datetime | None = None) -> dict:
+                     now: datetime | None = None, situation: str | None = None) -> dict:
         now = now or datetime.now(timezone.utc)
         traveller_id = checkin["travellerId"]
 
@@ -128,7 +130,8 @@ class AggregatorService:
         before = Risk.from_hash(await self.redis.hgetall(risk_key(traveller_id)))
         after = update_risk(before, d, self.s.risk)
         reply = answer(d, after.level)
-        record = json.dumps(decision_record(request_id, checkin, votes, d, escalated, before, after, incident, now))
+        record = json.dumps(decision_record(request_id, checkin, votes, d, escalated, before, after, incident, now,
+                                            situation))
         ttl = self.s.key_ttl_s
 
         tx = self.redis.pipeline(transaction=True)

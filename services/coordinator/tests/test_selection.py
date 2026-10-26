@@ -1,3 +1,4 @@
+import json
 import pytest
 
 from app.selection import (
@@ -112,3 +113,42 @@ def test_unknown_detector_in_urls_is_rejected():
 def test_missing_url_is_rejected():
     with pytest.raises(ValueError):
         parse_urls("route-corridor=")
+
+
+# --- step-aware pairs -------------------------------------------------------------------------
+
+from app.selection import RIDING_PAIR, UNKNOWN_STEP_PAIR, WAITING_PAIR, WALKING_PAIR, pair_for_step, step_mode  # noqa: E402
+
+ROUTE = json.dumps({"steps": [{"stepIndex": 0, "mode": "walk"}, {"stepIndex": 1, "mode": "Bus"}], "path": []})
+
+
+@pytest.mark.parametrize("index, mode", [(0, "walk"), (1, "bus"), ("1", "bus"), (2, None), (-1, None), (None, None)])
+def test_step_mode(index, mode):
+    assert step_mode(ROUTE, index) == mode
+
+
+@pytest.mark.parametrize("route", [None, "", "{not json", '{"path": []}', '{"steps": "x"}', '{"steps": [5]}'])
+def test_step_mode_of_a_bad_route_is_unknown(route):
+    assert step_mode(route, 0) is None
+
+
+@pytest.mark.parametrize("mode, speed, pair, situation", [
+    ("walk", 1.3, WALKING_PAIR, "walking"),
+    ("walk", None, WALKING_PAIR, "walking"),
+    ("bus", 0.0, WAITING_PAIR, "waiting"),
+    ("bus", 1.99, WAITING_PAIR, "waiting"),
+    ("bus", 2.0, RIDING_PAIR, "riding"),
+    ("train", 15, RIDING_PAIR, "riding"),
+    ("mrt", 15, RIDING_PAIR, "riding"),
+    ("bus", None, WAITING_PAIR, "waiting"),
+    ("bus", "fast", WAITING_PAIR, "waiting"),
+    ("ferry", 5, UNKNOWN_STEP_PAIR, "unknown step"),
+    (None, 5, UNKNOWN_STEP_PAIR, "unknown step"),
+])
+def test_pair_for_step(mode, speed, pair, situation):
+    assert pair_for_step(mode, speed) == (pair, situation)
+
+
+def test_every_step_pair_includes_route_corridor_and_only_real_detectors():
+    for pair in (WALKING_PAIR, WAITING_PAIR, RIDING_PAIR, UNKNOWN_STEP_PAIR):
+        assert "route-corridor" in pair and len(pair) == 2 and set(pair) <= set(ALL_DETECTORS)

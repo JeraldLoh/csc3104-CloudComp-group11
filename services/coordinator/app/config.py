@@ -22,6 +22,10 @@ class Settings:
     create_queue: bool = field(default_factory=lambda: _bool("CREATE_QUEUE", False))
 
     redundancy_mode: str = field(default_factory=lambda: os.getenv("REDUNDANCY_MODE", "adaptive"))
+    # Which pair at normal risk: "step" (fits the journey step) or "fixed" (NORMAL_PAIR always).
+    pair_strategy: str = field(default_factory=lambda: os.getenv("PAIR_STRATEGY", "step"))
+    # On a bus/train step, slower than this counts as waiting at the stop, faster as riding.
+    waiting_below_mps: float = field(default_factory=lambda: float(os.getenv("WAITING_BELOW_MPS", "2.0")))
     normal_pair: tuple[str, ...] = field(default_factory=lambda: tuple(
         d.strip() for d in os.getenv("NORMAL_PAIR", ",".join(DEFAULT_PAIR)).split(",") if d.strip()))
     detector_urls: dict = field(default_factory=lambda: parse_urls(os.getenv("DETECTOR_URLS", "")))
