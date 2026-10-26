@@ -1,16 +1,4 @@
-"""Synthetic trips: ``generate(scenario, seed)`` returns check-ins in the ``checkin.json`` shape.
-
-``browser=True`` degrades them the way a web page on a phone would (gaps, jittery
-timestamps, missing speed and heading); see :func:`_browserify`.
-
-Each check-in also carries two fixture-only fields, ``scenario`` and ``expected``
-(``normal``, a problem type, or ``abstain``). Strip them with :func:`strip_labels`
-before sending a check-in anywhere.
-
-A trip is planned as a list of ticks (distance along the route, sideways offset,
-label), 10 s apart. The check-ins are then made from the planned positions plus
-GPS noise, so speed and heading follow the real movement rather than the noise.
-"""
+# synthetic trips as labelled check-ins planned 10 s apart with gps noise added after
 
 import math
 import random
@@ -25,7 +13,7 @@ from tools.simulator.route import (
     BUS_STOP,
     WALK_SPEED_MPS,
     Track,
-    build_track,
+    build_track
 )
 
 INTERVAL_S = 10
@@ -39,39 +27,46 @@ SCENARIOS = (
     "wrong_direction",
     "long_dwell",
     "normal_bus_wait",
-    "poor_gps",
+    "poor_gps"
 )
 
-# A drift only counts as off_route once it is beyond the default corridor
+# a drift only counts as off_route beyond the default corridor
 OFF_ROUTE_LABEL_M = 100
-# A stop only counts as long_dwell beyond the default walking limit
+# a stop only counts as long_dwell beyond the default walking limit
 LONG_DWELL_LABEL_S = 300
 FIXTURE_ONLY_FIELDS = ("scenario", "expected")
 
 
+# one planned position
 @dataclass
 class _Tick:
     s: float  # metres along the route
-    lateral_m: float = 0.0  # sideways from the route; + is left of travel
+    lateral_m: float = 0.0  # sideways from the route and positive is left of travel
     label: str = "normal"
 
 
+# builds the list of ticks for a scenario
 class _Planner:
+    # start at the beginning of the route
     def __init__(self, rng: random.Random):
         self.rng = rng
         self.ticks: List[_Tick] = [_Tick(0.0)]
 
+    # metres along the route at the last tick
     @property
     def s(self) -> float:
         return self.ticks[-1].s
 
+    # sideways offset at the last tick
     @property
     def lateral(self) -> float:
         return self.ticks[-1].lateral_m
 
+    # random pace factor so ticks are not perfectly even
     def _jitter(self) -> float:
         return self.rng.uniform(0.85, 1.15)
 
+    # walk or ride to target metres along the route
     def move_to(self, target: float, speed: float, label: str = "normal") -> None:
         while self.s != target:
             step = speed * INTERVAL_S * self._jitter()
@@ -79,13 +74,14 @@ class _Planner:
             s = target if abs(remaining) <= step else self.s + math.copysign(step, remaining)
             self.ticks.append(_Tick(s, self.lateral, label))
 
+    # stand still and switch label after late_after_s
     def hold(self, seconds: int, late_label: str = "normal", late_after_s: int = 0) -> None:
         for k in range(1, seconds // INTERVAL_S + 1):
             label = late_label if k * INTERVAL_S > late_after_s else "normal"
             self.ticks.append(_Tick(self.s, self.lateral, label))
 
+    # turn off the route and walk sideways then stand still
     def drift(self, distance: float, side: int) -> None:
-        """Turn away from the route and walk off sideways, then stand still there."""
         lateral = 0.0
         while abs(lateral) < distance:
             lateral = side * min(distance, abs(lateral) + WALK_SPEED_MPS * INTERVAL_S * self._jitter())
@@ -95,6 +91,7 @@ class _Planner:
             self.ticks.append(_Tick(self.s, lateral, "off_route"))
 
 
+# ticks for one scenario
 def _plan(scenario: str, track: Track, rng: random.Random) -> List[_Tick]:
     p = _Planner(rng)
     stop = track.waypoint_s[BUS_STOP]
@@ -116,6 +113,7 @@ def _plan(scenario: str, track: Track, rng: random.Random) -> List[_Tick]:
     return p.ticks
 
 
+# lat lng of a tick before gps noise
 def _true_position(track: Track, tick: _Tick):
     pos = track.position(tick.s)
     if tick.lateral_m:
@@ -124,19 +122,13 @@ def _true_position(track: Track, tick: _Tick):
     return pos
 
 
+# iso time of tick i
 def _timestamp(i: int) -> str:
     return (TRIP_START + timedelta(seconds=i * INTERVAL_S)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+# make clean check-ins look like a phone web page with gaps jitter and missing speed and heading
 def _browserify(checkins: List[Dict], seed: int) -> List[Dict]:
-    """Make clean check-ins look like they came from a web page on a phone.
-
-    Mobile browsers throttle background tabs and often report no speed or heading,
-    so: ~20% of check-ins go missing (gaps of 20 s or more), timestamps wobble by
-    up to 2 s, about half the speeds are null, and heading is null when standing
-    still or ~30% of the time otherwise. ``seq`` is renumbered to stay contiguous
-    (it counts what the page sent). Uses its own RNG so the clean data is untouched.
-    """
     rng = random.Random(f"{seed}-browser")
     last = len(checkins) - 1
     kept = [c for i, c in enumerate(checkins) if i in (0, last) or rng.random() >= 0.2]
@@ -155,6 +147,7 @@ def _browserify(checkins: List[Dict], seed: int) -> List[Dict]:
     return out
 
 
+# labelled check-ins for a scenario
 def generate(scenario: str, seed: int = 42, browser: bool = False) -> List[Dict]:
     if scenario not in SCENARIOS:
         raise ValueError(f"unknown scenario {scenario!r}, expected one of {', '.join(SCENARIOS)}")
@@ -168,7 +161,7 @@ def generate(scenario: str, seed: int = 42, browser: bool = False) -> List[Dict]
     checkins = []
     heading = bearing_deg(truth[0], truth[1])
     for i, (tick, pos) in enumerate(zip(ticks, truth)):
-        # Movement since the previous tick (the first tick looks ahead instead)
+        # movement since the previous tick and the first tick looks ahead
         a, b = (truth[i - 1], pos) if i else (truth[0], truth[1])
         moved = distance_m(a, b)
         if moved >= 2:
@@ -193,12 +186,12 @@ def generate(scenario: str, seed: int = 42, browser: bool = False) -> List[Dict]
                 "status": "active",
                 "bufferedOffline": False,
                 "scenario": scenario,
-                "expected": "abstain" if poor_gps else tick.label,
+                "expected": "abstain" if poor_gps else tick.label
             }
         )
     return _browserify(checkins, seed) if browser else checkins
 
 
+# check-in as the real app sends it without the fixture labels
 def strip_labels(checkin: Dict) -> Dict:
-    """The check-in as the real app would send it, without the fixture-only labels."""
     return {k: v for k, v in checkin.items() if k not in FIXTURE_ONLY_FIELDS}

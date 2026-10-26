@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from detectors.models import DetectorId
 
 
+# thresholds and redis url read from env
 class Settings(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -42,6 +43,7 @@ class Settings(BaseModel):
     # low confidence normal so a detour cannot outvote route corridor
     progress_unsure_confidence: float = Field(default=0.3, ge=0, le=1)
 
+    # settings from env vars named after each field in upper case
     @classmethod
     def from_env(cls, environ: Optional[Mapping[str, str]] = None) -> "Settings":
         env = os.environ if environ is None else environ
@@ -53,6 +55,7 @@ class Settings(BaseModel):
         return cls.model_validate(values)
 
 
+# settings read once per process
 @lru_cache
 def get_settings() -> Settings:
     return Settings.from_env()

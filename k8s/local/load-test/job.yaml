@@ -1,0 +1,34 @@
+# Runs inside the cluster and calls the detector Services by name, so kube-proxy spreads
+# the requests over every replica (a kubectl port-forward would pin them to one pod).
+# 100 travellers checking in every 1 s = ~100 req/s per detector, ~50 req/s per pod at 2
+# replicas: well over the HPA's 60% of the 100m CPU request, so each HPA scales towards 4.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: detector-load
+  labels: { app: detector-load }
+spec:
+  backoffLimit: 0                 # a load test that failed should not quietly run again
+  ttlSecondsAfterFinished: 3600   # keep the logs for an hour
+  template:
+    metadata:
+      labels: { app: detector-load }
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: load
+          image: cloud-simulator:local
+          imagePullPolicy: IfNotPresent   # kind: use the image loaded with `kind load`
+          args:
+            - load
+            - --travellers=100
+            - --interval=1
+            - --duration=300
+            - --redis=redis://cloud-redis:6379/0
+            - --detectors=http://detector-route:8000,http://detector-heading:8000,http://detector-dwell:8000,http://detector-progress:8000
+            - --results=/tmp/results
+          env:
+            - { name: PYTHONUNBUFFERED, value: "1" }
+          resources:
+            requests: { cpu: 500m, memory: 256Mi }
+            limits: { cpu: "1", memory: 512Mi }

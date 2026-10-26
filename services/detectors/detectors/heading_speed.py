@@ -2,9 +2,8 @@ import math
 import statistics
 from datetime import timedelta
 
-from detectors.common import abstain_reason, confidence, usable_checkins
+from detectors.common import abstain, abstain_reason, confidence, step_mode, usable_checkins, vote
 from detectors.geo import angle_diff_deg, bearing_deg, haversine_m, nearest_segment
-from detectors.models import DetectorVote
 
 DETECTOR_ID = "heading-speed"
 # moving check-ins needed to judge direction
@@ -16,9 +15,6 @@ BASELINE_S = 30
 # fixes must be further apart than this times their combined accuracy
 NOISE_FACTOR = 1.5
 
-
-def _abstain(request, reason):
-    return DetectorVote.abstain(request.request_id, DETECTOR_ID, reason)
 
 
 # bearing from an older fix when the check-in has no speed
@@ -64,27 +60,25 @@ def _moving_bearings(usable, settings):
 # extra reason text when walking speed looks too high
 def _speed_note(request, ctx, settings):
     speed = request.checkin.speed_mps
-    steps = ctx.steps or []
-    if speed is None or ctx.step_index is None or not 0 <= ctx.step_index < len(steps):
-        return ""
-    if steps[ctx.step_index].get("mode") == "walk" and speed > settings.walk_max_speed_mps:
+    if speed is not None and step_mode(ctx) == "walk" and speed > settings.walk_max_speed_mps:
         return f"; speed {speed:.1f} m/s is high for walking"
     return ""
 
 
+# wrong direction when travel runs against the path
 def detect(request, ctx, settings):
     reason = abstain_reason(request, ctx, settings)
     if reason:
-        return _abstain(request, reason)
+        return abstain(request, DETECTOR_ID, reason)
 
     # standing still says nothing about direction so abstain
     usable = usable_checkins(ctx.recent, settings)
     moving = _moving_bearings(usable, settings)
     if len(moving) < MIN_MOVING_POINTS:
-        return _abstain(
-            request,
+        return abstain(
+            request, DETECTOR_ID,
             f"not moving enough to judge direction ({len(moving)} of {len(usable)} "
-            f"check-ins moving, need {MIN_MOVING_POINTS})",
+            f"check-ins moving, need {MIN_MOVING_POINTS})"
         )
 
     # angle between travel and the nearest path segment
@@ -100,22 +94,14 @@ def detect(request, ctx, settings):
     if median > limit:
         # further past the limit and more moving check-ins raise confidence
         score = 0.5 * (median - limit) / max(180 - limit, 1e-9) + 0.5 * min(1.0, len(moving) / 6)
-        return DetectorVote(
-            request_id=request.request_id,
-            detector_id=DETECTOR_ID,
-            verdict="problem",
-            problem_type="wrong_direction",
-            confidence=confidence(score),
-            reason=(
-                f"moving {median:.0f}° off the route direction (limit {limit:g}°) "
-                f"over {len(moving)} moving check-ins{note}"
-            ),
+        return vote(
+            request, DETECTOR_ID, "problem", confidence(score),
+            f"moving {median:.0f}° off the route direction (limit {limit:g}°) "
+            f"over {len(moving)} moving check-ins{note}",
+            "wrong_direction"
         )
 
-    return DetectorVote(
-        request_id=request.request_id,
-        detector_id=DETECTOR_ID,
-        verdict="normal",
-        confidence=confidence(1 - median / limit),
-        reason=f"moving {median:.0f}° off the route direction (limit {limit:g}°){note}",
+    return vote(
+        request, DETECTOR_ID, "normal", confidence(1 - median / limit),
+        f"moving {median:.0f}° off the route direction (limit {limit:g}°){note}"
     )

@@ -91,6 +91,38 @@ Flags: `--redis`, `--detectors` (comma-separated URLs), `--speed` (0 = fast, 1 =
 `--no-browser` (clean check-ins), `--seed`. The summary lists true positives, false alarms, abstains and the
 detection delay in check-ins (only for the problem each detector owns). `results/` is git-ignored.
 
+### Load test: many travellers at once, and watching the HPAs scale
+
+`python -m tools.simulator load` simulates many travellers checking in at the same time. Each traveller
+follows its own trip (scenarios assigned round-robin), and every check-in is written to Redis like the
+Check-in Service does and then sent to every detector in parallel. Each detector gets about
+`travellers / interval` requests per second. Real check-ins are 10 s apart; a smaller `--interval`
+compresses time. Redis keys start with `trip:LOAD-` and expire after an hour.
+
+Against the compose stack (ports 8101-8104):
+
+```bash
+python -m tools.simulator load --travellers 50 --interval 1 --duration 60
+```
+
+To see the detectors autoscale, run it **inside** kind as a Job. It calls the Services by name so
+requests spread over every replica (a `kubectl port-forward` sends everything to one pod), and the
+HPAs need metrics-server to see CPU:
+
+```bash
+kubectl apply -k k8s/local/metrics-server          # once; kind needs --kubelet-insecure-tls, already patched in
+docker build -t cloud-simulator:local -f tools/simulator/Dockerfile tools
+kind load docker-image cloud-simulator:local --name csc3104-local
+kubectl delete job detector-load -n csc3104 --ignore-not-found
+kubectl apply -k k8s/local/load-test               # 100 travellers, every 1 s, for 5 min
+kubectl get hpa -n csc3104 -w                      # replicas 2 -> 4 within a minute or two
+kubectl logs -n csc3104 job/detector-load -f       # req/s, p50/p95 latency and verdicts every 10 s
+```
+
+Every 10 s it prints the request rate, p50/p95 latency and the verdict counts; at the end, a summary
+per detector including how many answers missed the Coordinator's 500 ms budget.
+After the Job ends, the HPAs take about 5 minutes (their default stabilisation window) to scale back to 2.
+
 ## Settings
 
 Each env var is the field name in upper case. Defaults are in `detectors/config.py`.

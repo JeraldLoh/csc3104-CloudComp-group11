@@ -23,10 +23,11 @@ REGISTRY: Dict[str, Detect] = {
     route_corridor.DETECTOR_ID: route_corridor.detect,
     heading_speed.DETECTOR_ID: heading_speed.detect,
     dwell_time.DETECTOR_ID: dwell_time.detect,
-    route_progress.DETECTOR_ID: route_progress.detect,
+    route_progress.DETECTOR_ID: route_progress.detect
 }
 
 
+# one json log line per vote
 def _log(**fields) -> None:
     log.info(json.dumps(fields))
 
@@ -49,6 +50,7 @@ def create_app(settings: Optional[Settings] = None, redis_client=None) -> FastAP
 
     app = FastAPI(title="CareRoute detector", lifespan=lifespan)
 
+    # judge one check-in and stamp detector id and latency
     @app.post("/internal/detect", response_model=DetectorVote, response_model_by_alias=True)
     def detect(body: DetectorRequest, request: Request) -> DetectorVote:
         start = time.perf_counter()

@@ -1,11 +1,10 @@
 from dataclasses import dataclass
 
-from detectors.common import abstain_reason, confidence, usable_checkins
+from detectors.common import TRANSIT_MODES, abstain, abstain_reason, confidence, step_at, usable_checkins, vote
 from detectors.geo import cumulative_m, haversine_m, project_onto_path
-from detectors.models import CheckIn, DetectorVote
+from detectors.models import CheckIn
 
 DETECTOR_ID = "route-progress"
-TRANSIT_MODES = {"bus", "train"}
 
 
 # one check-in placed on the path
@@ -16,28 +15,15 @@ class _Fix:
     away_m: float  # distance from the path
     limit_m: float  # corridor plus gps accuracy
 
+    # inside the corridor plus gps accuracy
     @property
     def on_path(self):
         return self.away_m <= self.limit_m
 
+    # gps accuracy or 0 when missing
     @property
     def accuracy_m(self):
         return self.checkin.accuracy_m or 0.0
-
-
-def _abstain(request, reason):
-    return DetectorVote.abstain(request.request_id, DETECTOR_ID, reason)
-
-
-def _vote(request, verdict, conf, reason, problem=None):
-    return DetectorVote(
-        request_id=request.request_id,
-        detector_id=DETECTOR_ID,
-        verdict=verdict,
-        problem_type=problem,
-        confidence=conf,
-        reason=reason,
-    )
 
 
 # lat lng of a stop or None
@@ -48,8 +34,8 @@ def _point(place):
         return None
 
 
+# start and end along the path per step and end is None without a stop
 def _step_ranges(steps, path, cum):
-    # start and end along the path per step and end is None without a stop
     ranges = []
     start = 0.0
     for step in steps:
@@ -61,50 +47,45 @@ def _step_ranges(steps, path, cum):
     return ranges
 
 
-# step dict or None when the index is unusable
-def _step(steps, index):
-    if index is None or not steps or not 0 <= index < len(steps) or not isinstance(steps[index], dict):
-        return None
-    return steps[index]
-
-
+# place each check-in on the path within its own step and reach of the previous fix
 def _locate(usable, ctx, cum, ranges, settings):
-    # match within own step and reach of previous fix so loops are not mistaken for progress
     fixes = []
     for c in usable:
-        index = c.step_index if _step(ctx.steps, c.step_index) is not None else ctx.step_index
-        step = _step(ctx.steps, index)
+        index = c.step_index if step_at(ctx.steps, c.step_index) is not None else ctx.step_index
+        step = step_at(ctx.steps, index)
         # vehicles may move fast and walking steps may not
         transit = step is not None and step.get("mode") in TRANSIT_MODES
         speed = settings.walk_max_speed_mps if step is not None and not transit else settings.progress_max_speed_mps
         acc = c.accuracy_m or 0.0
         # search range along the path
-        lo, hi = -float("inf"), float("inf")
+        step_lo, step_hi = -float("inf"), float("inf")
         if step is not None and ranges[index][1] is not None:
             start, end = ranges[index]
             slack = acc + settings.progress_min_m
-            lo = start - slack
+            step_lo = start - slack
             if not transit:  # a missed stop rides past the end
-                hi = end + slack
+                step_hi = end + slack
+        lo, hi = step_lo, step_hi
         # stay within reach of the previous fix
         if fixes:
             prev = fixes[-1]
             dt = max(0.0, (c.timestamp - prev.checkin.timestamp).total_seconds())
             reach = speed * dt + acc + prev.accuracy_m + settings.progress_min_m
-            lo, hi = max(lo, prev.along_m - reach), min(hi, prev.along_m + reach)
+            lo, hi = max(step_lo, prev.along_m - reach), min(step_hi, prev.along_m + reach)
             if lo > hi:  # step changed beyond reach so trust the step
-                lo, hi = min(lo, hi), max(lo, hi)
+                lo, hi = step_lo, step_hi
         along, away = project_onto_path((c.lat, c.lng), ctx.path, cum, lo_m=lo, hi_m=hi)
         fixes.append(_Fix(c, along, away, settings.corridor_m + acc))
     return fixes
 
 
+# metres from a check-in to a lat lng point
 def _distance(a, b):
     return haversine_m(a.lat, a.lng, b[0], b[1])
 
 
+# change needed to rule out gps noise
 def _clear_margin(a, b, settings):
-    # smaller changes could be gps noise
     return a.accuracy_m + b.accuracy_m + settings.progress_min_m
 
 
@@ -134,16 +115,16 @@ def _missed_stop(request, fixes, step, end_m, settings):
     name = step["to"].get("name") or "the stop"
     if speed <= settings.walk_max_speed_mps:
         # walking on may mean they got off and the step has not advanced yet
-        return _vote(
-            request, "normal", settings.progress_unsure_confidence,
-            f"{d_last:.0f} m past {name} at walking speed {speed:.1f} m/s, may have got off",
+        return vote(
+            request, DETECTOR_ID, "normal", settings.progress_unsure_confidence,
+            f"{d_last:.0f} m past {name} at walking speed {speed:.1f} m/s, may have got off"
         )
     # further past and faster raise confidence
     score = 0.5 * min(1.0, (d_last - margin) / margin) + 0.5 * min(1.0, speed / (2 * settings.walk_max_speed_mps))
-    return _vote(
-        request, "problem", confidence(score),
+    return vote(
+        request, DETECTOR_ID, "problem", confidence(score),
         f"{d_last:.0f} m past {name} and moving away at {speed:.1f} m/s, still on step {step.get('stepIndex')}",
-        "missed_stop",
+        "missed_stop"
     )
 
 
@@ -162,10 +143,10 @@ def _wrong_direction(request, fixes, settings):
     last = run[-1]
     back = peak.along_m - last.along_m
     margin = _clear_margin(peak, last, settings)
-    return _vote(
-        request, "problem", confidence((back - margin) / margin),
+    return vote(
+        request, DETECTOR_ID, "problem", confidence((back - margin) / margin),
         f"{back:.0f} m back along the route from the furthest point reached",
-        "wrong_direction",
+        "wrong_direction"
     )
 
 
@@ -178,26 +159,26 @@ def _remaining(f, length):
 def detect(request, ctx, settings):
     reason = abstain_reason(request, ctx, settings)
     if reason:
-        return _abstain(request, reason)
+        return abstain(request, DETECTOR_ID, reason)
 
     needed = settings.corridor_consecutive
     usable = usable_checkins(ctx.recent, settings)
     if len(usable) < needed:
-        return _abstain(request, f"only {len(usable)} usable check-in(s), need {needed}")
+        return abstain(request, DETECTOR_ID, f"only {len(usable)} usable check-in(s), need {needed}")
 
     # path length so far at each point
     cum = cumulative_m(ctx.path)
     length = cum[-1]
     # where each step starts and ends on the path
     ranges = _step_ranges(ctx.steps or [], ctx.path, cum)
-    step = _step(ctx.steps, ctx.step_index)
+    step = step_at(ctx.steps, ctx.step_index)
     end_m = ranges[ctx.step_index][1] if step is not None else None
     fixes = _locate(usable, ctx, cum, ranges, settings)
 
     # first match wins in order missed stop then wrong direction then off route
-    vote = _missed_stop(request, fixes, step, end_m, settings) or _wrong_direction(request, fixes, settings)
-    if vote:
-        return vote
+    found = _missed_stop(request, fixes, step, end_m, settings) or _wrong_direction(request, fixes, settings)
+    if found:
+        return found
 
     first, last = fixes[0], fixes[-1]
     left = _remaining(last, length)
@@ -209,30 +190,30 @@ def detect(request, ctx, settings):
     if all(not f.on_path for f in fixes[-needed:]):
         if gain > margin:
             # detour still heading to the end so low confidence to not outvote route corridor
-            return _vote(
-                request, "normal", unsure,
-                f"{last.away_m:.0f} m off the route but {gain:.0f} m closer to the end, detour?",
+            return vote(
+                request, DETECTOR_ID, "normal", unsure,
+                f"{last.away_m:.0f} m off the route but {gain:.0f} m closer to the end, detour?"
             )
         # further off and moving away raise confidence
         excess = (last.away_m - last.limit_m) / last.limit_m
         away = max(0.0, -gain) / last.limit_m
-        return _vote(
-            request, "problem", confidence(0.5 * min(1.0, excess) + 0.5 * min(1.0, away)),
+        return vote(
+            request, DETECTOR_ID, "problem", confidence(0.5 * min(1.0, excess) + 0.5 * min(1.0, away)),
             f"{last.away_m:.0f} m off the route, limit {last.limit_m:.0f} m, "
             f"{'not getting closer' if gain >= 0 else f'{-gain:.0f} m further'} over {len(fixes)} check-ins",
-            "off_route",
+            "off_route"
         )
     # only just left the path so not sure yet
     if not last.on_path:
-        return _vote(request, "normal", unsure, f"{last.away_m:.0f} m off the route, just left it")
+        return vote(request, DETECTOR_ID, "normal", unsure, f"{last.away_m:.0f} m off the route, just left it")
 
     # arrived
     if length - last.along_m <= last.limit_m:
-        return _vote(request, "normal", confidence(1), "at the end of the route")
+        return vote(request, DETECTOR_ID, "normal", confidence(1), "at the end of the route")
     # clear progress on the path
     if gain > margin:
-        return _vote(
-            request, "normal", confidence(gain / (2 * margin)),
-            f"{gain:.0f} m closer to the end over {len(fixes)} check-ins, {left:.0f} m left",
+        return vote(
+            request, DETECTOR_ID, "normal", confidence(gain / (2 * margin)),
+            f"{gain:.0f} m closer to the end over {len(fixes)} check-ins, {left:.0f} m left"
         )
-    return _vote(request, "normal", confidence(0), f"on the route, no clear progress, {left:.0f} m left")
+    return vote(request, DETECTOR_ID, "normal", confidence(0), f"on the route, no clear progress, {left:.0f} m left")
