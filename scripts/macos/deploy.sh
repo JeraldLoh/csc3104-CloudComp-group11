@@ -13,11 +13,17 @@
 #   k8s/eks/services/NAME.yaml    manifest; Deployment must be named NAME.
 #                                 Placeholders: __IMAGE__ __NAMESPACE__ __REGION__
 #                                 __REDIS_ENDPOINT__ __CHECKINS_QUEUE_URL__
-#                                 __DISRUPTIONS_QUEUE_URL__
+#                                 __DISRUPTIONS_QUEUE_URL__ __FILES_BUCKET__
+#                                 __ALB_SG_ID__ __ROLE_ARN__
 # The image goes to ECR repository careroute-NAME (created if missing).
+# __ROLE_ARN__ is read from the stack output <Name>RoleArn (e.g. checkin-service ->
+# CheckinServiceRoleArn), in the platform stack or any other stack in the region.
+#
+# With --all-services, the full deploy runs first and then every service in
+# k8s/eks/services/ is deployed the same way (use it after a teardown).
 #
 # Usage: ./scripts/macos/deploy.sh [--email you@example.com] [--tag v2]
-#                                  [--service NAME]
+#                                  [--service NAME | --all-services]
 #                                  [--stack-name NAME] [--region REGION]
 # Every option can also be set through the matching environment variable below.
 
@@ -32,19 +38,22 @@ APP_NAMESPACE="${APP_NAMESPACE:-careroute}"
 BUDGET_EMAIL="${BUDGET_EMAIL:-}"
 IMAGE_TAG="${IMAGE_TAG:-v1}"
 SERVICE="${SERVICE:-}"
+ALL_SERVICES="${ALL_SERVICES:-false}"
 LBC_POLICY_NAME="AWSLoadBalancerControllerIAMPolicy"
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --email)      BUDGET_EMAIL="$2"; shift 2 ;;
-    --tag)        IMAGE_TAG="$2"; shift 2 ;;
-    --service)    SERVICE="$2"; shift 2 ;;
-    --stack-name) STACK_NAME="$2"; shift 2 ;;
-    --region)     REGION="$2"; shift 2 ;;
-    -h|--help)    sed -n '2,22p' "$0"; exit 0 ;;
+    --email)        BUDGET_EMAIL="$2"; shift 2 ;;
+    --tag)          IMAGE_TAG="$2"; shift 2 ;;
+    --service)      SERVICE="$2"; shift 2 ;;
+    --all-services) ALL_SERVICES=true; shift ;;
+    --stack-name)   STACK_NAME="$2"; shift 2 ;;
+    --region)       REGION="$2"; shift 2 ;;
+    -h|--help)      sed -n '2,28p' "$0"; exit 0 ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
 done
+[ -n "$SERVICE" ] && [ "$ALL_SERVICES" = true ] && { echo "Use --service or --all-services, not both" >&2; exit 1; }
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 TEMPLATE="$REPO_ROOT/cloudformation/careroute-vpc-eks-standard.yaml"
@@ -58,6 +67,91 @@ die()  { printf '\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
 stack_output() {
   aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$REGION" \
     --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text
+}
+
+# Escapes a value for the right-hand side of a sed s|...|...| command.
+sed_value() { printf '%s' "$1" | sed -e 's/[\\|&]/\\&/g'; }
+
+# Stack outputs the service manifests can use. Sets the variables deploy_service reads.
+load_service_values() {
+  REDIS_ENDPOINT="$(stack_output RedisEndpoint)"
+  CHECKINS_QUEUE_URL="$(stack_output CheckinsQueueUrl)"
+  DISRUPTIONS_QUEUE_URL="$(stack_output DisruptionsQueueUrl)"
+  ALB_SG_ID="$(stack_output AlbSecurityGroupId)"
+  FILES_BUCKET="careroute-files-$ACCOUNT_ID"
+}
+
+# Role ARN for a service, from the stack output <Name>RoleArn in any stack in
+# the region (checkin-service -> CheckinServiceRoleArn).
+service_role_arn() {
+  local key arns count
+  key="$(printf '%s' "$1" | awk -F- '{ for (i = 1; i <= NF; i++) printf "%s%s", toupper(substr($i, 1, 1)), substr($i, 2) }')RoleArn"
+  arns="$(aws cloudformation describe-stacks --region "$REGION" \
+    --query "Stacks[].Outputs[?OutputKey=='$key'].OutputValue | []" --output text)"
+  count="$(printf '%s\n' $arns | grep -c . || true)"
+  [ "$count" -eq 1 ] || die "$1 uses __ROLE_ARN__, but $count stacks in $REGION have an output named $key (need exactly 1)"
+  printf '%s\n' "$arns"
+}
+
+# Builds services/NAME, pushes it to ECR repository careroute-NAME, and applies
+# k8s/eks/services/NAME.yaml with its placeholders filled in.
+deploy_service() {
+  local name="$1" dir manifest repo registry image rendered left role_arn existed=false
+  printf '%s' "$name" | grep -Eq '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$' \
+    || die "Service name must be lowercase letters, digits and dashes: '$name'"
+  dir="$REPO_ROOT/services/$name"
+  manifest="$REPO_ROOT/k8s/eks/services/$name.yaml"
+  [ -f "$dir/Dockerfile" ] || die "No Dockerfile at services/$name/Dockerfile"
+  [ -f "$manifest" ] || die "No manifest at k8s/eks/services/$name.yaml"
+  repo="careroute-$name"
+  registry="$ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com"
+  image="$registry/$repo:$IMAGE_TAG"
+
+  role_arn=""
+  if grep -q '__ROLE_ARN__' "$manifest"; then
+    role_arn="$(service_role_arn "$name")"
+    info "Role: $role_arn"
+  fi
+
+  # Created outside the stack, like the S3 bucket; teardown.sh removes careroute-* repos.
+  step "[$name] Ensuring ECR repository $repo exists"
+  if aws ecr describe-repositories --repository-names "$repo" --region "$REGION" >/dev/null 2>&1; then
+    info "Repository already exists"
+  else
+    aws ecr create-repository --repository-name "$repo" --region "$REGION" >/dev/null
+    info "Created repository $repo"
+  fi
+
+  step "[$name] Building and pushing image $image"
+  aws ecr get-login-password --region "$REGION" | docker login --username AWS --password-stdin "$registry"
+  docker build --platform linux/amd64 -t "$image" "$dir"
+  docker push "$image"
+
+  step "[$name] Rendering and applying k8s/eks/services/$name.yaml"
+  rendered="$WORK_DIR/$name.yaml"
+  sed -e "s|__IMAGE__|$(sed_value "$image")|g" \
+      -e "s|__NAMESPACE__|$(sed_value "$APP_NAMESPACE")|g" \
+      -e "s|__REGION__|$(sed_value "$REGION")|g" \
+      -e "s|__REDIS_ENDPOINT__|$(sed_value "$REDIS_ENDPOINT")|g" \
+      -e "s|__CHECKINS_QUEUE_URL__|$(sed_value "$CHECKINS_QUEUE_URL")|g" \
+      -e "s|__DISRUPTIONS_QUEUE_URL__|$(sed_value "$DISRUPTIONS_QUEUE_URL")|g" \
+      -e "s|__FILES_BUCKET__|$(sed_value "$FILES_BUCKET")|g" \
+      -e "s|__ALB_SG_ID__|$(sed_value "$ALB_SG_ID")|g" \
+      -e "s|__ROLE_ARN__|$(sed_value "$role_arn")|g" \
+      "$manifest" > "$rendered"
+  # A misspelled or unsupported placeholder would otherwise reach the cluster as
+  # literal text. YAML comments are skipped, since they may mention placeholders.
+  left="$(sed -e 's/^#.*//' -e 's/[[:space:]]#.*//' "$rendered" \
+    | grep -Eo '__[A-Z][A-Z0-9_]*__' | sort -u | tr '\n' ' ' || true)"
+  [ -z "$left" ] || die "k8s/eks/services/$name.yaml has unknown placeholders: $left"
+
+  kubectl get deployment "$name" -n "$APP_NAMESPACE" >/dev/null 2>&1 && existed=true
+  kubectl apply -f "$rendered"
+  # Re-pushing the same tag does not change the spec, so force new pods to pull it.
+  if [ "$existed" = true ]; then
+    kubectl rollout restart deployment/"$name" -n "$APP_NAMESPACE"
+  fi
+  kubectl rollout status deployment/"$name" -n "$APP_NAMESPACE" --timeout=10m
 }
 
 # ---------------------------------------------------------------------------
@@ -74,62 +168,21 @@ info "Account $ACCOUNT_ID, region $REGION, stack $STACK_NAME"
 # ---------------------------------------------------------------------------
 # --service: build and deploy one service onto the existing stack, then exit.
 if [ -n "$SERVICE" ]; then
-  printf '%s' "$SERVICE" | grep -Eq '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$' \
-    || die "Service name must be lowercase letters, digits and dashes: '$SERVICE'"
-  SERVICE_DIR="$REPO_ROOT/services/$SERVICE"
-  SERVICE_MANIFEST="$REPO_ROOT/k8s/eks/services/$SERVICE.yaml"
-  [ -f "$SERVICE_DIR/Dockerfile" ] || die "No Dockerfile at services/$SERVICE/Dockerfile"
-  [ -f "$SERVICE_MANIFEST" ] || die "No manifest at k8s/eks/services/$SERVICE.yaml"
-
   STATUS="$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$REGION" \
     --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo NONE)"
+  # UPDATE_ROLLBACK_COMPLETE: a failed update was rolled back, so the previous stack is intact.
   case "$STATUS" in
-    CREATE_COMPLETE|UPDATE_COMPLETE) ;;
+    CREATE_COMPLETE|UPDATE_COMPLETE|UPDATE_ROLLBACK_COMPLETE) ;;
     *) die "Stack $STACK_NAME is $STATUS. Run this script without --service first to create it." ;;
   esac
 
   CLUSTER_NAME="$(stack_output EksClusterName)"
-  REDIS_ENDPOINT="$(stack_output RedisEndpoint)"
-  CHECKINS_QUEUE_URL="$(stack_output CheckinsQueueUrl)"
-  DISRUPTIONS_QUEUE_URL="$(stack_output DisruptionsQueueUrl)"
-  REPO_NAME="careroute-$SERVICE"
-  ECR_REGISTRY="$ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com"
-  IMAGE="$ECR_REGISTRY/$REPO_NAME:$IMAGE_TAG"
+  load_service_values
 
   step "Connecting kubectl to the cluster"
   aws eks update-kubeconfig --region "$REGION" --name "$CLUSTER_NAME"
 
-  # Created outside the stack, like the S3 bucket; teardown.sh removes careroute-* repos.
-  step "Ensuring ECR repository $REPO_NAME exists"
-  if aws ecr describe-repositories --repository-names "$REPO_NAME" --region "$REGION" >/dev/null 2>&1; then
-    info "Repository already exists"
-  else
-    aws ecr create-repository --repository-name "$REPO_NAME" --region "$REGION" >/dev/null
-    info "Created repository $REPO_NAME"
-  fi
-
-  step "Building and pushing image $IMAGE"
-  aws ecr get-login-password --region "$REGION" | docker login --username AWS --password-stdin "$ECR_REGISTRY"
-  docker build --platform linux/amd64 -t "$IMAGE" "$SERVICE_DIR"
-  docker push "$IMAGE"
-
-  step "Rendering and applying k8s/eks/services/$SERVICE.yaml"
-  RENDERED="$WORK_DIR/$SERVICE.yaml"
-  sed -e "s|__IMAGE__|$IMAGE|g" \
-      -e "s|__NAMESPACE__|$APP_NAMESPACE|g" \
-      -e "s|__REGION__|$REGION|g" \
-      -e "s|__REDIS_ENDPOINT__|$REDIS_ENDPOINT|g" \
-      -e "s|__CHECKINS_QUEUE_URL__|$CHECKINS_QUEUE_URL|g" \
-      -e "s|__DISRUPTIONS_QUEUE_URL__|$DISRUPTIONS_QUEUE_URL|g" \
-      "$SERVICE_MANIFEST" > "$RENDERED"
-  DEPLOYMENT_EXISTED=false
-  kubectl get deployment "$SERVICE" -n "$APP_NAMESPACE" >/dev/null 2>&1 && DEPLOYMENT_EXISTED=true
-  kubectl apply -f "$RENDERED"
-  # Re-pushing the same tag does not change the spec, so force new pods to pull it.
-  if [ "$DEPLOYMENT_EXISTED" = true ]; then
-    kubectl rollout restart deployment/"$SERVICE" -n "$APP_NAMESPACE"
-  fi
-  kubectl rollout status deployment/"$SERVICE" -n "$APP_NAMESPACE" --timeout=10m
+  deploy_service "$SERVICE"
 
   echo
   printf '\033[1;32mService %s deployed.\033[0m Logs: kubectl logs -n %s deploy/%s -f\n' \
@@ -310,4 +363,34 @@ else
   echo "Check: kubectl get pods -n $APP_NAMESPACE ; kubectl describe ingress cloud-fastapi -n $APP_NAMESPACE"
 fi
 [ -n "$BUDGET_EMAIL" ] && echo "Remember to confirm the AWS budget/SNS subscription emails sent to $BUDGET_EMAIL."
+
+# ---------------------------------------------------------------------------
+if [ "$ALL_SERVICES" = true ]; then
+  step "Deploying every service in k8s/eks/services/"
+  load_service_values
+  DEPLOYED=""; FAILED=""; SKIPPED=""
+  for f in "$REPO_ROOT"/k8s/eks/services/*.yaml; do
+    [ -e "$f" ] || continue
+    name="$(basename "$f" .yaml)"
+    if [ ! -f "$REPO_ROOT/services/$name/Dockerfile" ]; then
+      info "Skipping $name: no services/$name/Dockerfile"
+      SKIPPED="$SKIPPED $name"
+      continue
+    fi
+    # A subshell, so one failing service doesn't stop the others.
+    set +e
+    ( set -e; deploy_service "$name" )
+    rc=$?
+    set -e
+    if [ "$rc" -eq 0 ]; then DEPLOYED="$DEPLOYED $name"; else FAILED="$FAILED $name"; fi
+  done
+
+  echo
+  info "Deployed:${DEPLOYED:- none}"
+  [ -z "$SKIPPED" ] || info "Skipped:$SKIPPED"
+  if [ -n "$FAILED" ]; then
+    printf '\033[1;31m    Failed:%s\033[0m (rerun one with --service NAME to see the error)\n' "$FAILED"
+    exit 1
+  fi
+fi
 exit 0
