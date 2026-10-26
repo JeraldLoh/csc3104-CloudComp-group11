@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: careroute-detector
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: careroute-detector }
+  template:
+    metadata:
+      labels:
+        app: careroute-detector
+        app.kubernetes.io/component: detector   # shared by all detectors, used for spreading
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels: { app.kubernetes.io/component: detector }
+            - weight: 50
+              podAffinityTerm:
+                topologyKey: topology.kubernetes.io/zone
+                labelSelector:
+                  matchLabels: { app.kubernetes.io/component: detector }
+      containers:
+        - name: detector
+          image: cloud-detectors:local
+          imagePullPolicy: IfNotPresent   # important for kind - don't try to pull from a registry
+          ports: [{ containerPort: 8000 }]
+          env:
+            - name: REDIS_URL
+              value: "redis://cloud-redis:6379/0"
+            # DETECTOR_ID is added by each detector's kustomization
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+          readinessProbe:
+            httpGet: { path: /ready, port: 8000 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /health, port: 8000 }
+            initialDelaySeconds: 10
+            periodSeconds: 10

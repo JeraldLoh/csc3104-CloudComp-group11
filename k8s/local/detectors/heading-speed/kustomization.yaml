@@ -1,0 +1,14 @@
+# Deployment, Service and HPA all become careroute-detector-heading-speed
+resources:
+  - ../base
+nameSuffix: -heading-speed
+labels:
+  - pairs: { app: careroute-detector-heading-speed }
+    includeSelectors: true
+    includeTemplates: true
+patches:
+  - target: { kind: Deployment }
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: { name: DETECTOR_ID, value: heading-speed }

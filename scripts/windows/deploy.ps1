@@ -12,7 +12,9 @@
   With -Service NAME, only that service is built and deployed onto an existing
   stack (no CloudFormation or Load Balancer Controller steps):
     services\NAME\Dockerfile      image build context
-    k8s\eks\services\NAME.yaml    manifest; Deployment must be named NAME.
+    k8s\eks\services\NAME.yaml    manifest; a Deployment named NAME, or (one image run as several
+                                  Deployments, e.g. detectors) every Deployment labelled
+                                  app.kubernetes.io/part-of: NAME.
                                   Placeholders: __IMAGE__ __NAMESPACE__ __REGION__
                                   __REDIS_ENDPOINT__ __CHECKINS_QUEUE_URL__
                                   __DISRUPTIONS_QUEUE_URL__ __FILES_BUCKET__

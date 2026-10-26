@@ -1,0 +1,10 @@
+# Not in k8s/local/kustomization.yaml, so teammates without the image aren't affected. To run them:
+#   docker build -t cloud-detectors:local services/detectors
+#   kind load docker-image cloud-detectors:local --name csc3104-local
+#   kubectl apply -k k8s/local/detectors
+# The namespace is set here because the base manifests don't have one.
+namespace: csc3104
+resources:
+  - route-corridor
+  - heading-speed
+  - dwell-time

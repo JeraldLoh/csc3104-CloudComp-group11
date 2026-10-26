@@ -10,7 +10,9 @@
 # With --service NAME, only that service is built and deployed onto an existing
 # stack (no CloudFormation or Load Balancer Controller steps):
 #   services/NAME/Dockerfile      image build context
-#   k8s/eks/services/NAME.yaml    manifest; Deployment must be named NAME.
+#   k8s/eks/services/NAME.yaml    manifest; a Deployment named NAME, or (for one image run
+#                                 as several Deployments, e.g. detectors) every Deployment
+#                                 labelled app.kubernetes.io/part-of: NAME.
 #                                 Placeholders: __IMAGE__ __NAMESPACE__ __REGION__
 #                                 __REDIS_ENDPOINT__ __CHECKINS_QUEUE_URL__
 #                                 __DISRUPTIONS_QUEUE_URL__ __FILES_BUCKET__
@@ -167,6 +169,17 @@ info "Account $ACCOUNT_ID, region $REGION, stack $STACK_NAME"
 
 # ---------------------------------------------------------------------------
 # --service: build and deploy one service onto the existing stack, then exit.
+# Sets TARGET to the kubectl arguments selecting this service's Deployment(s); fails if there are none.
+service_target() {
+  if kubectl get deployment "$SERVICE" -n "$APP_NAMESPACE" >/dev/null 2>&1; then
+    TARGET=(deployment/"$SERVICE")
+  elif [ -n "$(kubectl get deployment -n "$APP_NAMESPACE" -l "app.kubernetes.io/part-of=$SERVICE" -o name 2>/dev/null)" ]; then
+    TARGET=(deployment -l "app.kubernetes.io/part-of=$SERVICE")
+  else
+    return 1
+  fi
+}
+
 if [ -n "$SERVICE" ]; then
   STATUS="$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$REGION" \
     --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo NONE)"
