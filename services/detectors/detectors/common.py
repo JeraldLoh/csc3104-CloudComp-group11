@@ -1,3 +1,39 @@
+from detectors.models import DetectorVote
+
+# step modes that ride a vehicle
+TRANSIT_MODES = {"bus", "train"}
+
+
+# a cannot decide vote from this detector
+def abstain(request, detector_id, reason):
+    return DetectorVote.abstain(request.request_id, detector_id, reason)
+
+
+# a normal or problem vote from this detector
+def vote(request, detector_id, verdict, conf, reason, problem=None):
+    return DetectorVote(
+        request_id=request.request_id,
+        detector_id=detector_id,
+        verdict=verdict,
+        problem_type=problem,
+        confidence=conf,
+        reason=reason
+    )
+
+
+# step dict or None when the index is unusable
+def step_at(steps, index):
+    if index is None or not steps or not 0 <= index < len(steps) or not isinstance(steps[index], dict):
+        return None
+    return steps[index]
+
+
+# mode of the current step or None
+def step_mode(ctx):
+    step = step_at(ctx.steps, ctx.step_index)
+    return step.get("mode") if step else None
+
+
 # why a detector must not judge this request or None if it can
 def abstain_reason(request, ctx, settings):
     checkin = request.checkin
