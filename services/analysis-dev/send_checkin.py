@@ -1,13 +1,14 @@
-"""Put one check-in on careroute-checkins, standing in for the Check-in Service (Member 2).
+"""Put one check-in on careroute-checkins, standing in for the Check-in Service.
 
-Starts from contracts/examples/checkin.json (on route, inside the fake detectors' area).
+Starts from contracts/examples/checkin.json, which sits on the example route (contracts/examples/route.json).
 
     send --seq 1                      on route
-    send --seq 2 --off-route          off route (outside the fake detectors' area)
+    send --seq 2 --off-route          off route (about 7 km away; also outside the fake detectors' area)
     send --seq 3 --lat 1.45 --lng 103.95
 """
 import argparse
 import json
+import os
 from datetime import datetime, timezone
 
 import boto3
@@ -36,6 +37,15 @@ def main() -> None:
         "accuracyM": 12, "speedMps": 1.3, "headingDeg": 85, "stepIndex": a.step, "routeVersion": 3,
         "batteryPct": 64, "status": "active", "bufferedOffline": False,
     }
+    # Like the Check-in Service: the real detectors read these keys. Only when REDIS_URL is set.
+    if os.getenv("REDIS_URL"):
+        import redis
+
+        r = redis.Redis.from_url(os.environ["REDIS_URL"])
+        r.lpush(f"trip:{a.trip}:recent", json.dumps(checkin))
+        r.ltrim(f"trip:{a.trip}:recent", 0, 9)
+        r.hset(f"trip:{a.trip}:context", mapping={
+            "travellerId": a.traveller, "stepIndex": a.step, "routeVersion": 3, "status": "active"})
     sqs = boto3.client("sqs")
     url = sqs.get_queue_url(QueueName=a.queue)["QueueUrl"]
     sqs.send_message(QueueUrl=url, MessageBody=json.dumps(checkin))

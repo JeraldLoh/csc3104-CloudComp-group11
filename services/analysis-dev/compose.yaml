@@ -1,7 +1,10 @@
-# Check-in analysis (Member 3) running locally with fakes for everyone else's services.
+# Check-in analysis running locally with the real detectors and a fake Alert Service.
 #
 #   docker compose -f services/analysis-dev/compose.yaml up --build -d
 #   docker compose -f services/analysis-dev/compose.yaml run --rm send --seq 1
+#
+# Fault demos with fake detectors instead (see compose.fakes.yaml):
+#   docker compose -f services/analysis-dev/compose.yaml -f services/analysis-dev/compose.fakes.yaml up --build -d
 #
 # See README.md in this folder.
 name: careroute-analysis
@@ -12,9 +15,11 @@ x-aws: &aws
   AWS_ACCESS_KEY_ID: local                   # ElasticMQ ignores these
   AWS_SECRET_ACCESS_KEY: local
 
-x-fake-detector: &fake-detector
-  build: ../fake-detector
-  image: careroute-fake-detector:dev
+x-detector: &detector
+  build: ../detectors
+  image: careroute-detectors:dev
+  depends_on:
+    redis: { condition: service_healthy }
 
 services:
   redis:
@@ -56,44 +61,57 @@ services:
     depends_on:
       redis: { condition: service_healthy }
 
-  # --- fakes for other members' services -------------------------------------------------
-  # Names match contracts/api.md, so the Coordinator finds them without extra config.
-  # Change behaviour live: curl -X POST localhost:9001/control -d '{"mode":"wrong"}' -H 'Content-Type: application/json'
+  # --- The detectors (Member 4): one image, DETECTOR_ID picks the detector ---------------
+  # Service names match contracts/api.md, so the Coordinator finds them without extra config.
+  # For fault demos (slow / wrong / failing detectors on demand), swap in the fakes:
+  #   docker compose -f compose.yaml -f compose.fakes.yaml up -d
 
   detector-route:
-    <<: *fake-detector
-    environment: { DETECTOR_ID: route-corridor, MODE: auto, PROBLEM_TYPE: off_route, CONFIDENCE: "0.8" }
+    <<: *detector
+    environment: { DETECTOR_ID: route-corridor, REDIS_URL: "redis://redis:6379/0" }
     ports: ["127.0.0.1:9001:8000"]
 
   detector-dwell:
-    <<: *fake-detector
-    # Always "normal": an off-route check-in then splits 1-1 and the Coordinator escalates.
-    environment: { DETECTOR_ID: dwell-time, MODE: normal, CONFIDENCE: "0.8" }
+    <<: *detector
+    environment: { DETECTOR_ID: dwell-time, REDIS_URL: "redis://redis:6379/0" }
     ports: ["127.0.0.1:9002:8000"]
 
   detector-heading:
-    <<: *fake-detector
-    environment: { DETECTOR_ID: heading-speed, MODE: auto, PROBLEM_TYPE: wrong_direction, CONFIDENCE: "0.7" }
+    <<: *detector
+    environment: { DETECTOR_ID: heading-speed, REDIS_URL: "redis://redis:6379/0" }
     ports: ["127.0.0.1:9003:8000"]
 
   detector-progress:
-    <<: *fake-detector
-    # Stand-in for Member 4's route-progress (second judge of off_route / wrong_direction,
-    # only judge of missed_stop). Everything here is fake, so it votes like route-corridor.
-    environment: { DETECTOR_ID: route-progress, MODE: auto, PROBLEM_TYPE: off_route, CONFIDENCE: "0.75" }
+    <<: *detector
+    environment: { DETECTOR_ID: route-progress, REDIS_URL: "redis://redis:6379/0" }
     ports: ["127.0.0.1:9004:8000"]
 
+  # --- fakes for other members' services -------------------------------------------------
   alert-service:
     build: ../fake-alert
     image: careroute-fake-alert:dev
     ports: ["127.0.0.1:8004:8000"]
 
+  # The detectors read the trip from Redis. This writes the route and context for T-001, standing in
+  # for the Journey Service at trip start.
+  seed:
+    build: ../coordinator
+    image: careroute-coordinator:dev
+    environment: { REDIS_URL: "redis://redis:6379/0" }
+    volumes:
+      - ./seed_trip.py:/tools/seed_trip.py:ro
+      - ../../contracts/examples/route.json:/tools/route.json:ro
+    entrypoint: ["python", "/tools/seed_trip.py"]
+    depends_on:
+      redis: { condition: service_healthy }
+
   # --- tool: put a check-in on the queue ---------------------------------------------------
   send:
     image: careroute-coordinator:dev        # reuses its Python + boto3
     profiles: ["tools"]
-    environment: *aws
+    # REDIS_URL makes it also write the Check-in Service's keys (trip:{id}:recent, :context)
+    environment: { <<: *aws, REDIS_URL: "redis://redis:6379/0" }
     volumes:
       - ./send_checkin.py:/tools/send_checkin.py:ro
     entrypoint: ["python", "/tools/send_checkin.py"]
-    depends_on: [elasticmq]
+    depends_on: [elasticmq, redis]

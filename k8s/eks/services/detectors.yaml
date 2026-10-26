@@ -1,6 +1,6 @@
-# Detectors (Member 4) on EKS: one image, three Deployments. DETECTOR_ID picks the detector.
-# Each has a Service careroute-detector-<id>:8000 (the Coordinator calls POST /internal/detect), an HPA
-# (2-6 replicas, 60% CPU) and a PodDisruptionBudget. The script fills in the __PLACEHOLDERS__ (scripts/README.md).
+# Detectors on EKS: one image, four Deployments. DETECTOR_ID picks the detector.
+# Each has a Service detector-route|heading|dwell|progress:8000 (the Coordinator calls POST /internal/detect), an HPA
+# (2-4 replicas, 60% CPU) and a PodDisruptionBudget. The script fills in the __PLACEHOLDERS__ (scripts/README.md).
 #
 # Deploy with `deploy.sh --service detectors`: the Deployments are found by their part-of label.
 # The HPAs need metrics-server running in the cluster (not installed by the platform stack).
@@ -8,16 +8,16 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: careroute-detector-route-corridor
+  name: detector-route
   namespace: __NAMESPACE__
-  labels: { app: careroute-detector-route-corridor, app.kubernetes.io/part-of: detectors }
+  labels: { app: detector-route, app.kubernetes.io/part-of: detectors }
 spec:
   replicas: 2   # the HPA takes over from here; two so one crash doesn't silence the detector
   selector:
-    matchLabels: { app: careroute-detector-route-corridor }
+    matchLabels: { app: detector-route }
   template:
     metadata:
-      labels: { app: careroute-detector-route-corridor, app.kubernetes.io/part-of: detectors }
+      labels: { app: detector-route, app.kubernetes.io/part-of: detectors }
     spec:
       serviceAccountName: cloud-fastapi   # same service account as the other services
       # Spread the replicas across Availability Zones where possible
@@ -26,7 +26,7 @@ spec:
           topologyKey: topology.kubernetes.io/zone
           whenUnsatisfiable: ScheduleAnyway
           labelSelector:
-            matchLabels: { app: careroute-detector-route-corridor }
+            matchLabels: { app: detector-route }
       containers:
         - name: detector
           image: __IMAGE__
@@ -51,22 +51,22 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: careroute-detector-route-corridor   # the Coordinator calls http://careroute-detector-route-corridor:8000/internal/detect
+  name: detector-route   # the Coordinator calls http://detector-route:8000/internal/detect
   namespace: __NAMESPACE__
 spec:
   type: ClusterIP
-  selector: { app: careroute-detector-route-corridor }
+  selector: { app: detector-route }
   ports: [{ port: 8000, targetPort: 8000 }]
 ---
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: careroute-detector-route-corridor
+  name: detector-route
   namespace: __NAMESPACE__
 spec:
-  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: careroute-detector-route-corridor }
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: detector-route }
   minReplicas: 2
-  maxReplicas: 6
+  maxReplicas: 4
   metrics:
     - type: Resource
       resource:
@@ -77,26 +77,26 @@ spec:
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: careroute-detector-route-corridor
+  name: detector-route
   namespace: __NAMESPACE__
 spec:
   minAvailable: 1
   selector:
-    matchLabels: { app: careroute-detector-route-corridor }
+    matchLabels: { app: detector-route }
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: careroute-detector-heading-speed
+  name: detector-heading
   namespace: __NAMESPACE__
-  labels: { app: careroute-detector-heading-speed, app.kubernetes.io/part-of: detectors }
+  labels: { app: detector-heading, app.kubernetes.io/part-of: detectors }
 spec:
   replicas: 2   # the HPA takes over from here; two so one crash doesn't silence the detector
   selector:
-    matchLabels: { app: careroute-detector-heading-speed }
+    matchLabels: { app: detector-heading }
   template:
     metadata:
-      labels: { app: careroute-detector-heading-speed, app.kubernetes.io/part-of: detectors }
+      labels: { app: detector-heading, app.kubernetes.io/part-of: detectors }
     spec:
       serviceAccountName: cloud-fastapi   # same service account as the other services
       # Spread the replicas across Availability Zones where possible
@@ -105,7 +105,7 @@ spec:
           topologyKey: topology.kubernetes.io/zone
           whenUnsatisfiable: ScheduleAnyway
           labelSelector:
-            matchLabels: { app: careroute-detector-heading-speed }
+            matchLabels: { app: detector-heading }
       containers:
         - name: detector
           image: __IMAGE__
@@ -130,22 +130,22 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: careroute-detector-heading-speed   # the Coordinator calls http://careroute-detector-heading-speed:8000/internal/detect
+  name: detector-heading   # the Coordinator calls http://detector-heading:8000/internal/detect
   namespace: __NAMESPACE__
 spec:
   type: ClusterIP
-  selector: { app: careroute-detector-heading-speed }
+  selector: { app: detector-heading }
   ports: [{ port: 8000, targetPort: 8000 }]
 ---
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: careroute-detector-heading-speed
+  name: detector-heading
   namespace: __NAMESPACE__
 spec:
-  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: careroute-detector-heading-speed }
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: detector-heading }
   minReplicas: 2
-  maxReplicas: 6
+  maxReplicas: 4
   metrics:
     - type: Resource
       resource:
@@ -156,26 +156,26 @@ spec:
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: careroute-detector-heading-speed
+  name: detector-heading
   namespace: __NAMESPACE__
 spec:
   minAvailable: 1
   selector:
-    matchLabels: { app: careroute-detector-heading-speed }
+    matchLabels: { app: detector-heading }
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: careroute-detector-dwell-time
+  name: detector-dwell
   namespace: __NAMESPACE__
-  labels: { app: careroute-detector-dwell-time, app.kubernetes.io/part-of: detectors }
+  labels: { app: detector-dwell, app.kubernetes.io/part-of: detectors }
 spec:
   replicas: 2   # the HPA takes over from here; two so one crash doesn't silence the detector
   selector:
-    matchLabels: { app: careroute-detector-dwell-time }
+    matchLabels: { app: detector-dwell }
   template:
     metadata:
-      labels: { app: careroute-detector-dwell-time, app.kubernetes.io/part-of: detectors }
+      labels: { app: detector-dwell, app.kubernetes.io/part-of: detectors }
     spec:
       serviceAccountName: cloud-fastapi   # same service account as the other services
       # Spread the replicas across Availability Zones where possible
@@ -184,7 +184,7 @@ spec:
           topologyKey: topology.kubernetes.io/zone
           whenUnsatisfiable: ScheduleAnyway
           labelSelector:
-            matchLabels: { app: careroute-detector-dwell-time }
+            matchLabels: { app: detector-dwell }
       containers:
         - name: detector
           image: __IMAGE__
@@ -209,22 +209,22 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: careroute-detector-dwell-time   # the Coordinator calls http://careroute-detector-dwell-time:8000/internal/detect
+  name: detector-dwell   # the Coordinator calls http://detector-dwell:8000/internal/detect
   namespace: __NAMESPACE__
 spec:
   type: ClusterIP
-  selector: { app: careroute-detector-dwell-time }
+  selector: { app: detector-dwell }
   ports: [{ port: 8000, targetPort: 8000 }]
 ---
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: careroute-detector-dwell-time
+  name: detector-dwell
   namespace: __NAMESPACE__
 spec:
-  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: careroute-detector-dwell-time }
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: detector-dwell }
   minReplicas: 2
-  maxReplicas: 6
+  maxReplicas: 4
   metrics:
     - type: Resource
       resource:
@@ -235,9 +235,88 @@ spec:
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: careroute-detector-dwell-time
+  name: detector-dwell
   namespace: __NAMESPACE__
 spec:
   minAvailable: 1
   selector:
-    matchLabels: { app: careroute-detector-dwell-time }
+    matchLabels: { app: detector-dwell }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: detector-progress
+  namespace: __NAMESPACE__
+  labels: { app: detector-progress, app.kubernetes.io/part-of: detectors }
+spec:
+  replicas: 2   # the HPA takes over from here; two so one crash doesn't silence the detector
+  selector:
+    matchLabels: { app: detector-progress }
+  template:
+    metadata:
+      labels: { app: detector-progress, app.kubernetes.io/part-of: detectors }
+    spec:
+      serviceAccountName: cloud-fastapi   # same service account as the other services
+      # Spread the replicas across Availability Zones where possible
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: { app: detector-progress }
+      containers:
+        - name: detector
+          image: __IMAGE__
+          ports: [{ containerPort: 8000 }]
+          env:
+            - { name: DETECTOR_ID, value: "route-progress" }
+            - { name: REDIS_URL, value: "redis://__REDIS_ENDPOINT__:6379/0" }
+          # Fargate sizes the pod from requests (minimum 0.25 vCPU / 0.5 GB).
+          resources:
+            requests: { cpu: 250m, memory: 512Mi }
+            limits: { cpu: 250m, memory: 512Mi }
+          # Ready = Redis reachable. Alive = process responds, so a Redis outage doesn't restart every replica.
+          readinessProbe:
+            httpGet: { path: /ready, port: 8000 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /health, port: 8000 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: detector-progress   # the Coordinator calls http://detector-progress:8000/internal/detect
+  namespace: __NAMESPACE__
+spec:
+  type: ClusterIP
+  selector: { app: detector-progress }
+  ports: [{ port: 8000, targetPort: 8000 }]
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: detector-progress
+  namespace: __NAMESPACE__
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: detector-progress }
+  minReplicas: 2
+  maxReplicas: 4
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 60 }
+---
+# Keep at least one replica running during voluntary disruptions (e.g. Fargate patching).
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: detector-progress
+  namespace: __NAMESPACE__
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app: detector-progress }

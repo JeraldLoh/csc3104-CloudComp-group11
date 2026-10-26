@@ -1,18 +1,5 @@
-"""Rules every rule-based detector shares: when to abstain, and how to score confidence."""
-
-from typing import List, Optional
-
-from detectors.config import Settings
-from detectors.context import TripContext
-from detectors.models import CheckIn, DetectorRequest
-
-
-def abstain_reason(request: DetectorRequest, ctx: TripContext, settings: Settings) -> Optional[str]:
-    """Why the detector must not judge this request, or None if it can.
-
-    Covers the data a detector cannot do without: the route, a matching route
-    version, and a trustworthy fix for the current check-in.
-    """
+# why a detector must not judge this request or None if it can
+def abstain_reason(request, ctx, settings):
     checkin = request.checkin
     if ctx.path is None or len(ctx.path) < 2:
         return "no route in Redis for this trip"
@@ -25,13 +12,13 @@ def abstain_reason(request: DetectorRequest, ctx: TripContext, settings: Setting
     return None
 
 
-def usable_checkins(checkins: List[CheckIn], settings: Settings) -> List[CheckIn]:
-    """The check-ins with a trustworthy fix, in the same order."""
+# check-ins with trustworthy gps in the same order
+def usable_checkins(checkins, settings):
     return [
         c for c in checkins if c.accuracy_m is not None and c.accuracy_m <= settings.gps_max_accuracy_m
     ]
 
 
-def confidence(score: float) -> float:
-    """Map a 0..1 score onto the 0.5..0.95 confidence range."""
+# maps a 0 to 1 score onto 0.5 to 0.95
+def confidence(score):
     return round(0.5 + 0.45 * min(1.0, max(0.0, score)), 2)

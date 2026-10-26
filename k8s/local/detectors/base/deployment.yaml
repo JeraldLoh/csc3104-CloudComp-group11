@@ -1,15 +1,15 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: careroute-detector
+  name: detector
 spec:
   replicas: 2
   selector:
-    matchLabels: { app: careroute-detector }
+    matchLabels: { app: detector }
   template:
     metadata:
       labels:
-        app: careroute-detector
+        app: detector
         app.kubernetes.io/component: detector   # shared by all detectors, used for spreading
     spec:
       affinity:

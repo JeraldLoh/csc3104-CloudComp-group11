@@ -132,3 +132,10 @@ def test_normal_vote_has_null_problem_type():
 def test_invalid_votes_rejected(overrides):
     with pytest.raises(ValidationError):
         DetectorVote.model_validate(_vote(**overrides))
+
+
+def test_checkin_accepts_the_nulls_the_web_app_sends():
+    body = load("checkin.json")
+    body.update(stepIndex=None, routeVersion=None, accuracyM=None, speedMps=None, headingDeg=None, batteryPct=None)
+    c = CheckIn.model_validate(body)
+    assert c.step_index is None and c.route_version is None

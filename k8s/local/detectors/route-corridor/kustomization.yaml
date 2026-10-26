@@ -1,9 +1,9 @@
-# Deployment, Service and HPA all become careroute-detector-route-corridor
+# Deployment, Service and HPA all become detector-route
 resources:
   - ../base
-nameSuffix: -route-corridor
+nameSuffix: -route
 labels:
-  - pairs: { app: careroute-detector-route-corridor }
+  - pairs: { app: detector-route }
     includeSelectors: true
     includeTemplates: true
 patches:

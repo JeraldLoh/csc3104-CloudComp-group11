@@ -1,9 +1,9 @@
-# Deployment, Service and HPA all become careroute-detector-dwell-time
+# Deployment, Service and HPA all become detector-dwell
 resources:
   - ../base
-nameSuffix: -dwell-time
+nameSuffix: -dwell
 labels:
-  - pairs: { app: careroute-detector-dwell-time }
+  - pairs: { app: detector-dwell }
     includeSelectors: true
     includeTemplates: true
 patches:

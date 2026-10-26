@@ -1,9 +1,9 @@
-# Deployment, Service and HPA all become careroute-detector-heading-speed
+# Deployment, Service and HPA all become detector-heading
 resources:
   - ../base
-nameSuffix: -heading-speed
+nameSuffix: -heading
 labels:
-  - pairs: { app: careroute-detector-heading-speed }
+  - pairs: { app: detector-heading }
     includeSelectors: true
     includeTemplates: true
 patches:

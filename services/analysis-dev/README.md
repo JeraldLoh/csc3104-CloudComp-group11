@@ -1,11 +1,11 @@
 # Check-in analysis: local run
 
 Runs the Coordinator and Aggregator on your laptop with stand-ins for everything else:
-Redis, ElasticMQ (a local SQS, no account needed), four fake detectors and a fake Alert
+Redis, ElasticMQ (a local SQS, no account needed), the real detectors and a fake Alert
 Service. No AWS, no cost.
 
 ```
-send ──► ElasticMQ ──► coordinator ──► detector-route / -dwell / -heading / -progress (fakes)
+send ──► ElasticMQ ──► coordinator ──► detector-route / -heading / -dwell / -progress (real)
                            │
                            ▼
            Redis ◄── aggregator ──► alert-service (fake)
@@ -22,6 +22,13 @@ docker compose -f services/analysis-dev/compose.yaml down          # stop (data 
 
 `curl localhost:8000/ready` (Coordinator) and `curl localhost:8001/ready` (Aggregator) should
 both answer `{"status":"ready"}`.
+
+## Detectors need a trip in Redis
+
+The detectors read the trip from Redis. A `seed` job writes the route and context for
+`T-001` (standing in for the Journey Service), and `send` also writes `trip:{id}:recent` and `:context`
+(standing in for the Check-in Service). They also need a *stream* of check-ins: route-corridor
+abstains until it has 3 usable ones, so send `--seq 1` to `--seq 5` before expecting a verdict.
 
 ## Send check-ins
 
@@ -49,29 +56,55 @@ docker compose -f services/analysis-dev/compose.yaml exec redis redis-cli lindex
 
 ElasticMQ's web UI (queue depths, dead-letter queue): http://localhost:9325
 
-## The fakes
+## The services
 
-| Service | Port | Default behaviour |
+| Service | Port | What it is |
 |---|---|---|
-| detector-route | 9001 | `auto`: problem when off route |
-| detector-dwell | 9002 | always `normal` (it only judges long dwells, so it never outvotes an off-route) |
-| detector-heading | 9003 | `auto` |
-| detector-progress | 9004 | `auto`: stands in for route-progress, the second judge of off-route |
-| alert-service | 8004 | creates one incident per problem |
+| detector-route | 9001 | real route-corridor detector |
+| detector-dwell | 9002 | real dwell-time detector |
+| detector-heading | 9003 | real heading-speed detector |
+| detector-progress | 9004 | real route-progress detector (second judge of off-route and wrong direction; missed stops) |
+| alert-service | 8004 | fake: creates one incident per problem |
 
-Change a fake while it runs:
+Change the fake Alert Service while it runs:
 
 ```bash
-curl -X POST localhost:9001/control -H 'Content-Type: application/json' -d '{"delayMs":2000}'  # slow -> timeout
-curl -X POST localhost:9001/control -H 'Content-Type: application/json' -d '{"mode":"wrong"}'  # faulty detector
 curl -X POST localhost:8004/control -H 'Content-Type: application/json' -d '{"mode":"error"}'  # Alert Service down
 curl -X POST localhost:8004/control/reset                                                       # clear incidents
 ```
 
-Detector modes: `normal`, `problem`, `auto`, `wrong`, `abstain`, `error`. Put `{"mode":"ok"}` /
-`{"delayMs":0}` to undo.
-
 ## Scenarios to try
+
+Observed with the real detectors (route-corridor needs 3 usable check-ins before it judges):
+
+| Do | Expect in the logs |
+|---|---|
+| `send --seq 1`, `--seq 2` (on route) | route-corridor abstains (not enough history yet), `escalating ... too few real votes`, `k=4 ... -> inconclusive` |
+| `send --seq 3`, `--seq 4` (on route) | `k=4 ... -> normal` |
+| `send --seq 5`, `6`, `7` with `--off-route` | `normal`, `normal`, then `-> problem`, `ALERT` (route-corridor needs 3 usable check-ins to flag) |
+| `send --seq 7 --off-route` again | `skip T-001#7: already decided`, no new incident |
+| alert-service `mode: error`, send off-route, then `mode: ok` | `not processed, it will be retried`; ~30 s after it's back, `decided` |
+
+## Fault demos (fake detectors)
+
+The real detectors always behave correctly, so they can't show a detector being slow, wrong or
+down. For that, run the same stack with fake detectors instead (`compose.fakes.yaml` replaces the
+four detector services; only one of each runs):
+
+```bash
+docker compose -f services/analysis-dev/compose.yaml -f services/analysis-dev/compose.fakes.yaml up --build -d
+```
+
+The fakes answer at once (no history needed) and take orders while they run:
+
+```bash
+curl -X POST localhost:9001/control -H 'Content-Type: application/json' -d '{"delayMs":2000}'  # route-corridor slow
+curl -X POST localhost:9001/control -H 'Content-Type: application/json' -d '{"mode":"wrong"}'  # route-corridor faulty
+curl -X POST localhost:9001/control -H 'Content-Type: application/json' -d '{"mode":"auto","delayMs":0}'  # back to normal
+```
+
+Modes: `normal`, `problem`, `auto` (problem when outside the demo area), `wrong`, `abstain`, `error`.
+Ports: route 9001, dwell 9002, heading 9003, progress 9004.
 
 | Do | Expect in the logs |
 |---|---|
@@ -81,7 +114,10 @@ Detector modes: `normal`, `problem`, `auto`, `wrong`, `abstain`, `error`. Put `{
 | `send --seq 2 --off-route` again | `skip T-001#2: already decided`, no new incident |
 | 3 more on-route check-ins | risk back to `normal`, then `k=2` again |
 | detector-route `delayMs: 2000`, then send | `abstained ... (timeout, 501 ms)`, escalates, still decides |
-| alert-service `mode: error`, send off-route, then `mode: ok` | `not processed, it will be retried`; ~30 s after it's back, `decided` |
+
+To go back to the real detectors, run `compose.yaml` on its own again.
+
+## Experiment modes
 
 Compare the experiment's modes by restarting with `REDUNDANCY_MODE=fixed2` or `fixed4`:
 

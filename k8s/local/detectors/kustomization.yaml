@@ -8,3 +8,4 @@ resources:
   - route-corridor
   - heading-speed
   - dwell-time
+  - route-progress

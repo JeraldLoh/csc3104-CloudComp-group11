@@ -3,9 +3,11 @@ import pytest
 from detectors.geo import (
     angle_diff_deg,
     bearing_deg,
+    cumulative_m,
     haversine_m,
     nearest_segment,
     point_to_segment_m,
+    project_onto_path,
 )
 
 # Punggol Interchange, Singapore
@@ -117,3 +119,42 @@ def test_nearest_segment_tie_goes_to_earliest():
 def test_nearest_segment_short_path_raises(path):
     with pytest.raises(ValueError):
         nearest_segment((1.4, 103.9), path)
+
+
+# 0.001 deg of latitude is ~111.2 m: a path 222 m north, then back south to 111 m
+LOOP = [(1.400, 103.9), (1.402, 103.9), (1.401, 103.9)]
+
+
+def test_cumulative_m():
+    cum = cumulative_m(LOOP)
+    assert cum[0] == 0
+    assert cum[1] == pytest.approx(222.4, abs=0.5)
+    assert cum[2] == pytest.approx(333.6, abs=0.5)
+
+
+def test_project_onto_path_gives_distance_along_and_away():
+    cum = cumulative_m(LOOP[:2])
+    along, away = project_onto_path((1.401, 103.9009), LOOP[:2], cum)
+    assert along == pytest.approx(111.2, abs=0.5)
+    assert away == pytest.approx(100, abs=1)
+
+
+def test_project_onto_path_range_picks_the_pass():
+    cum = cumulative_m(LOOP)
+    p = (1.4015, 103.9)  # on both the way out and the way back
+    assert project_onto_path(p, LOOP, cum)[0] == pytest.approx(166.8, abs=0.5)  # ties go to the earliest
+    along, away = project_onto_path(p, LOOP, cum, lo_m=230)
+    assert along == pytest.approx(278.0, abs=0.5) and away == pytest.approx(0, abs=0.5)
+
+
+def test_project_onto_path_range_clamps_and_falls_back():
+    cum = cumulative_m(LOOP[:2])
+    along, away = project_onto_path((1.402, 103.9), LOOP[:2], cum, hi_m=100)
+    assert along == pytest.approx(100) and away == pytest.approx(122.4, abs=0.5)
+    # a range off the end of the path searches the whole path
+    assert project_onto_path((1.401, 103.9), LOOP[:2], cum, lo_m=5000)[0] == pytest.approx(111.2, abs=0.5)
+
+
+def test_project_onto_path_needs_two_points():
+    with pytest.raises(ValueError):
+        project_onto_path((1.4, 103.9), [(1.4, 103.9)], [0.0])

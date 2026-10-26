@@ -1,76 +1,53 @@
-"""Heading/speed detector: is the traveller moving against the route direction?
-
-Pure function, no I/O. For each recent check-in that is actually moving, it
-takes the bearing travelled since the previous usable check-in and compares it
-with the direction of the nearest path segment. The vote is ``problem`` /
-``wrong_direction`` when the *median* difference across the window is above
-``WRONG_DIR_DEG``; the median keeps a few noisy GPS bearings from deciding it.
-
-Check-ins come from a web page, which often reports no speed. Those are judged by how
-far the traveller moved over the last 30 s or more, compared with the GPS accuracy.
-
-Standing still says nothing about direction, so with fewer than
-``MIN_MOVING_POINTS`` moving check-ins it abstains rather than guessing normal.
-"""
-
 import math
 import statistics
 from datetime import timedelta
-from typing import List, Optional, Tuple
 
 from detectors.common import abstain_reason, confidence, usable_checkins
-from detectors.config import Settings
-from detectors.context import TripContext
 from detectors.geo import angle_diff_deg, bearing_deg, haversine_m, nearest_segment
-from detectors.models import CheckIn, DetectorRequest, DetectorVote
+from detectors.models import DetectorVote
 
 DETECTOR_ID = "heading-speed"
+# moving check-ins needed to judge direction
 MIN_MOVING_POINTS = 3
-# Closer than this, the bearing between two fixes is mostly GPS noise
+# closer than this the bearing is mostly gps noise
 MIN_BEARING_DISTANCE_M = 2.0
-# Web-app check-ins often have no speed. Then movement is judged against an earlier
-# fix at least this far back in time: real movement grows with the gap, GPS jitter doesn't.
+# without speed compare against a fix at least this far back
 BASELINE_S = 30
-# ...and the fixes must be further apart than this many times their combined accuracy
+# fixes must be further apart than this times their combined accuracy
 NOISE_FACTOR = 1.5
 
 
-def _abstain(request: DetectorRequest, reason: str) -> DetectorVote:
+def _abstain(request, reason):
     return DetectorVote.abstain(request.request_id, DETECTOR_ID, reason)
 
 
-def _baseline_bearing(earlier: List[CheckIn], c: CheckIn, settings: Settings) -> Optional[float]:
-    """Bearing travelled over the last ``BASELINE_S`` or more, or None if not clearly moving.
-
-    Used when the browser reports no speed. None also covers "no fix far enough back
-    yet", so an unclear case never counts as moving.
-    """
+# bearing from an older fix when the check-in has no speed
+def _baseline_bearing(earlier, c, settings):
     cutoff = c.timestamp - timedelta(seconds=BASELINE_S)
+    # newest fix that is at least BASELINE_S older
     ref = next((p for p in reversed(earlier) if p.timestamp <= cutoff), None)
     if ref is None:
         return None
     dist = haversine_m(ref.lat, ref.lng, c.lat, c.lng)
     elapsed = (c.timestamp - ref.timestamp).total_seconds()
+    # too close to tell apart from gps jitter
     if dist <= NOISE_FACTOR * math.hypot(ref.accuracy_m, c.accuracy_m):
         return None
+    # too slow to count as moving
     if dist / elapsed < settings.min_moving_speed_mps:
         return None
     return bearing_deg(ref.lat, ref.lng, c.lat, c.lng)
 
 
-def _moving_bearings(usable: List[CheckIn], settings: Settings) -> List[Tuple[float, CheckIn]]:
-    """(movement bearing, check-in) for each moving check-in, oldest first.
-
-    With a reported speed, the bearing is measured from the previous usable
-    check-in; it falls back to the reported ``headingDeg`` when there is no
-    previous check-in in the window or the two fixes are too close together to
-    give a stable bearing. Without a reported speed, see :func:`_baseline_bearing`.
-    """
+# bearing of travel for each check-in that is actually moving
+def _moving_bearings(usable, settings):
     moving = []
     for i, c in enumerate(usable):
         prev = usable[i - 1] if i else None
+        # no speed so judge movement over a longer gap
         if c.speed_mps is None:
             bearing = _baseline_bearing(usable[:i], c, settings)
+        # moving so use the step from the previous fix or the reported heading
         elif c.speed_mps >= settings.min_moving_speed_mps:
             bearing = None
             if prev is not None and haversine_m(prev.lat, prev.lng, c.lat, c.lng) >= MIN_BEARING_DISTANCE_M:
@@ -84,8 +61,8 @@ def _moving_bearings(usable: List[CheckIn], settings: Settings) -> List[Tuple[fl
     return moving
 
 
-def _speed_note(request: DetectorRequest, ctx: TripContext, settings: Settings) -> str:
-    """Extra text for the reason when the speed looks wrong for the step's mode."""
+# extra reason text when walking speed looks too high
+def _speed_note(request, ctx, settings):
     speed = request.checkin.speed_mps
     steps = ctx.steps or []
     if speed is None or ctx.step_index is None or not 0 <= ctx.step_index < len(steps):
@@ -95,11 +72,12 @@ def _speed_note(request: DetectorRequest, ctx: TripContext, settings: Settings) 
     return ""
 
 
-def detect(request: DetectorRequest, ctx: TripContext, settings: Settings) -> DetectorVote:
+def detect(request, ctx, settings):
     reason = abstain_reason(request, ctx, settings)
     if reason:
         return _abstain(request, reason)
 
+    # standing still says nothing about direction so abstain
     usable = usable_checkins(ctx.recent, settings)
     moving = _moving_bearings(usable, settings)
     if len(moving) < MIN_MOVING_POINTS:
@@ -109,16 +87,18 @@ def detect(request: DetectorRequest, ctx: TripContext, settings: Settings) -> De
             f"check-ins moving, need {MIN_MOVING_POINTS})",
         )
 
+    # angle between travel and the nearest path segment
     diffs = []
     for bearing, c in moving:
         _, _, path_bearing = nearest_segment((c.lat, c.lng), ctx.path)
         diffs.append(angle_diff_deg(bearing, path_bearing))
+    # median so a few noisy bearings do not decide
     median = statistics.median(diffs)
     note = _speed_note(request, ctx, settings)
     limit = settings.wrong_dir_deg
 
     if median > limit:
-        # Further past the limit and more moving check-ins both raise confidence
+        # further past the limit and more moving check-ins raise confidence
         score = 0.5 * (median - limit) / max(180 - limit, 1e-9) + 0.5 * min(1.0, len(moving) / 6)
         return DetectorVote(
             request_id=request.request_id,
