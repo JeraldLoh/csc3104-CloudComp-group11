@@ -1,5 +1,5 @@
-# Detectors on EKS: one image, three Deployments. DETECTOR_ID picks the detector.
-# Each has a Service detector-route|heading|dwell:8000 (the Coordinator calls POST /internal/detect), an HPA
+# Detectors on EKS: one image, four Deployments. DETECTOR_ID picks the detector.
+# Each has a Service detector-route|heading|dwell|progress:8000 (the Coordinator calls POST /internal/detect), an HPA
 # (2-4 replicas, 60% CPU) and a PodDisruptionBudget. The script fills in the __PLACEHOLDERS__ (scripts/README.md).
 #
 # Deploy with `deploy.sh --service detectors`: the Deployments are found by their part-of label.
@@ -241,3 +241,82 @@ spec:
   minAvailable: 1
   selector:
     matchLabels: { app: detector-dwell }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: detector-progress
+  namespace: __NAMESPACE__
+  labels: { app: detector-progress, app.kubernetes.io/part-of: detectors }
+spec:
+  replicas: 2   # the HPA takes over from here; two so one crash doesn't silence the detector
+  selector:
+    matchLabels: { app: detector-progress }
+  template:
+    metadata:
+      labels: { app: detector-progress, app.kubernetes.io/part-of: detectors }
+    spec:
+      serviceAccountName: cloud-fastapi   # same service account as the other services
+      # Spread the replicas across Availability Zones where possible
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: { app: detector-progress }
+      containers:
+        - name: detector
+          image: __IMAGE__
+          ports: [{ containerPort: 8000 }]
+          env:
+            - { name: DETECTOR_ID, value: "route-progress" }
+            - { name: REDIS_URL, value: "redis://__REDIS_ENDPOINT__:6379/0" }
+          # Fargate sizes the pod from requests (minimum 0.25 vCPU / 0.5 GB).
+          resources:
+            requests: { cpu: 250m, memory: 512Mi }
+            limits: { cpu: 250m, memory: 512Mi }
+          # Ready = Redis reachable. Alive = process responds, so a Redis outage doesn't restart every replica.
+          readinessProbe:
+            httpGet: { path: /ready, port: 8000 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /health, port: 8000 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: detector-progress   # the Coordinator calls http://detector-progress:8000/internal/detect
+  namespace: __NAMESPACE__
+spec:
+  type: ClusterIP
+  selector: { app: detector-progress }
+  ports: [{ port: 8000, targetPort: 8000 }]
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: detector-progress
+  namespace: __NAMESPACE__
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: detector-progress }
+  minReplicas: 2
+  maxReplicas: 4
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 60 }
+---
+# Keep at least one replica running during voluntary disruptions (e.g. Fargate patching).
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: detector-progress
+  namespace: __NAMESPACE__
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app: detector-progress }

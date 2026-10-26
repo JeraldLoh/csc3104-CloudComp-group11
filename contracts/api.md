@@ -33,7 +33,7 @@ The Coordinator has no public endpoint; it reads from the `careroute-checkins` q
 
 ## Detectors (Member 4)
 
-Each detector is its own service: `detector-route`, `detector-heading`, `detector-dwell`, `detector-ml`.
+Each detector is its own service: `detector-route`, `detector-heading`, `detector-dwell`, `detector-progress`, `detector-ml`.
 
 | Method | Path | Body | Returns |
 |---|---|---|---|

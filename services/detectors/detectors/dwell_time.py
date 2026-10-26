@@ -1,51 +1,32 @@
-"""Dwell-time detector: has the traveller been standing in one place too long?
-
-Pure function, no I/O. The stationary run is the newest check-ins that all lie
-within ``DWELL_RADIUS_M`` of their centroid; its duration comes from the
-timestamps, not the count. The limit depends on the current step's mode:
-``DWELL_TRANSIT_S`` for bus/train (waiting for a vehicle), otherwise
-``DWELL_WALK_S``. Over the limit is ``problem`` / ``long_dwell``.
-
-Assumption: ``trip:{id}:recent`` holds only 10 check-ins (~100 s), shorter than
-either limit. So a dwell can only be *proven* over the limit if the window
-itself spans it. When the whole window is stationary the true dwell is at
-least the window span, but we can't tell how much longer. If that span is
-already ``APPROACH_FRACTION`` of the limit we abstain ("window too short")
-instead of guessing normal. Asking the Check-in Service to store a ``dwellStartAt`` in
-``trip:{id}:context`` would remove this blind spot.
-"""
-
-from typing import List
-
 from detectors.common import abstain_reason, confidence, usable_checkins
-from detectors.config import Settings
-from detectors.context import TripContext
 from detectors.geo import haversine_m
-from detectors.models import CheckIn, DetectorRequest, DetectorVote
+from detectors.models import DetectorVote
 
 DETECTOR_ID = "dwell-time"
-# Step modes are walk / bus / train (contracts/examples, journey service)
+# step modes are walk bus train
 TRANSIT_MODES = {"bus", "train"}
-# A fully stationary window spanning this share of the limit is "approaching" it
+# stationary window this share of the limit counts as approaching it
 APPROACH_FRACTION = 0.25
 
 
-def _abstain(request: DetectorRequest, reason: str) -> DetectorVote:
+def _abstain(request, reason):
     return DetectorVote.abstain(request.request_id, DETECTOR_ID, reason)
 
 
-def _stationary_run(usable: List[CheckIn], radius_m: float) -> List[CheckIn]:
-    """The longest newest-ending run whose points are all within ``radius_m`` of its centroid."""
+# newest check-ins that all sit within radius of their centre
+def _stationary_run(usable, radius_m):
     for start in range(len(usable)):
         run = usable[start:]
         lat = sum(c.lat for c in run) / len(run)
         lng = sum(c.lng for c in run) / len(run)
         if all(haversine_m(lat, lng, c.lat, c.lng) <= radius_m for c in run):
             return run
+    # nothing stationary so just the newest one
     return usable[-1:]
 
 
-def _limit_s(ctx: TripContext, settings: Settings) -> int:
+# longer limit when waiting for a bus or train
+def _limit_s(ctx, settings):
     steps = ctx.steps or []
     mode = None
     if ctx.step_index is not None and 0 <= ctx.step_index < len(steps):
@@ -53,16 +34,18 @@ def _limit_s(ctx: TripContext, settings: Settings) -> int:
     return settings.dwell_transit_s if mode in TRANSIT_MODES else settings.dwell_walk_s
 
 
-def detect(request: DetectorRequest, ctx: TripContext, settings: Settings) -> DetectorVote:
+def detect(request, ctx, settings):
     reason = abstain_reason(request, ctx, settings)
     if reason:
         return _abstain(request, reason)
 
     usable = usable_checkins(ctx.recent, settings)
+    # how long they have stayed in one spot by timestamps
     run = _stationary_run(usable, settings.dwell_radius_m)
     duration = (run[-1].timestamp - run[0].timestamp).total_seconds()
     limit = _limit_s(ctx, settings)
 
+    # over the limit is a long dwell
     if duration > limit:
         score = 0.5 + 0.5 * min(1.0, (duration - limit) / limit)
         return DetectorVote(
@@ -74,7 +57,7 @@ def detect(request: DetectorRequest, ctx: TripContext, settings: Settings) -> De
             reason=f"stationary for {duration:.0f} s within {settings.dwell_radius_m:g} m (limit {limit} s)",
         )
 
-    # Whole window stationary and nearing the limit: the real dwell may be longer
+    # whole window stationary and near the limit so real dwell may be longer
     if len(run) == len(usable) and len(run) > 1 and duration >= APPROACH_FRACTION * limit:
         return _abstain(
             request,

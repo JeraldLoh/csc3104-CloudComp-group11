@@ -59,6 +59,8 @@ def client_for(detector_id, server=None):
         ("heading-speed", [{**checkin(i, 1.405 - i * 13 * M), "headingDeg": 180.0} for i in range(6)], "problem", "wrong_direction"),
         # standing still for 360 s
         ("dwell-time", [checkin(i, 1.405, every=40) for i in range(10)], "problem", "long_dwell"),
+        # standing 300 m east of the path, not getting closer to the end
+        ("route-progress", [{**checkin(i, 1.405), "lng": 103.9027} for i in range(6)], "problem", "off_route"),
     ],
 )
 def test_detect_happy_path(detector_id, recent, verdict, problem):

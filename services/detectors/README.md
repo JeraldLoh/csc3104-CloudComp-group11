@@ -1,7 +1,7 @@
 # Detectors
 
 One codebase and one image. `DETECTOR_ID` selects which detector a container runs:
-`route-corridor`, `heading-speed`, `dwell-time` (and `ml-anomaly` later).
+`route-corridor`, `heading-speed`, `dwell-time`, `route-progress` (and `ml-anomaly` later).
 
 The Coordinator calls `POST /internal/detect` with `contracts/examples/detector-request.json`
 and gets back `contracts/examples/detector-vote.json`. Verdicts are `normal`, `problem` or `abstain`.
@@ -36,14 +36,14 @@ returns an `abstain` vote (`internal error: <type>`), never a 500; a malformed b
 
 ## Docker
 
-One image for all three detectors; `DETECTOR_ID` picks which one runs. Deployment is via Kubernetes (stage 11).
+One image for all four detectors; `DETECTOR_ID` picks which one runs. Deployment is via Kubernetes (stage 11).
 
 ### Kubernetes (kind)
 
 `k8s/local/detectors/` has one shared `base/` (Deployment with 2 replicas, ClusterIP Service on 8000,
 HPA 2-4 replicas at 60% CPU, preferred pod anti-affinity across nodes and zones) and one tiny
 kustomization per detector that names it and sets `DETECTOR_ID`. The Services are
-`detector-route`, `-heading` and `-dwell`. They are not part of
+`detector-route`, `-heading`, `-dwell` and `-progress`. They are not part of
 `kubectl apply -k k8s/local` (so teammates without the image aren't affected, like `alert-service`); apply them
 with `kubectl apply -k k8s/local/detectors`. They read Redis from `cloud-redis`, so apply `k8s/local` first.
 
@@ -61,8 +61,8 @@ The HPA shows `<unknown>` CPU until metrics-server is installed in the kind clus
 
 ### Local dev with mock data
 
-`compose.yaml` starts Redis, a one-shot `seed` job and the three detectors (8101 route-corridor,
-8102 heading-speed, 8103 dwell-time). `dev/seed.py` writes one mock trip per simulator scenario
+`compose.yaml` starts Redis, a one-shot `seed` job and the four detectors (8101 route-corridor,
+8102 heading-speed, 8103 dwell-time, 8104 route-progress). `dev/seed.py` writes one mock trip per simulator scenario
 (`off_route`, `wrong_direction`, `long_dwell`, `normal`, `normal_bus_wait`, `poor_gps`) into Redis,
 using the same keys as `contracts/redis-keys.md`.
 
@@ -100,6 +100,26 @@ Each env var is the field name in upper case. Defaults are in `detectors/config.
 | `DETECTOR_ID` | none | all |
 | `REDIS_URL` | `redis://localhost:6379/0` | all |
 | `GPS_MAX_ACCURACY_M` | 50 | all (abstain above this) |
-| `CORRIDOR_M`, `CORRIDOR_CONSECUTIVE` | 100, 3 | route-corridor |
-| `MIN_MOVING_SPEED_MPS`, `WRONG_DIR_DEG`, `WALK_MAX_SPEED_MPS` | 0.5, 120, 4 | heading-speed |
+| `CORRIDOR_M`, `CORRIDOR_CONSECUTIVE` | 100, 3 | route-corridor, route-progress |
+| `MIN_MOVING_SPEED_MPS`, `WRONG_DIR_DEG` | 0.5, 120 | heading-speed |
+| `WALK_MAX_SPEED_MPS` | 4 | heading-speed, route-progress |
 | `DWELL_RADIUS_M`, `DWELL_WALK_S`, `DWELL_TRANSIT_S` | 30, 300, 1200 | dwell-time |
+| `PROGRESS_MIN_M`, `MISSED_STOP_M`, `PROGRESS_MAX_SPEED_MPS`, `PROGRESS_UNSURE_CONFIDENCE` | 20, 150, 30, 0.3 | route-progress |
+
+## Route-progress
+
+Measures distance left to the end **along the route**, not in a straight line, so a route that bends
+away from the destination still counts as progress. Each check-in is matched to its own step's part of
+the path, and no further from the previous match than it could have travelled, so loops and nearby later
+legs are not mistaken for progress. It judges three problem types, first match wins:
+
+| Vote | When |
+|---|---|
+| `missed_stop` | bus/train step, last 3 check-ins over 150 m past the step's end stop, moving away faster than walking |
+| `wrong_direction` | last 3 check-ins on the path and clearly behind the furthest point reached |
+| `off_route` | last 3 check-ins outside the corridor and not getting closer to the end |
+| `normal` 0.3 | outside the corridor but still getting closer (a detour), or past the stop at walking speed |
+| `normal` | otherwise, more confident the more progress was made |
+
+The low-confidence `normal` keeps it from outvoting route-corridor on a detour. Missed stop assumes the
+step index stays on the bus/train step until the traveller gets off.
