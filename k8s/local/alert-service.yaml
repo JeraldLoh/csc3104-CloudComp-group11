@@ -29,6 +29,7 @@ spec:
             - { name: AWS_SECRET_ACCESS_KEY, value: "csc3104" }
             - { name: AWS_DEFAULT_REGION, value: "ap-southeast-1" }
             - { name: CREATE_RESOURCES, value: "true" }   # local only; on AWS the platform stack has them
+            - { name: AUTH_MODE, value: "dev" }           # trust X-Dev-User; local only, never on AWS
           resources:
             requests: { cpu: 100m, memory: 128Mi }
             limits: { cpu: 500m, memory: 256Mi }

@@ -97,14 +97,14 @@ def test_repeat_problem_publishes_incident_updated(client, channel, report):
     assert event["incident"]["detectionCount"] == 2
 
 
-def test_ack_and_resolve_publish_their_events(client, channel, report):
+def test_ack_and_resolve_publish_their_events(client, channel, report, caregiver):
     iid = client.post("/internal/problems", json=report).json()["incidentId"]
     next_event(channel, report["travellerId"])
 
-    client.post(f"/api/incidents/{quote(iid, safe='')}/ack", headers={"X-User-Id": "G-007"})
+    client.post(f"/api/incidents/{quote(iid, safe='')}/ack", headers=caregiver)
     assert next_event(channel, report["travellerId"])["event"] == "incident.acknowledged"
 
-    client.post(f"/api/incidents/{quote(iid, safe='')}/resolve", headers={"X-User-Id": "G-007"})
+    client.post(f"/api/incidents/{quote(iid, safe='')}/resolve", headers=caregiver)
     resolved = next_event(channel, report["travellerId"])
     assert resolved["event"] == "incident.resolved"
     assert resolved["incident"]["state"] == "resolved"

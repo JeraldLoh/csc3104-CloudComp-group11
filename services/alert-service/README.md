@@ -26,8 +26,24 @@ that problem already has an incident. **Retrying is safe**: send again if a requ
 | GET | `/api/incidents?travellerId=U-042` | Newest first |
 | POST | `/api/incidents/{incidentId}/ack` | URL-encode the ID: `U-042%23T-001%23off_route%232` |
 | POST | `/api/incidents/{incidentId}/resolve` | |
+| GET | `/api/stream` | Live alerts (SSE) for the caller's travellers |
+| GET / POST | `/api/travellers` | The caller's travellers / add one (you're linked to them) |
+| POST | `/api/links` | `{"travellerId", "caregiverId"}`: add another caregiver (you must be linked already) |
+| GET / POST | `/api/travellers/{travellerId}/safe-locations` | Home, School… |
+| GET | `/internal/links?caregiverId=&travellerId=` | `{"linked": true/false}` for other services |
 
-Until login (issue 1.5) exists, the caregiver is identified by an `X-User-Id` header.
+## Who sees what
+
+Same login as the Journey Service, chosen with `AUTH_MODE`:
+
+| `AUTH_MODE` | Caller is | Use |
+|---|---|---|
+| `off` (default) | nobody; nothing is checked (profiles still need a caregiver) | AWS until Cognito exists |
+| `dev` | whoever the `X-Dev-User: G-003` header says (`?devUser=` on `/api/stream`) | local only (`dev.ps1`, kind) |
+| `cognito` | verified from `Authorization: Bearer <JWT>` (`?token=` on `/api/stream`) | after issue 1.5 |
+
+With a login, a caregiver only reaches travellers linked to them in `caregiver-links`: their profiles,
+safe locations, incidents and live alerts. Anyone else gets `404 not_found`.
 
 ## How duplicates are prevented
 

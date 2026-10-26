@@ -5,6 +5,7 @@
 // Shareable link: /?from=1.4043,103.9021&to=1.3040,103.8318&mode=bus plans straight away.
 import { useEffect, useMemo, useState } from "react";
 import { AlertsPage } from "./alerts";
+import { TravellersPage, useMyTravellers } from "./profiles";
 import { JourneyApi, RoutePlanner, SavedRoutes, Trips, tripProblem, useDisruptions, useSavedRoutes, useTrips } from "./planner";
 import type { Point } from "./planner/usePlanner";
 import type { DataModeInfo, DataSource, RouteStep, TravelMode } from "./journey/types";
@@ -65,15 +66,16 @@ function readLink(search = location.search): { from: Point; to: Point; mode?: Tr
   };
 }
 
-// The two pages. #alerts in the address opens the alerts page directly.
-type Page = "plan" | "alerts";
-const pageFromHash = (): Page => (location.hash === "#alerts" ? "alerts" : "plan");
+// The pages. #alerts or #travellers in the address opens that page directly.
+type Page = "plan" | "alerts" | "travellers";
+const pageFromHash = (): Page =>
+  location.hash === "#alerts" ? "alerts" : location.hash === "#travellers" ? "travellers" : "plan";
 
 export default function App() {
   const [page, setPage] = useState<Page>(pageFromHash);
   const openPage = (next: Page) => {
     setPage(next);
-    history.replaceState(null, "", next === "alerts" ? "#alerts" : location.pathname + location.search);
+    history.replaceState(null, "", next === "plan" ? location.pathname + location.search : `#${next}`);
   };
   // Dev only: with AUTH_MODE=dev the service believes this header. Real login replaces it.
   const [actAs, setActAs] = useState("G-DEMO");
@@ -92,6 +94,9 @@ export default function App() {
   }
   if (saved.opened) watched[saved.opened.routeId] = saved.opened.steps;
   const disruptions = useDisruptions(api, watched);
+  // The "Act as" caregiver's own travellers (Alert Service, issue 5.1), for the Alerts and Travellers pages.
+  const me = actAs.trim();
+  const myTravellers = useMyTravellers(me);
 
   return (
     <div className="shell">
@@ -100,6 +105,7 @@ export default function App() {
         <nav className="shell__tabs">
           <button type="button" aria-pressed={page === "plan"} onClick={() => openPage("plan")}>Plan routes</button>
           <button type="button" aria-pressed={page === "alerts"} onClick={() => openPage("alerts")}>Alerts</button>
+          <button type="button" aria-pressed={page === "travellers"} onClick={() => openPage("travellers")}>Travellers</button>
         </nav>
         <label>
           Act as <input value={actAs} onChange={(e) => setActAs(e.target.value)} placeholder="G-003" autoComplete="off" />
@@ -110,7 +116,9 @@ export default function App() {
         <DataSwitch api={api} />
       </header>
       <main className="shell__main">
-        {page === "alerts" ? <AlertsPage travellerId={travellerId} caregiverId={caregiverId} /> : <RoutePlanner
+        {page === "alerts" ? <AlertsPage key={me} caregiverId={me} my={myTravellers} />
+          : page === "travellers" ? <TravellersPage key={me} caregiverId={me} my={myTravellers} />
+          : <RoutePlanner
           api={api} travellerId={travellerId} caregiverId={caregiverId} initial={initial}
           viewing={saved.opened} onSaved={() => void saved.refresh()}
           sections={[
