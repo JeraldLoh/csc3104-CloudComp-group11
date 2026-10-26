@@ -1,1 +1,1 @@
-"""Synthetic trip generator for the detectors (and, later, a replay tool)."""
+# synthetic trips plus replay and load tools for the detectors

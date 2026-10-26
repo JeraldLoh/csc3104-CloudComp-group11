@@ -7,7 +7,7 @@ from pydantic import (
     Field,
     field_serializer,
     field_validator,
-    model_validator,
+    model_validator
 )
 from pydantic.alias_generators import to_camel
 
@@ -20,7 +20,7 @@ ProblemType = Literal[
     "long_dwell",
     "no_response",
     "help_requested",
-    "disruption",
+    "disruption"
 ]
 
 # abstain means the detector cannot decide
@@ -36,7 +36,7 @@ class ContractModel(BaseModel):
     model_config = ConfigDict(
         alias_generator=to_camel,
         populate_by_name=True,
-        extra="ignore",
+        extra="ignore"
     )
 
 
@@ -47,8 +47,8 @@ def _require_utc(value: datetime) -> datetime:
     return value.astimezone(timezone.utc)
 
 
+# iso utc
 def _format_utc(value: datetime) -> str:
-    # iso 8601 utc ending in Z
     return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
@@ -72,11 +72,13 @@ class CheckIn(ContractModel):
     # not in the detector request so defaults to False
     buffered_offline: bool = False
 
+    # reject timestamps without a timezone
     @field_validator("timestamp")
     @classmethod
     def _check_timestamp(cls, value: datetime) -> datetime:
         return _require_utc(value)
 
+    # write timestamps as iso utc
     @field_serializer("timestamp")
     def _ser_timestamp(self, value: datetime) -> str:
         return _format_utc(value)
@@ -117,7 +119,7 @@ class DetectorVote(ContractModel):
         request_id: str,
         detector_id: DetectorId,
         reason: str,
-        latency_ms: float = 0,
+        latency_ms: float = 0
     ) -> "DetectorVote":
         return cls(
             request_id=request_id,
@@ -126,5 +128,5 @@ class DetectorVote(ContractModel):
             problem_type=None,
             confidence=0.0,
             reason=reason,
-            latency_ms=latency_ms,
+            latency_ms=latency_ms
         )

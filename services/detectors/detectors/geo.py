@@ -38,6 +38,7 @@ def project_onto_segment(p, a, b):
     cos_lat = math.cos(math.radians(p[0]))
     m_per_deg = math.radians(1) * EARTH_RADIUS_M
 
+    # metres east and north of p
     def project(q):
         return (q[1] - p[1]) * m_per_deg * cos_lat, (q[0] - p[0]) * m_per_deg
 
@@ -73,8 +74,7 @@ def cumulative_m(path):
     return cum
 
 
-# closest point as distance along the path and distance away
-# lo and hi limit the search so a looping route matches the right pass
+# closest point as distance along and away, lo and hi keep a looping route on the right pass
 def project_onto_path(point, path, cum, lo_m=None, hi_m=None):
     if len(path) < 2:
         raise ValueError("path needs at least 2 points")

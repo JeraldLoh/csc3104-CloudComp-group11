@@ -1,13 +1,8 @@
-"""The simulated trip's route: Home -> bus stop (walk) -> bus -> Clinic (walk).
-
-``build_route()`` returns a dict in the ``contracts/examples/route.json`` shape,
-with a dense ``path`` (a point at most every 20 m). ``Track`` walks that path by
-distance along it, which is how the scenarios place the traveller.
-"""
+# the simulated route home to bus stop by walk then bus then walk to the clinic
 
 import bisect
 import math
-from typing import Dict, List, Tuple
+from typing import Dict, List
 
 from tools.simulator.geometry import Point, bearing_deg, distance_m
 
@@ -15,23 +10,22 @@ WALK_SPEED_MPS = 1.3
 BUS_SPEED_MPS = 8.0
 SPACING_M = 20.0
 
-# Waypoints along the route (Punggol), in travel order. The scenarios rely on
-# the indexes below: walk to the stop, bus to the next stop, walk to the clinic.
+# waypoints in travel order through punggol and scenarios rely on these indexes
 HOME, CORNER, BUS_STOP, BUS_BEND, ALIGHT, CLINIC_CORNER, CLINIC = range(7)
 WAYPOINTS: List[Point] = [
-    (1.4025, 103.8995),  # Home
-    (1.4025, 103.9024),  # corner: east along the road, then north
-    (1.4052, 103.9024),  # Punggol Int, bus stop 65009
+    (1.4025, 103.8995),  # home
+    (1.4025, 103.9024),  # corner east along the road then north
+    (1.4052, 103.9024),  # punggol interchange stop 65009
     (1.3990, 103.8990),  # bus bend
-    (1.3935, 103.8962),  # Opp Block 221, stop 65221
+    (1.3935, 103.8962),  # opposite block 221 stop 65221
     (1.3935, 103.8950),  # corner
-    (1.3920, 103.8950),  # Clinic
+    (1.3920, 103.8950)  # clinic
 ]
 
 
+# dense path with cumulative distance so positions are looked up by s in metres
 class Track:
-    """A dense polyline with cumulative distance, so positions are looked up by ``s`` (metres)."""
-
+    # fill in a point every spacing_m between waypoints
     def __init__(self, waypoints: List[Point], spacing_m: float = SPACING_M):
         self.path: List[Point] = [waypoints[0]]
         waypoint_idx = [0]
@@ -43,14 +37,16 @@ class Track:
         self.cum = [0.0]
         for p, q in zip(self.path, self.path[1:]):
             self.cum.append(self.cum[-1] + distance_m(p, q))
-        # Distance along the path at each waypoint
+        # distance along the path at each waypoint
         self.waypoint_s = [self.cum[i] for i in waypoint_idx]
         self.length = self.cum[-1]
 
+    # index of the path segment holding s
     def _segment(self, s: float) -> int:
         i = bisect.bisect_right(self.cum, s) - 1
         return min(max(i, 0), len(self.path) - 2)
 
+    # lat lng at s along the path
     def position(self, s: float) -> Point:
         s = min(max(s, 0.0), self.length)
         i = self._segment(s)
@@ -58,12 +54,13 @@ class Track:
         a, b = self.path[i], self.path[i + 1]
         return a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t
 
+    # path bearing at s
     def bearing(self, s: float) -> float:
         i = self._segment(min(max(s, 0.0), self.length))
         return bearing_deg(self.path[i], self.path[i + 1])
 
+    # step at s and waiting at the bus stop counts as the bus step
     def step_index(self, s: float) -> int:
-        """Step the traveller is on at ``s``. Waiting at the bus stop counts as the bus step."""
         if s < self.waypoint_s[BUS_STOP]:
             return 0
         if s < self.waypoint_s[ALIGHT]:
@@ -71,18 +68,22 @@ class Track:
         return 2
 
 
+# track over the fixed waypoints
 def build_track() -> Track:
     return Track(WAYPOINTS)
 
 
+# place dict in the route json shape
 def _place(name: str, code, point: Point) -> Dict:
     return {"name": name, "code": code, "lat": point[0], "lng": point[1]}
 
 
+# nearest multiple of 10
 def _round10(value: float) -> int:
     return int(round(value / 10.0) * 10)
 
 
+# route json in the contracts route shape with a dense path
 def build_route() -> Dict:
     track = build_track()
     ws = track.waypoint_s
@@ -94,6 +95,7 @@ def build_route() -> Dict:
     alight = _place("Opp Block 221", "65221", WAYPOINTS[ALIGHT])
     clinic = _place("Clinic", None, WAYPOINTS[CLINIC])
 
+    # one route step dict
     def step(index, mode, instruction, easy_read, src, dst, line, duration_s, backup=None):
         return {
             "stepIndex": index,
@@ -107,7 +109,7 @@ def build_route() -> Dict:
             "underground": False,
             "photoKey": f"media/R-007/step{index}.jpg",
             "audioKey": f"media/R-007/step{index}.mp3",
-            "backup": backup,
+            "backup": backup
         }
 
     return {
@@ -130,8 +132,8 @@ def build_route() -> Dict:
                          "line": "83"}),
             step(2, "walk", f"Walk {_round10(walk2)} m to the Clinic",
                  "Walk to the clinic.",
-                 alight, clinic, None, _round10(walk2 / WALK_SPEED_MPS)),
+                 alight, clinic, None, _round10(walk2 / WALK_SPEED_MPS))
         ],
         "path": [[round(lat, 6), round(lng, 6)] for lat, lng in track.path],
-        "updatedAt": "2026-10-10T14:00:00Z",
+        "updatedAt": "2026-10-10T14:00:00Z"
     }

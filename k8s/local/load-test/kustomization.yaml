@@ -1,0 +1,10 @@
+# Load test for the detectors' HPAs. Not in k8s/local/kustomization.yaml: it's a one-off Job.
+#   docker build -t cloud-simulator:local -f tools/simulator/Dockerfile tools
+#   kind load docker-image cloud-simulator:local --name csc3104-local
+#   kubectl apply -k k8s/local/metrics-server     # once, so the HPAs can see CPU
+#   kubectl delete job detector-load -n csc3104 --ignore-not-found && kubectl apply -k k8s/local/load-test
+#   kubectl get hpa -n csc3104 -w                 # watch replicas go 2 -> 4
+#   kubectl logs -n csc3104 job/detector-load -f  # req/s and latency every 10 s
+namespace: csc3104
+resources:
+  - job.yaml
