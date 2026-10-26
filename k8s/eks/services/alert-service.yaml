@@ -33,6 +33,9 @@ spec:
             - { name: AWS_DEFAULT_REGION, value: "__REGION__" }
             - { name: DISRUPTIONS_QUEUE_URL, value: "__DISRUPTIONS_QUEUE_URL__" }
             - { name: CREATE_RESOURCES, value: "false" }   # the platform stack creates the tables and queue
+            # "off" until Cognito (issue 1.5) exists, as for the Journey Service; then "cognito" + COGNITO_* settings.
+            # Never "dev" here: it would let anyone claim to be any caregiver.
+            - { name: AUTH_MODE, value: "off" }
             # No AWS_ENDPOINT_URL and no keys: boto3 uses real AWS and the service account's role.
           # Fargate sizes the pod from requests (minimum 0.25 vCPU / 0.5 GB).
           resources:
