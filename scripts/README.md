@@ -70,7 +70,7 @@ services/<name>/Dockerfile          your service's code and Dockerfile
 k8s/eks/services/<name>.yaml        your Kubernetes manifest
 ```
 
-The Deployment inside the manifest must be called `<name>` too. Use lowercase letters, digits and
+The manifest must contain a Deployment called `<name>`, or, if one image runs as several Deployments (like the detectors), give each Deployment the label `app.kubernetes.io/part-of: <name>` and the script waits for all of them. Use lowercase letters, digits and
 dashes only (e.g. `coordinator`, `detector-route`).
 
 **Don't paste AWS values into your manifest.** Write these placeholders instead; the script fills
