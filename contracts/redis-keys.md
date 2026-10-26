@@ -12,7 +12,7 @@ Journey keys expire **24 hours** after their last update.
 | `trip:{tripId}:lastseq` | String | Highest sequence number processed | Check-in Service (M2) | Check-in Service (M2) |
 | `trip:{tripId}:recent` | List | Last 10 check-ins (JSON), newest first | Check-in Service (M2) | Detectors (M4) |
 | `hb:{tripId}:lastseen` | String | Time of last check-in | Check-in Service (M2) | Heartbeat (M1) |
-| `hb:{tripId}:intervals` | List | Last 100 gaps between check-ins, in milliseconds | Check-in Service (M2) | Heartbeat (M1) |
+| `hb:{tripId}:intervals` | List | Last 100 gaps between single live check-ins, in milliseconds (catch-up batches don't add gaps; they only update lastseen) | Check-in Service (M2) | Heartbeat (M1) |
 | `hb:{tripId}:status` | String | `active` or `backgrounded` | Check-in Service (M2) | Heartbeat (M1) |
 | `risk:{travellerId}` | Hash | `score`, `level` (`normal`/`elevated`), `detectorsUsed`, `updatedAt` | Coordinator / Aggregator (M3) | Coordinator (M3), Status page (M3) |
 | `detector:weights` | Hash | `detectorId` → voting weight | Aggregator (M3) | Aggregator (M3) |
