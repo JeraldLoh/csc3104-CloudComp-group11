@@ -5,7 +5,7 @@ Redis, ElasticMQ (a local SQS, no account needed), four fake detectors and a fak
 Service. No AWS, no cost.
 
 ```
-send ──► ElasticMQ ──► coordinator ──► detector-route / -dwell / -heading / -ml (fakes)
+send ──► ElasticMQ ──► coordinator ──► detector-route / -dwell / -heading / -progress (fakes)
                            │
                            ▼
            Redis ◄── aggregator ──► alert-service (fake)
@@ -56,7 +56,7 @@ ElasticMQ's web UI (queue depths, dead-letter queue): http://localhost:9325
 | detector-route | 9001 | `auto`: problem when off route |
 | detector-dwell | 9002 | always `normal` (it only judges long dwells, so it never outvotes an off-route) |
 | detector-heading | 9003 | `auto` |
-| detector-ml | 9004 | `abstain` (ml-anomaly isn't built yet; switch it on live for a demo) |
+| detector-progress | 9004 | `auto`: stands in for route-progress, the second judge of off-route |
 | alert-service | 8004 | creates one incident per problem |
 
 Change a fake while it runs:
@@ -76,7 +76,7 @@ Detector modes: `normal`, `problem`, `auto`, `wrong`, `abstain`, `error`. Put `{
 | Do | Expect in the logs |
 |---|---|
 | `send --seq 1` | `k=2 ... -> normal`, no incident |
-| `send --seq 2 --off-route` | `escalating ... single_voter` (only route-corridor judges the route; asks ml-anomaly too), `k=4 ... -> problem`, `ALERT`, risk `elevated` |
+| `send --seq 2 --off-route` | `escalating ... single_voter` (route-corridor asks for route-progress's second opinion), `k=4 ... -> problem`, `ALERT`, risk `elevated` |
 | `send --seq 3` | `k=4` (risk is elevated) |
 | `send --seq 2 --off-route` again | `skip T-001#2: already decided`, no new incident |
 | 3 more on-route check-ins | risk back to `normal`, then `k=2` again |

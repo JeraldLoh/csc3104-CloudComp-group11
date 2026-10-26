@@ -1,9 +1,9 @@
 """Which detectors to ask about a check-in. Pure functions, no I/O.
 
-k = 2 when the traveller's risk is normal, k = 4 when it's elevated (adaptive mode).
-The pair used for k = 2 is deliberately diverse: route-corridor looks at *where* the
-traveller is, dwell-time at *how long* they've been there, so one blind spot doesn't
-hide a problem from both.
+k = 2 when the traveller's risk is normal, k = 4 (every detector) when it's elevated
+(adaptive mode). The pair used for k = 2 is deliberately diverse: route-corridor looks
+at *where* the traveller is, dwell-time at *how long* they've been there, so one blind
+spot doesn't hide a problem from both.
 """
 
 # detectorId (contracts/examples/detector-vote.json) -> service name (contracts/api.md)
@@ -11,7 +11,7 @@ DETECTOR_SERVICES = {
     "route-corridor": "detector-route",
     "heading-speed": "detector-heading",
     "dwell-time": "detector-dwell",
-    "ml-anomaly": "detector-ml",
+    "route-progress": "detector-progress",
 }
 ALL_DETECTORS = tuple(DETECTOR_SERVICES)
 DEFAULT_PAIR = ("route-corridor", "dwell-time")

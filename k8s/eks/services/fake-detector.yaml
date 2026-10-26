@@ -1,16 +1,22 @@
-# Fake detectors (stand-ins for Member 4's), one image deployed four times under the
-# contract's service names, so the Coordinator finds them without extra config.
+# Fake detectors (stand-ins for Member 4's), one image deployed under the contract's
+# service names, so the Coordinator finds them without extra config.
 # Deploy: bash scripts/macos/deploy.sh --service fake-detector  (Deployments found by their part-of label)
-# Remove before Member 4 deploys the real detectors (same names):
-#   kubectl delete -n careroute deploy,svc -l role=fake-detector
-# Change one live: kubectl -n careroute port-forward svc/detector-route 9001:8000, then
-#   curl -X POST localhost:9001/control -H 'Content-Type: application/json' -d '{"mode":"wrong"}'
+#
+# Remove fakes as the real detectors arrive (same names), e.g. once Member 4 deploys
+# route-corridor, heading-speed and dwell-time:
+#   kubectl delete -n careroute deploy,svc -l 'fake-of in (route-corridor,heading-speed,dwell-time)'
+# Remove all of them:  kubectl delete -n careroute deploy,svc -l role=fake-detector
+#
+# route-progress isn't deployed yet. Its fake abstains by default so a made-up vote never
+# sways a real detector's decision. Switch it on live for a demo:
+#   kubectl -n careroute port-forward svc/detector-progress 9004:8000, then
+#   curl -X POST localhost:9004/control -H 'Content-Type: application/json' -d '{"mode":"auto"}'
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: detector-route
   namespace: __NAMESPACE__
-  labels: { app: detector-route, role: fake-detector, app.kubernetes.io/part-of: fake-detector }
+  labels: { app: detector-route, role: fake-detector, fake-of: route-corridor, app.kubernetes.io/part-of: fake-detector }
 spec:
   replicas: 1
   selector:
@@ -40,7 +46,7 @@ kind: Service
 metadata:
   name: detector-route
   namespace: __NAMESPACE__
-  labels: { role: fake-detector }
+  labels: { role: fake-detector, fake-of: route-corridor }
 spec:
   selector: { app: detector-route }
   ports: [{ port: 8000, targetPort: 8000 }]
@@ -48,49 +54,9 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: detector-dwell
-  namespace: __NAMESPACE__
-  labels: { app: detector-dwell, role: fake-detector, app.kubernetes.io/part-of: fake-detector }
-spec:
-  replicas: 1
-  selector:
-    matchLabels: { app: detector-dwell }
-  template:
-    metadata:
-      labels: { app: detector-dwell, role: fake-detector }
-    spec:
-      containers:
-        - name: detector
-          image: __IMAGE__
-          ports: [{ containerPort: 8000 }]
-          env:
-            - { name: DETECTOR_ID, value: "dwell-time" }
-            - { name: MODE, value: "normal" }
-            - { name: PROBLEM_TYPE, value: "off_route" }
-            - { name: CONFIDENCE, value: "0.8" }
-          resources:
-            requests: { cpu: 250m, memory: 512Mi }
-            limits: { cpu: 250m, memory: 512Mi }
-          readinessProbe:
-            httpGet: { path: /health, port: 8000 }
-            periodSeconds: 10
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: detector-dwell
-  namespace: __NAMESPACE__
-  labels: { role: fake-detector }
-spec:
-  selector: { app: detector-dwell }
-  ports: [{ port: 8000, targetPort: 8000 }]
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
   name: detector-heading
   namespace: __NAMESPACE__
-  labels: { app: detector-heading, role: fake-detector, app.kubernetes.io/part-of: fake-detector }
+  labels: { app: detector-heading, role: fake-detector, fake-of: heading-speed, app.kubernetes.io/part-of: fake-detector }
 spec:
   replicas: 1
   selector:
@@ -106,7 +72,7 @@ spec:
           env:
             - { name: DETECTOR_ID, value: "heading-speed" }
             - { name: MODE, value: "auto" }
-            - { name: PROBLEM_TYPE, value: "off_route" }
+            - { name: PROBLEM_TYPE, value: "wrong_direction" }
             - { name: CONFIDENCE, value: "0.7" }
           resources:
             requests: { cpu: 250m, memory: 512Mi }
@@ -120,7 +86,7 @@ kind: Service
 metadata:
   name: detector-heading
   namespace: __NAMESPACE__
-  labels: { role: fake-detector }
+  labels: { role: fake-detector, fake-of: heading-speed }
 spec:
   selector: { app: detector-heading }
   ports: [{ port: 8000, targetPort: 8000 }]
@@ -128,27 +94,26 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: detector-ml
+  name: detector-dwell
   namespace: __NAMESPACE__
-  labels: { app: detector-ml, role: fake-detector, app.kubernetes.io/part-of: fake-detector }
+  labels: { app: detector-dwell, role: fake-detector, fake-of: dwell-time, app.kubernetes.io/part-of: fake-detector }
 spec:
   replicas: 1
   selector:
-    matchLabels: { app: detector-ml }
+    matchLabels: { app: detector-dwell }
   template:
     metadata:
-      labels: { app: detector-ml, role: fake-detector }
+      labels: { app: detector-dwell, role: fake-detector }
     spec:
       containers:
         - name: detector
           image: __IMAGE__
           ports: [{ containerPort: 8000 }]
           env:
-            - { name: DETECTOR_ID, value: "ml-anomaly" }
-            # Not built yet and judges every problem type: abstain unless switched on for a demo.
-            - { name: MODE, value: "abstain" }
-            - { name: PROBLEM_TYPE, value: "off_route" }
-            - { name: CONFIDENCE, value: "0.6" }
+            - { name: DETECTOR_ID, value: "dwell-time" }
+            - { name: MODE, value: "normal" }
+            - { name: PROBLEM_TYPE, value: "long_dwell" }
+            - { name: CONFIDENCE, value: "0.8" }
           resources:
             requests: { cpu: 250m, memory: 512Mi }
             limits: { cpu: 250m, memory: 512Mi }
@@ -159,9 +124,49 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: detector-ml
+  name: detector-dwell
   namespace: __NAMESPACE__
-  labels: { role: fake-detector }
+  labels: { role: fake-detector, fake-of: dwell-time }
 spec:
-  selector: { app: detector-ml }
+  selector: { app: detector-dwell }
+  ports: [{ port: 8000, targetPort: 8000 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: detector-progress
+  namespace: __NAMESPACE__
+  labels: { app: detector-progress, role: fake-detector, fake-of: route-progress, app.kubernetes.io/part-of: fake-detector }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: detector-progress }
+  template:
+    metadata:
+      labels: { app: detector-progress, role: fake-detector }
+    spec:
+      containers:
+        - name: detector
+          image: __IMAGE__
+          ports: [{ containerPort: 8000 }]
+          env:
+            - { name: DETECTOR_ID, value: "route-progress" }
+            - { name: MODE, value: "abstain" }
+            - { name: PROBLEM_TYPE, value: "off_route" }
+            - { name: CONFIDENCE, value: "0.75" }
+          resources:
+            requests: { cpu: 250m, memory: 512Mi }
+            limits: { cpu: 250m, memory: 512Mi }
+          readinessProbe:
+            httpGet: { path: /health, port: 8000 }
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: detector-progress
+  namespace: __NAMESPACE__
+  labels: { role: fake-detector, fake-of: route-progress }
+spec:
+  selector: { app: detector-progress }
   ports: [{ port: 8000, targetPort: 8000 }]

@@ -73,14 +73,14 @@ services:
 
   detector-heading:
     <<: *fake-detector
-    environment: { DETECTOR_ID: heading-speed, MODE: auto, PROBLEM_TYPE: off_route, CONFIDENCE: "0.7" }
+    environment: { DETECTOR_ID: heading-speed, MODE: auto, PROBLEM_TYPE: wrong_direction, CONFIDENCE: "0.7" }
     ports: ["127.0.0.1:9003:8000"]
 
-  detector-ml:
+  detector-progress:
     <<: *fake-detector
-    # ml-anomaly isn't built yet (Member 4). It judges every problem type, so a made-up vote
-    # here would sway real decisions: abstain by default, switch it on live for a demo.
-    environment: { DETECTOR_ID: ml-anomaly, MODE: abstain, PROBLEM_TYPE: off_route, CONFIDENCE: "0.6" }
+    # Stand-in for Member 4's route-progress (second judge of off_route / wrong_direction,
+    # only judge of missed_stop). Everything here is fake, so it votes like route-corridor.
+    environment: { DETECTOR_ID: route-progress, MODE: auto, PROBLEM_TYPE: off_route, CONFIDENCE: "0.75" }
     ports: ["127.0.0.1:9004:8000"]
 
   alert-service:

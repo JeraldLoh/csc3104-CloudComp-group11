@@ -21,12 +21,16 @@ def test_adaptive_normal_risk_uses_the_diverse_pair():
     assert choose_detectors("normal") == ["route-corridor", "dwell-time"]
 
 
-def test_adaptive_elevated_risk_uses_all_four():
+def test_adaptive_elevated_risk_uses_every_detector():
     assert choose_detectors("elevated") == list(ALL_DETECTORS)
 
 
 def test_fixed2_ignores_risk():
     assert choose_detectors("elevated", mode="fixed2") == list(DEFAULT_PAIR)
+
+
+def test_four_detectors_with_route_progress():
+    assert ALL_DETECTORS == ("route-corridor", "heading-speed", "dwell-time", "route-progress")
 
 
 def test_fixed4_ignores_risk():
@@ -38,7 +42,7 @@ def test_unknown_risk_level_is_treated_as_normal():
 
 
 def test_custom_pair():
-    assert choose_detectors("normal", pair=("heading-speed", "ml-anomaly")) == ["heading-speed", "ml-anomaly"]
+    assert choose_detectors("normal", pair=("heading-speed", "route-progress")) == ["heading-speed", "route-progress"]
 
 
 def test_unknown_mode_is_rejected():
@@ -69,16 +73,16 @@ def test_escalates_when_both_abstain():
     assert needs_escalation([vote("abstain"), vote("abstain")], quorum=2)
 
 
-def test_never_escalates_beyond_all_four():
-    four_abstains = [vote("abstain")] * 4
-    assert not needs_escalation(four_abstains, quorum=2)
+def test_never_escalates_beyond_every_detector():
+    all_abstain = [vote("abstain")] * len(ALL_DETECTORS)
+    assert not needs_escalation(all_abstain, quorum=2)
 
 
 def test_remaining_detectors_keep_their_order():
-    assert remaining(["route-corridor", "dwell-time"]) == ["heading-speed", "ml-anomaly"]
+    assert remaining(["route-corridor", "dwell-time"]) == ["heading-speed", "route-progress"]
 
 
-def test_nothing_remaining_after_all_four():
+def test_nothing_remaining_after_every_detector():
     assert remaining(list(ALL_DETECTORS)) == []
 
 
@@ -90,7 +94,7 @@ def test_default_urls_use_service_names_from_the_contract():
         "route-corridor": "http://detector-route:8000",
         "heading-speed": "http://detector-heading:8000",
         "dwell-time": "http://detector-dwell:8000",
-        "ml-anomaly": "http://detector-ml:8000",
+        "route-progress": "http://detector-progress:8000",
     }
 
 

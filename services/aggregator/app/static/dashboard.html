@@ -162,7 +162,7 @@
 <script>
 "use strict";
 const POLL_MS = 2000;
-const SHORT = { "route-corridor": "route", "heading-speed": "heading", "dwell-time": "dwell", "ml-anomaly": "ml" };
+const SHORT = { "route-corridor": "route", "heading-speed": "heading", "dwell-time": "dwell", "route-progress": "progress" };
 let paused = false, traveller = null, seen = new Set(), firstLoad = true;
 
 const $ = (id) => document.getElementById(id);

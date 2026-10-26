@@ -5,7 +5,11 @@ The detectors are diverse: each one checks a different thing (detectors/*.py, Me
     route-corridor   far from the planned path?            -> off_route
     heading-speed    moving against the route direction?   -> wrong_direction
     dwell-time       standing in one place too long?       -> long_dwell
-    ml-anomaly       anything unusual (generalist)          -> any type
+    route-progress   getting closer along the route?       -> off_route, wrong_direction, missed_stop
+
+route-progress measures the same problems as route-corridor and heading-speed in a
+different way (progress along the path, not distance or bearing), so off_route and
+wrong_direction each have two independent judges.
 
 So "normal" from dwell-time means "not stuck", not "on the route". A plain majority
 over all votes would let detectors that don't look at the route outvote the one that
@@ -37,15 +41,17 @@ from dataclasses import dataclass
 COUNTED = {"problem", "normal"}
 UNKNOWN = "unknown"             # a "problem" vote without a type
 ANY = "*"
-ALL_DETECTORS = ("route-corridor", "heading-speed", "dwell-time", "ml-anomaly")
+# Must match the Coordinator's detector list (services/coordinator/app/selection.py).
+ALL_DETECTORS = ("route-corridor", "heading-speed", "dwell-time", "route-progress")
 
-# Which problem types each detector actually checks. Unlisted detectors are treated as
-# generalists. A "problem" without a type is judged by everyone, like a plain majority.
+# Which problem types each detector actually checks (contracts/problem-definitions.md).
+# Unlisted detectors are treated as generalists. A "problem" without a type is judged by
+# everyone, like a plain majority.
 COVERAGE: dict[str, frozenset] = {
     "route-corridor": frozenset({"off_route"}),
     "heading-speed": frozenset({"wrong_direction"}),
     "dwell-time": frozenset({"long_dwell"}),
-    "ml-anomaly": frozenset({ANY}),
+    "route-progress": frozenset({"off_route", "wrong_direction", "missed_stop"}),
 }
 
 

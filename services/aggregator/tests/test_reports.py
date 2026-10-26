@@ -61,7 +61,7 @@ def test_detectors_used_counts_abstains_too():
         {"detectorId": "route-corridor", "verdict": "problem", "confidence": 0.9, "problemType": "off_route"},
         {"detectorId": "dwell-time", "verdict": "abstain", "confidence": 0.0},
         {"detectorId": "heading-speed", "verdict": "problem", "confidence": 0.8, "problemType": "off_route"},
-        {"detectorId": "ml-anomaly", "verdict": "problem", "confidence": 0.7, "problemType": "off_route"},
+        {"detectorId": "route-progress", "verdict": "problem", "confidence": 0.7, "problemType": "off_route"},
     ]
     report = build_problem_report("T-001#17", checkin, votes, aggregate(votes), NOW)
     assert report["detectorsUsed"] == 4

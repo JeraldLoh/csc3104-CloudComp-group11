@@ -15,7 +15,7 @@ CONTRACTS = Path(__file__).resolve().parents[3] / "contracts" / "examples"
 CHECKIN = json.loads((CONTRACTS / "checkin.json").read_text())        # T-001, seq 17, U-042
 DETECTOR_REQUEST_FIELDS = set(json.loads((CONTRACTS / "detector-request.json").read_text()))
 HOSTS = {"detector-route": "route-corridor", "detector-heading": "heading-speed",
-         "detector-dwell": "dwell-time", "detector-ml": "ml-anomaly"}
+         "detector-dwell": "dwell-time", "detector-progress": "route-progress"}
 
 
 class FakeRedis:
@@ -49,7 +49,7 @@ class World:
 
     def __init__(self, detector_votes=None, agg_replies=None):
         self.detector_votes = {"route-corridor": "normal", "heading-speed": "normal",
-                               "dwell-time": "normal", "ml-anomaly": "normal", **(detector_votes or {})}
+                               "dwell-time": "normal", "route-progress": "normal", **(detector_votes or {})}
         self.agg_replies = list(agg_replies or [{"decision": "normal", "problemType": None, "confidence": 1.0}])
         self.detector_calls = []   # (detectorId, request body)
         self.agg_calls = []        # request bodies
@@ -142,10 +142,10 @@ def test_aggregator_receives_votes_and_context():
 
 # --- risk and modes ------------------------------------------------------------------------------
 
-def test_elevated_risk_asks_all_four():
+def test_elevated_risk_asks_every_detector():
     world = World()
     result, _ = process(world, FakeRedis(hashes=ELEVATED))
-    assert sorted(world.asked) == ["dwell-time", "heading-speed", "ml-anomaly", "route-corridor"]
+    assert sorted(world.asked) == ["dwell-time", "heading-speed", "route-corridor", "route-progress"]
     assert result.k == 4 and not result.escalated
     assert world.detector_calls[0][1]["riskLevel"] == "elevated"
 
@@ -156,7 +156,7 @@ def test_fixed2_ignores_elevated_risk():
     assert len(world.asked) == 2
 
 
-def test_fixed4_asks_all_four_at_normal_risk():
+def test_fixed4_asks_every_detector_at_normal_risk():
     world = World()
     process(world, redundancy_mode="fixed4")
     assert len(world.asked) == 4
@@ -206,7 +206,7 @@ def test_close_call_asks_the_rest_and_resubmits():
     assert len(world.agg_calls[0]["votes"]) == 2
     assert len(world.agg_calls[1]["votes"]) == 4
     assert world.agg_calls[1]["escalated"] is True
-    assert sorted(world.asked) == ["dwell-time", "heading-speed", "ml-anomaly", "route-corridor"]
+    assert sorted(world.asked) == ["dwell-time", "heading-speed", "route-corridor", "route-progress"]
     assert result.decision == PROBLEM and result.k == 4 and result.escalated
 
 
@@ -221,7 +221,7 @@ def test_no_resubmit_when_everyone_was_already_asked():
 def test_no_detector_is_asked_twice():
     world = World(detector_votes={"dwell-time": "timeout"}, agg_replies=[NEEDS_MORE, PROBLEM])
     process(world)
-    assert sorted(world.asked) == ["dwell-time", "heading-speed", "ml-anomaly", "route-corridor"]
+    assert sorted(world.asked) == ["dwell-time", "heading-speed", "route-corridor", "route-progress"]
 
 
 # --- failures: raise so the message is retried -----------------------------------------------------------
