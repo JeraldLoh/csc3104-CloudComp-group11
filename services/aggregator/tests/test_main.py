@@ -60,12 +60,12 @@ def test_contract_minimum_body_is_enough():
     assert call("POST", "/internal/votes", body).status_code == 200
 
 
-def test_close_call_reply_asks_for_more_votes():
-    body = {**BODY, "votes": [vote("route-corridor", "problem"), vote("dwell-time", "normal")]}
+def test_too_few_answers_reply_asks_for_more_votes():
+    body = {**BODY, "votes": [vote("route-corridor", "normal"), vote("dwell-time", "abstain", 0.0)]}
     r = call("POST", "/internal/votes", body)
     assert r.status_code == 200
     assert r.json()["needsMoreVotes"] is True
-    assert r.json()["reason"] == "single_voter"   # dwell-time can't judge off_route
+    assert r.json()["reason"] == "quorum"   # one real vote can't call it normal
 
 
 def test_extra_fields_are_ignored():

@@ -1,4 +1,4 @@
-"""Weighted vote over detector votes, per problem type. Pure functions, no I/O.
+"""Rule-based decision over detector votes. Pure functions, no I/O.
 
 The detectors are diverse: each one checks a different thing (detectors/*.py, Member 4):
 
@@ -7,35 +7,21 @@ The detectors are diverse: each one checks a different thing (detectors/*.py, Me
     dwell-time       standing in one place too long?       -> long_dwell
     route-progress   getting closer along the route?       -> off_route, wrong_direction, missed_stop
 
-route-progress measures the same problems as route-corridor and heading-speed in a
-different way (progress along the path, not distance or bearing), so off_route and
-wrong_direction each have two independent judges.
+A missed alert is the unsafe failure, so the rules lean towards alerting:
 
-So "normal" from dwell-time means "not stuck", not "on the route". A plain majority
-over all votes would let detectors that don't look at the route outvote the one that
-does, and an off-route traveller would be judged normal: a missed alert.
+  1. Any detector that checks a problem type says "problem" of that type -> problem.
+     off_route alerts if route-corridor OR route-progress says so; wrong_direction if
+     heading-speed OR route-progress; missed_stop if route-progress; long_dwell if dwell-time.
+     A "normal" never cancels a problem: dwell-time's "normal" means "not stuck", not "on route".
+  2. Otherwise, at least `quorum` real (non-abstain) votes -> normal.
+  3. Otherwise inconclusive: too few detectors answered to call it normal. The Coordinator asks
+     the rest if some weren't asked yet (needs_more_votes).
 
-Instead, every problem type that is raised is voted on by its own jury: the detectors
-that check that type (COVERAGE), plus whoever raised it.
-
-    weight        = vote confidence x detector reliability (detector:weights, default 1.0)
-    problem score = weight saying "this problem" / weight of the jury's real votes
-
-Abstains don't count: "I don't know" is evidence neither way. A problem vote of a
-*different* type is neither for nor against this one.
-
-For each raised type:
-  - a jury of one, while another detector that checks this type hasn't been asked yet,
-    or a close call (score within `close_margin` of the threshold) while one hasn't:
-    pending -> the Coordinator asks the remaining detectors and resubmits
-  - otherwise confirmed if score >= threshold (exactly at it counts as a problem:
-    a missed alert is the unsafe failure), else rejected
-
-Decision: "problem" if any type is confirmed (the strongest one is reported); else
-"inconclusive" with needs_more_votes if any is pending; else "normal". Fewer real votes
-in total than the quorum is "inconclusive" before any of this.
+A problem vote is ignored if the detector doesn't check that type (COVERAGE), or if its weight is 0.
+weight = vote confidence x detector reliability (detector:weights, default 1.0), so setting a
+faulty detector's reliability to 0 silences it. When several types are raised, the strongest
+claim (highest weight) is reported.
 """
-from collections import defaultdict
 from dataclasses import dataclass
 
 COUNTED = {"problem", "normal"}
@@ -45,8 +31,7 @@ ANY = "*"
 ALL_DETECTORS = ("route-corridor", "heading-speed", "dwell-time", "route-progress")
 
 # Which problem types each detector actually checks (contracts/problem-definitions.md).
-# Unlisted detectors are treated as generalists. A "problem" without a type is judged by
-# everyone, like a plain majority.
+# Unlisted detectors are treated as generalists. A "problem" without a type counts from anyone.
 COVERAGE: dict[str, frozenset] = {
     "route-corridor": frozenset({"off_route"}),
     "heading-speed": frozenset({"wrong_direction"}),
@@ -60,10 +45,10 @@ class Decision:
     decision: str                  # "problem" | "normal" | "inconclusive"
     problem_type: str | None       # e.g. "off_route"; None unless decision is "problem"
     confidence: float              # how sure we are of `decision`, 0-1
-    problem_score: float | None    # problem: the reported type's score; normal: the highest
-                                   # rejected score (0 if nothing was raised); None if no weight
+    problem_score: float | None    # weight of the strongest accepted problem claim (0 if none);
+                                   # None if inconclusive
     counted: int                   # votes that took part (not abstains)
-    reason: str | None = None      # why inconclusive: "quorum" | "no_weight" | "split" | "single_voter"
+    reason: str | None = None      # why inconclusive: "quorum" | "no_weight"
     needs_more_votes: bool = False # inconclusive and some detectors weren't asked yet
 
 
@@ -90,36 +75,7 @@ def _type_of(vote: dict) -> str:
     return vote.get("problemType") or UNKNOWN
 
 
-@dataclass(frozen=True)
-class _TypeVerdict:
-    problem_type: str
-    state: str          # "confirmed" | "rejected" | "pending"
-    score: float
-    weight_for: float
-    reason: str | None  # why pending
-
-
-def _judge_type(problem_type: str, counted: list[dict], asked: set[str], reliability: dict[str, float],
-                threshold: float, close_margin: float, all_detectors: tuple[str, ...],
-                coverage: dict[str, frozenset]) -> _TypeVerdict | None:
-    jury = [v for v in counted
-            if (v["verdict"] == "problem" and _type_of(v) == problem_type)
-            or (v["verdict"] == "normal" and checks(v.get("detectorId"), problem_type, coverage))]
-    w_for = sum(vote_weight(v, reliability) for v in jury if v["verdict"] == "problem")
-    w_total = sum(vote_weight(v, reliability) for v in jury)
-    if w_total == 0:
-        return None
-    score = w_for / w_total
-    unasked_judges = [d for d in all_detectors if d not in asked and checks(d, problem_type, coverage)]
-    if unasked_judges and len(jury) < 2:
-        return _TypeVerdict(problem_type, "pending", score, w_for, "single_voter")
-    if unasked_judges and abs(score - threshold) <= close_margin:
-        return _TypeVerdict(problem_type, "pending", score, w_for, "split")
-    return _TypeVerdict(problem_type, "confirmed" if score >= threshold else "rejected", score, w_for, None)
-
-
-def aggregate(votes: list[dict], reliability: dict[str, float] | None = None,
-              threshold: float = 0.5, quorum: int = 2, close_margin: float = 0.1,
+def aggregate(votes: list[dict], reliability: dict[str, float] | None = None, quorum: int = 2,
               all_detectors: tuple[str, ...] = ALL_DETECTORS,
               coverage: dict[str, frozenset] = COVERAGE) -> Decision:
     reliability = reliability or {}
@@ -127,30 +83,20 @@ def aggregate(votes: list[dict], reliability: dict[str, float] | None = None,
     can_ask_more = any(d not in asked for d in all_detectors)
     counted = [v for v in votes if v.get("verdict") in COUNTED]
 
-    def inconclusive(reason: str, score: float | None = None, more: bool = can_ask_more) -> Decision:
-        return Decision("inconclusive", None, 0.0, score, len(counted), reason, more)
+    # Rule 1: one credible problem claim is enough.
+    claims = [(vote_weight(v, reliability), _type_of(v)) for v in counted
+              if v["verdict"] == "problem" and checks(v.get("detectorId"), _type_of(v), coverage)]
+    claims = [(w, t) for w, t in claims if w > 0]
+    if claims:
+        # Strongest claim first; equal weights reported alphabetically by type.
+        weight, problem_type = min(claims, key=lambda c: (-c[0], c[1]))
+        reported = None if problem_type == UNKNOWN else problem_type
+        return Decision("problem", reported, weight, weight, len(counted))
 
+    # Rules 2 and 3: "normal" needs enough detectors to have actually looked.
     if len(counted) < quorum:
-        return inconclusive("quorum")
+        return Decision("inconclusive", None, 0.0, None, len(counted), "quorum", can_ask_more)
     if sum(vote_weight(v, reliability) for v in counted) == 0:
         # Votes were cast but all with zero confidence or zero reliability.
-        return inconclusive("no_weight")
-
-    raised = sorted({_type_of(v) for v in counted if v["verdict"] == "problem"})
-    verdicts = [t for t in (_judge_type(p, counted, asked, reliability, threshold, close_margin,
-                                        all_detectors, coverage) for p in raised) if t is not None]
-
-    confirmed = [t for t in verdicts if t.state == "confirmed"]
-    if confirmed:
-        # The strongest confirmed problem: highest score, then most weight, then alphabetical.
-        best = min(confirmed, key=lambda t: (-t.score, -t.weight_for, t.problem_type))
-        reported = None if best.problem_type == UNKNOWN else best.problem_type
-        return Decision("problem", reported, best.score, best.score, len(counted))
-
-    pending = [t for t in verdicts if t.state == "pending"]
-    if pending:
-        reason = "split" if any(t.reason == "split" for t in pending) else "single_voter"
-        return inconclusive(reason, max(t.score for t in pending), more=True)
-
-    top = max((t.score for t in verdicts), default=0.0)
-    return Decision("normal", None, 1 - top, top, len(counted))
+        return Decision("inconclusive", None, 0.0, None, len(counted), "no_weight", can_ask_more)
+    return Decision("normal", None, 1.0, 0.0, len(counted))

@@ -1,8 +1,8 @@
 """What the Aggregator does with one set of votes (POST /internal/votes).
 
     1. Already answered this requestId?     return the saved answer (SQS redelivery / retry)
-    2. Weighted vote                        voting.py, with reliability from detector:weights
-    3. Close call / too few votes?          needsMoreVotes: answer now, change nothing
+    2. Rule-based decision                  voting.py: any detector that checks it says problem
+    3. Too few votes to call it normal?     needsMoreVotes: answer now, change nothing
     4. Problem?                             problem-report.json -> Alert Service
     5. Update risk:{travellerId}            risk.py              \\  one Redis
     6. Save the decision record             for the dashboard    |  transaction
@@ -118,7 +118,7 @@ class AggregatorService:
             return json.loads(saved)
 
         weights = parse_weights(await self.redis.hgetall(WEIGHTS_KEY))
-        d = aggregate(votes, weights, self.s.threshold, self.s.quorum, self.s.close_margin)
+        d = aggregate(votes, weights, self.s.quorum)
         if d.needs_more_votes:
             log.info("%s needs more votes (%s, %d counted)", request_id, d.reason, d.counted)
             return answer(d, None)

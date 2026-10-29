@@ -39,21 +39,27 @@ def test_checks():
     assert checks(DWELL, "unknown")                       # a typeless problem is judged by everyone
 
 
-# --- the reported bug: specialists outvoted by detectors that don't check that problem ---------------
+# --- rule 1: one credible problem claim is enough --------------------------------------------------------
 
-def test_off_route_is_not_outvoted_by_detectors_that_dont_check_the_route():
-    # km off the route: route-corridor sees it; heading/dwell check other things; nobody else answers.
-    d = aggregate(asked_all(v(ROUTE, "problem", 0.8), v(DWELL, "normal", 0.8), v(HEADING, "normal", 0.7)))
+def test_off_route_is_not_cancelled_by_detectors_that_dont_check_the_route():
+    # Check-in #18 from the demo. Counting all four, "normal" outweighed "problem" (1.76 vs 1.56)
+    # and the off-route traveller was missed. heading-speed and dwell-time don't check the route.
+    d = aggregate([v(ROUTE, "problem", 0.84), v(PROGRESS, "problem", 0.72),
+                   v(HEADING, "normal", 0.82), v(DWELL, "normal", 0.94)])
+    assert d.decision == "problem" and d.problem_type == "off_route"
+
+
+@pytest.mark.parametrize("route, progress", [("problem", "normal"), ("normal", "problem"), ("problem", "abstain")])
+def test_off_route_alerts_if_either_route_judge_says_so(route, progress):
+    # Safety first: the judges disagreeing (or one not answering) still raises the alert.
+    d = aggregate([v(ROUTE, route, 0.84), v(PROGRESS, progress, 0.95, "off_route" if progress == "problem" else None),
+                   v(HEADING, "normal"), v(DWELL, "normal")])
+    assert d.decision == "problem" and d.problem_type == "off_route"
+
+
+def test_a_confident_normal_does_not_cancel_a_problem():
+    d = aggregate([v(ROUTE, "problem", 0.5), v(PROGRESS, "normal", 0.95)])
     assert d.decision == "problem"
-    assert d.problem_type == "off_route"
-
-
-def test_first_pair_asks_for_a_second_opinion_on_off_route():
-    # k=2 (route + dwell): dwell can't judge off_route; route-progress can and wasn't asked.
-    d = aggregate([v(ROUTE, "problem", 0.8), v(DWELL, "normal", 0.8)])
-    assert d.decision == "inconclusive"
-    assert d.reason == "single_voter"
-    assert d.needs_more_votes
 
 
 def test_each_specialist_is_heard_for_its_own_problem():
@@ -61,28 +67,6 @@ def test_each_specialist_is_heard_for_its_own_problem():
     assert d.decision == "problem" and d.problem_type == "long_dwell"
     d = aggregate(asked_all(v(ROUTE, "normal"), v(DWELL, "normal"), v(HEADING, "problem", 0.7)))
     assert d.decision == "problem" and d.problem_type == "wrong_direction"
-
-
-# --- route-progress: a second, independent judge -------------------------------------------------------
-
-def test_two_judges_agree_on_off_route():
-    d = aggregate(asked_all(v(ROUTE, "problem", 0.8), v(PROGRESS, "problem", 0.7), v(DWELL, "normal")))
-    assert d.decision == "problem" and d.problem_type == "off_route"
-    assert d.problem_score == pytest.approx(1.0)
-
-
-def test_faulty_route_corridor_is_outvoted_by_route_progress():
-    # e.g. GPS shifted 120 m by tall buildings: route-corridor says off_route, but the traveller
-    # is clearly progressing along the route. No reliability weights needed.
-    d = aggregate(asked_all(v(ROUTE, "problem", 0.6), v(PROGRESS, "normal", 0.9), v(DWELL, "normal"), v(HEADING, "normal")))
-    assert d.decision == "normal"
-    assert d.problem_score == pytest.approx(0.6 / 1.5)
-
-
-def test_route_progress_backs_heading_speed_on_wrong_direction():
-    d = aggregate(asked_all(v(HEADING, "problem", 0.7), v(PROGRESS, "problem", 0.8, "wrong_direction"), v(ROUTE, "normal")))
-    assert d.decision == "problem" and d.problem_type == "wrong_direction"
-    assert d.problem_score == pytest.approx(1.0)   # route-corridor's normal doesn't count here
 
 
 def test_route_progress_catches_walking_backwards_near_the_route():
@@ -97,26 +81,59 @@ def test_missed_stop_is_judged_by_route_progress():
     assert d.decision == "problem" and d.problem_type == "missed_stop"
 
 
-def test_route_progress_alone_decides_missed_stop():
-    # Nobody else judges missed_stop, so the unasked heading/dwell aren't worth waiting for.
-    d = aggregate([v(ROUTE, "normal"), v(PROGRESS, "problem", 0.8, "missed_stop")])
-    assert d.decision == "problem" and d.problem_type == "missed_stop"
-
-
 def test_long_dwell_has_a_single_judge():
     d = aggregate([v(ROUTE, "normal"), v(DWELL, "problem", 0.7)])
     assert d.decision == "problem" and d.problem_type == "long_dwell"
 
 
-# --- basic outcomes -------------------------------------------------------------------------------------
+def test_one_problem_vote_is_enough_when_the_others_abstain():
+    # The quorum is for calling it normal; a problem is reported even if only one detector answered.
+    d = aggregate(asked_all(v(ROUTE, "problem", 0.9)))
+    assert d.decision == "problem" and d.counted == 1
 
-def test_both_say_problem():
-    d = aggregate([v(ROUTE, "problem", 0.9), v(PROGRESS, "problem", 0.7)])
+
+def test_adaptive_pair_alerts_at_once():
+    # k=2 (route + dwell): no second opinion is needed before alerting.
+    d = aggregate([v(ROUTE, "problem", 0.8), v(DWELL, "normal", 0.8)])
+    assert d.decision == "problem" and not d.needs_more_votes
+
+
+def test_problem_outside_a_detectors_coverage_is_ignored():
+    # heading-speed doesn't check the route, so its off_route claim isn't credible.
+    d = aggregate([v(HEADING, "problem", 0.9, "off_route"), v(ROUTE, "normal"), v(DWELL, "normal")])
+    assert d.decision == "normal"
+
+
+def test_problem_without_a_type_counts_from_anyone():
+    d = aggregate([v(DWELL, "problem", 0.9, "unknown"), v(ROUTE, "normal")])
     assert d.decision == "problem"
-    assert d.problem_type == "off_route"
-    assert d.confidence == pytest.approx(1.0)
-    assert d.counted == 2
+    assert d.problem_type is None
 
+
+def test_zero_reliability_silences_a_faulty_detector():
+    # route-corridor known to be faulty: its reliability is set to 0 in detector:weights.
+    votes = [v(ROUTE, "problem", 0.9), v(PROGRESS, "normal"), v(HEADING, "normal"), v(DWELL, "normal")]
+    assert aggregate(votes).decision == "problem"
+    assert aggregate(votes, reliability={ROUTE: 0}).decision == "normal"
+
+
+def test_confidence_is_the_strongest_claim():
+    d = aggregate([v(ROUTE, "problem", 0.84), v(PROGRESS, "problem", 0.72)], reliability={ROUTE: 0.5})
+    assert d.confidence == pytest.approx(0.72)     # 0.84 x 0.5 = 0.42 < 0.72
+    assert d.problem_score == pytest.approx(0.72)
+
+
+def test_strongest_problem_is_reported():
+    d = aggregate(asked_all(v(ROUTE, "problem", 0.6), v(HEADING, "problem", 0.9), v(DWELL, "normal")))
+    assert d.problem_type == "wrong_direction"
+
+
+def test_equal_problems_are_reported_alphabetically():
+    d = aggregate(asked_all(v(ROUTE, "problem", 0.5), v(HEADING, "problem", 0.5), v(DWELL, "normal")))
+    assert d.problem_type == "off_route"
+
+
+# --- rules 2 and 3: normal needs enough answers -------------------------------------------------------------
 
 def test_all_say_normal():
     d = aggregate([v(ROUTE, "normal", 0.9), v(DWELL, "normal", 0.6)])
@@ -126,78 +143,8 @@ def test_all_say_normal():
     assert d.problem_score == pytest.approx(0.0)
 
 
-def test_confident_problem_beats_weak_normal_within_the_jury():
-    d = aggregate(asked_all(v(ROUTE, "problem", 0.9), v(PROGRESS, "normal", 0.3)))
-    assert d.decision == "problem"
-    assert d.problem_score == pytest.approx(0.9 / 1.2)
-
-
-def test_confident_normal_beats_weak_problem_within_the_jury():
-    d = aggregate(asked_all(v(ROUTE, "problem", 0.2), v(PROGRESS, "normal", 0.9)))
-    assert d.decision == "normal"
-    assert d.problem_score == pytest.approx(0.2 / 1.1)
-    assert d.confidence == pytest.approx(0.9 / 1.1)
-
-
-# --- close calls and ties --------------------------------------------------------------------------------
-
-def test_tie_between_the_only_two_judges_counts_as_problem():
-    # route-corridor and route-progress are the only off_route judges; heading/dwell aren't asked
-    # but can't break the tie, so it's decided: a tie is a problem (safety first).
-    d = aggregate([v(ROUTE, "problem", 0.8), v(PROGRESS, "normal", 0.8)])
-    assert d.decision == "problem"
-    assert d.problem_score == pytest.approx(0.5)
-    assert not d.needs_more_votes
-
-
-def test_close_call_asks_more_while_a_judge_is_left():
-    # A typeless problem is judged by every detector, so the unasked ones are worth asking.
-    d = aggregate([v(ROUTE, "problem", 0.8, "unknown"), v(DWELL, "normal", 0.8)])
-    assert d.decision == "inconclusive"
-    assert d.reason == "split"
-    assert d.needs_more_votes
-    assert d.problem_score == pytest.approx(0.5)   # kept, for the dashboard
-
-
-def test_score_at_edge_of_close_band_is_still_split():
-    d = aggregate([v(ROUTE, "problem", 0.6, "unknown"), v(DWELL, "normal", 0.4)])
-    assert d.reason == "split"
-
-
-def test_score_outside_close_band_is_decided():
-    d = aggregate([v(ROUTE, "problem", 0.7), v(PROGRESS, "normal", 0.3)])
-    assert d.decision == "problem"
-    assert not d.needs_more_votes
-
-
-def test_close_call_with_everyone_asked_is_decided_by_the_threshold():
-    d = aggregate(asked_all(v(ROUTE, "problem", 0.5), v(PROGRESS, "normal", 0.6)))   # 0.5 / 1.1 = 0.45
-    assert d.decision == "normal"
-    assert not d.needs_more_votes
-
-
-def test_zero_margin_only_escalates_exact_ties():
-    near = [v(ROUTE, "problem", 0.81, "unknown"), v(DWELL, "normal", 0.79)]
-    assert aggregate(near, close_margin=0).decision == "problem"
-    exact = [v(ROUTE, "problem", 0.8, "unknown"), v(DWELL, "normal", 0.8)]
-    assert aggregate(exact, close_margin=0).reason == "split"
-
-
-def test_higher_threshold_turns_a_tie_into_normal():
-    d = aggregate(asked_all(v(ROUTE, "problem", 0.8), v(PROGRESS, "normal", 0.8)), threshold=0.6)
-    assert d.decision == "normal"
-
-
-# --- abstains and quorum ------------------------------------------------------------------------------------
-
-def test_abstains_are_ignored():
-    d = aggregate(asked_all(v(ROUTE, "problem", 0.9), v(PROGRESS, "problem", 0.6)))
-    assert d.decision == "problem"
-    assert d.counted == 2
-
-
-def test_one_real_vote_is_inconclusive():
-    d = aggregate([v(ROUTE, "problem", 0.9), v(DWELL, "abstain", 0.0)])
+def test_one_normal_vote_is_inconclusive_and_asks_the_rest():
+    d = aggregate([v(ROUTE, "normal", 0.9), v(DWELL, "abstain", 0.0)])
     assert d.decision == "inconclusive"
     assert d.reason == "quorum"
     assert d.needs_more_votes
@@ -205,14 +152,14 @@ def test_one_real_vote_is_inconclusive():
     assert d.counted == 1
 
 
-def test_all_abstain_is_inconclusive():
-    assert aggregate([v(ROUTE, "abstain"), v(DWELL, "abstain")]).decision == "inconclusive"
-
-
 def test_too_few_votes_after_asking_everyone_is_final():
-    d = aggregate(asked_all(v(ROUTE, "problem", 0.9)))
+    d = aggregate(asked_all(v(ROUTE, "normal", 0.9)))
     assert d.decision == "inconclusive"
     assert not d.needs_more_votes   # nobody left to ask
+
+
+def test_all_abstain_is_inconclusive():
+    assert aggregate([v(ROUTE, "abstain"), v(DWELL, "abstain")]).decision == "inconclusive"
 
 
 def test_no_votes_is_inconclusive():
@@ -223,39 +170,17 @@ def test_unknown_verdict_is_treated_like_an_abstain():
     assert aggregate([v(ROUTE, "maybe"), v(DWELL, "normal")]).decision == "inconclusive"
 
 
-def test_all_zero_confidence_is_inconclusive():
+def test_all_zero_weight_is_inconclusive():
     d = aggregate([v(ROUTE, "problem", 0.0), v(DWELL, "normal", 0.0)])
     assert d.decision == "inconclusive"
     assert d.reason == "no_weight"
 
 
-def test_quorum_of_one_with_nobody_else_to_ask():
-    d = aggregate([v(ROUTE, "problem", 0.9)], quorum=1, all_detectors=(ROUTE,))
-    assert d.decision == "problem"
+def test_quorum_of_one():
+    assert aggregate([v(ROUTE, "normal", 0.9)], quorum=1).decision == "normal"
 
 
-def test_quorum_of_one_still_seeks_a_second_judge():
-    d = aggregate([v(ROUTE, "problem", 0.9)], quorum=1)
-    assert d.reason == "single_voter" and d.needs_more_votes
-
-
-# --- reliability weights (detector:weights) and faulty detectors ---------------------------------------------
-
-def test_unreliable_detector_is_outvoted_within_the_jury():
-    # route-progress is known to be wrong (Member 4's fault mode); its weight is lowered.
-    votes = asked_all(v(ROUTE, "problem", 0.5), v(PROGRESS, "normal", 0.9), rest="normal")
-    assert aggregate(votes).decision == "normal"                                   # 0.5 / 1.4
-    assert aggregate(votes, reliability={PROGRESS: 0.3}).decision == "problem"     # 0.5 / 0.77
-
-
-def test_one_wrong_detector_is_outvoted_when_three_judge():
-    # A typeless problem is judged by all four; the faulty one says normal at full confidence.
-    votes = [v(ROUTE, "problem", 0.8, "unknown"), v(HEADING, "problem", 0.7, "unknown"),
-             v(PROGRESS, "problem", 0.6, "unknown"), v(DWELL, "normal", 1.0)]
-    d = aggregate(votes)
-    assert d.decision == "problem"
-    assert d.problem_score == pytest.approx(2.1 / 3.1)
-
+# --- reliability weights (detector:weights) ------------------------------------------------------------------
 
 def test_missing_reliability_defaults_to_one():
     assert vote_weight(v(ROUTE, "problem", 0.8), {}) == pytest.approx(0.8)
@@ -275,45 +200,6 @@ def test_missing_or_bad_confidence_counts_as_zero():
     assert vote_weight({"detectorId": ROUTE, "verdict": "problem", "confidence": "high"}, {}) == 0.0
 
 
-# --- several problems at once ---------------------------------------------------------------------------------
-
-def test_strongest_confirmed_problem_is_reported():
-    d = aggregate(asked_all(v(ROUTE, "problem", 0.6), v(HEADING, "problem", 0.9), v(DWELL, "normal")))
-    assert d.decision == "problem"
-    assert d.problem_type in ("off_route", "wrong_direction")
-    assert d.problem_score == pytest.approx(1.0)
-
-
-def test_equal_problems_are_reported_alphabetically():
-    d = aggregate(asked_all(v(ROUTE, "problem", 0.5), v(HEADING, "problem", 0.5), v(DWELL, "normal")))
-    assert d.problem_type == "off_route"
-
-
-def test_a_problem_of_another_type_does_not_count_against():
-    # route-progress says wrong_direction, route-corridor says off_route: progress's vote isn't
-    # counted against off_route (it's about something else), so route-corridor's stands.
-    d = aggregate(asked_all(v(ROUTE, "problem", 0.8), v(PROGRESS, "problem", 0.6, "wrong_direction"),
-                            v(HEADING, "normal", 0.9), v(DWELL, "normal")))
-    assert d.decision == "problem" and d.problem_type == "off_route"
-
-
-def test_problem_without_a_type_is_judged_by_everyone():
-    d = aggregate([v(ROUTE, "problem", 0.9, "unknown"), v(DWELL, "problem", 0.9, "unknown")])
-    assert d.decision == "problem"
-    assert d.problem_type is None
-
-
-def test_typeless_close_call_asks_everyone_left():
-    d = aggregate([v(ROUTE, "problem", 0.8, "unknown"), v(DWELL, "normal", 0.8)])
-    assert d.reason == "split" and d.needs_more_votes
-
-
-def test_normal_reports_the_highest_rejected_score():
-    d = aggregate(asked_all(v(ROUTE, "problem", 0.3), v(PROGRESS, "normal", 0.7)))
-    assert d.decision == "normal"
-    assert d.problem_score == pytest.approx(0.3)   # feeds the risk score: a shaky normal
-
-
 # --- contract examples ---------------------------------------------------------------------------------------
 
 def test_votes_from_the_contract_example():
@@ -322,8 +208,7 @@ def test_votes_from_the_contract_example():
     d = aggregate(asked_all(*votes))
     assert d.decision == "problem" and d.problem_type == "off_route"
     assert d.counted == 4
-    # dwell-time's "normal" says nothing about the route, so all of the off_route jury agrees.
-    assert d.problem_score == pytest.approx(1.0)
+    assert d.problem_score == pytest.approx(max(x["confidence"] for x in votes if x["verdict"] == "problem"))
 
 
 def test_detector_vote_example_is_counted():

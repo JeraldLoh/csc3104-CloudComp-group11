@@ -104,7 +104,7 @@ Ports: route 9001, dwell 9002, heading 9003, progress 9004.
 | Do | Expect in the logs |
 |---|---|
 | `send --seq 1` | `k=2 ... -> normal`, no incident |
-| `send --seq 2 --off-route` | `escalating ... single_voter` (route-corridor asks for route-progress's second opinion), `k=4 ... -> problem`, `ALERT`, risk `elevated` |
+| `send --seq 2 --off-route` | `-> problem` (any detector that checks off_route saying so is enough), `ALERT`, risk `elevated` |
 | `send --seq 3` | `k=4` (risk is elevated) |
 | `send --seq 2 --off-route` again | `skip T-001#2: already decided`, no new incident |
 | 3 more on-route check-ins | risk back to `normal`, then `k=2` again |
@@ -114,8 +114,12 @@ To go back to the real detectors, run `compose.yaml` on its own again.
 
 ## Experiment modes
 
-Compare the experiment's modes by restarting with `REDUNDANCY_MODE=fixed2` or `fixed4`:
+The Coordinator asks all 4 detectors for every check-in by default (`REDUNDANCY_MODE=fixed4`):
+a missed alert is the unsafe failure. The experiment compares it with `adaptive` (2 detectors at
+normal risk, 4 when elevated or uncertain) and `fixed2`. Restart the Coordinator in another mode:
 
 ```bash
-REDUNDANCY_MODE=fixed4 docker compose -f services/analysis-dev/compose.yaml up -d coordinator
+REDUNDANCY_MODE=adaptive docker compose -f services/analysis-dev/compose.yaml up -d coordinator
 ```
+
+The k=2 rows in the tables above are what `adaptive` does; in `fixed4` every row has k=4.

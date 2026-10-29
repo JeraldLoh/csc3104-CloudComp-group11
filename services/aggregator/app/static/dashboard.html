@@ -104,7 +104,7 @@
 <header>
   <div>
     <h1>CareRoute · Check-in analysis</h1>
-    <div class="sub">Coordinator + Aggregator · adaptive redundancy: 2 detectors normally, 4 when risk is elevated or the vote is uncertain</div>
+    <div class="sub">Coordinator + Aggregator · all 4 detectors by default (REDUNDANCY_MODE=fixed4); adaptive asks 2 at normal risk</div>
   </div>
   <div class="spacer"></div>
   <div class="live"><span id="dot" class="sq none"></span><span id="conn">CONNECTING</span>
@@ -119,7 +119,7 @@
     <div class="tile"><div class="label">Problems</div><div class="value" id="m-prob">–</div>
       <div class="hint" id="m-prob-hint">&nbsp;</div><svg id="s-prob" aria-hidden="true"></svg></div>
     <div class="tile"><div class="label">Escalations</div><div class="value" id="m-esc">–</div>
-      <div class="hint">split vote / too few answers</div><svg id="s-esc" aria-hidden="true"></svg></div>
+      <div class="hint">too few answers / asked the rest</div><svg id="s-esc" aria-hidden="true"></svg></div>
     <div class="tile"><div class="label">Abstains</div><div class="value" id="m-abs">–</div>
       <div class="hint" id="m-abs-hint">&nbsp;</div><svg id="s-abs" aria-hidden="true"></svg></div>
     <div class="tile"><div class="label">Travellers elevated</div><div class="value" id="m-elev">–</div>

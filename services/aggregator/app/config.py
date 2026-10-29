@@ -16,10 +16,8 @@ class Settings:
     alert_url: str = field(default_factory=lambda: os.getenv("ALERT_SERVICE_URL", "http://alert-service:8000").rstrip("/"))
     alert_timeout_s: float = field(default_factory=lambda: _float("ALERT_TIMEOUT_S", "3"))
 
-    # Voting (voting.py)
-    threshold: float = field(default_factory=lambda: _float("VOTE_THRESHOLD", "0.5"))
+    # Voting (voting.py): real votes needed to call a check-in normal (one is enough for a problem).
     quorum: int = field(default_factory=lambda: int(os.getenv("QUORUM", "2")))
-    close_margin: float = field(default_factory=lambda: _float("CLOSE_MARGIN", "0.1"))
 
     # Risk (risk.py)
     risk: RiskPolicy = field(default_factory=lambda: RiskPolicy(

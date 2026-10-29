@@ -139,17 +139,27 @@ def test_keys_expire_after_a_day():
 
 # --- close calls change nothing -------------------------------------------------------------------
 
-def test_close_call_asks_for_more_votes_without_side_effects():
+def test_first_pair_alerts_on_off_route_at_once():
+    # One credible claim is enough: no second opinion before alerting.
     [reply], state, alert = run([("T-001#17", FIRST_PAIR_OFF_ROUTE)])
+    assert reply["decision"] == "problem" and reply["needsMoreVotes"] is False
+    assert len(alert.reports) == 1
+
+
+ONE_ANSWER = [v("route-corridor", "normal", 0.9), {**v("dwell-time", "abstain", 0.0), "reason": "need history"}]
+
+
+def test_too_few_answers_asks_for_more_votes_without_side_effects():
+    [reply], state, alert = run([("T-001#17", ONE_ANSWER)])
     assert reply["decision"] == "inconclusive"
-    assert reply["needsMoreVotes"] is True and reply["reason"] == "single_voter"
+    assert reply["needsMoreVotes"] is True and reply["reason"] == "quorum"
     assert alert.reports == []
     assert state["risk"] == {} and state["decisions"] == [] and state["answers"] == {}
 
 
-def test_close_call_then_four_votes_decides():
-    four = FIRST_PAIR_OFF_ROUTE + [v("heading-speed", "normal", 0.7), v("route-progress", "problem", 0.6)]
-    replies, state, alert = run([("T-001#17", FIRST_PAIR_OFF_ROUTE), ("T-001#17", four, True)])
+def test_too_few_answers_then_four_votes_decides():
+    four = ONE_ANSWER + [v("heading-speed", "normal", 0.7), v("route-progress", "problem", 0.6)]
+    replies, state, alert = run([("T-001#17", ONE_ANSWER), ("T-001#17", four, True)])
     assert [r["decision"] for r in replies] == ["inconclusive", "problem"]
     assert len(alert.reports) == 1 and alert.reports[0]["detectorsUsed"] == 4
     assert len(state["decisions"]) == 1 and state["decisions"][0]["k"] == 4
@@ -160,7 +170,7 @@ def abstain(detector, reason):
 
 
 def test_final_inconclusive_because_detectors_failed_raises_risk_without_alert():
-    blind = [v("route-corridor", "problem", 0.9), abstain("dwell-time", "timeout"),
+    blind = [v("route-corridor", "normal", 0.9), abstain("dwell-time", "timeout"),
              abstain("heading-speed", "error: ConnectError"), abstain("route-progress", "timeout")]
     [reply], state, alert = run([("T-001#17", blind)])
     assert reply["decision"] == "inconclusive" and reply["needsMoreVotes"] is False
@@ -247,13 +257,13 @@ def test_alert_failure_saves_nothing_and_the_retry_succeeds_cleanly():
 # --- reliability weights ---------------------------------------------------------------------------
 
 def test_detector_weights_from_redis_are_used():
-    # route-progress is the only other detector that judges off_route.
-    votes = [v("route-corridor", "problem", 0.5), v("route-progress", "normal", 0.9),
+    # route-corridor known to be faulty: reliability 0 in detector:weights silences it.
+    votes = [v("route-corridor", "problem", 0.9), v("route-progress", "normal", 0.9),
              v("dwell-time", "normal", 0.9), v("heading-speed", "normal", 0.9)]
     [plain], _, _ = run([("T-001#17", votes)])
-    [weighted], _, _ = run([("T-001#17", votes)], seed={WEIGHTS_KEY: {"route-progress": "0.3"}})
-    assert plain["decision"] == "normal"
-    assert weighted["decision"] == "problem"
+    [silenced], _, _ = run([("T-001#17", votes)], seed={WEIGHTS_KEY: {"route-corridor": "0"}})
+    assert plain["decision"] == "problem"
+    assert silenced["decision"] == "normal"
 
 
 def test_bad_weights_are_ignored():
