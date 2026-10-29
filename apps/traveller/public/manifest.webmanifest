@@ -1,0 +1,11 @@
+{
+  "name": "CareRoute",
+  "short_name": "CareRoute",
+  "description": "Step-by-step travel help",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f7f5f0",
+  "theme_color": "#1d4ed8",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}
