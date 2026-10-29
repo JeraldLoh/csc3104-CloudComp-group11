@@ -1,10 +1,3 @@
-"""Runtime settings, read from environment variables.
-
-Every threshold lives here so it can be tuned per Deployment without a rebuild.
-Env var names are the field names in upper case, e.g. ``CORRIDOR_M=120``.
-Threshold values are starting points; later stages tune them with the simulator.
-"""
-
 import os
 from functools import lru_cache
 from typing import Mapping, Optional
@@ -17,35 +10,40 @@ from detectors.models import DetectorId
 class Settings(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    # Which detector this container runs
+    # detector this container runs
     detector_id: Optional[DetectorId] = None
     redis_url: str = "redis://localhost:6379/0"
 
-    # Shared: abstain when GPS is worse than this
+    # abstain when gps is worse than this
     gps_max_accuracy_m: float = Field(default=50, gt=0)
 
-    # Route-corridor
+    # route corridor
     corridor_m: float = Field(default=100, gt=0)
     corridor_consecutive: int = Field(default=3, ge=1)
 
-    # Heading/speed
+    # heading speed
     min_moving_speed_mps: float = Field(default=0.5, ge=0)
     wrong_dir_deg: float = Field(default=120, gt=0, le=180)
-    # Faster than this on a walking step is noted in the reason (never a problem by itself)
+    # faster than this on a walk step is only noted in the reason
     walk_max_speed_mps: float = Field(default=4.0, gt=0)
 
-    # Dwell-time
+    # dwell time
     dwell_radius_m: float = Field(default=30, gt=0)
     dwell_walk_s: int = Field(default=300, gt=0)
     dwell_transit_s: int = Field(default=1200, gt=0)
 
+    # route progress also uses corridor_m corridor_consecutive and walk_max_speed_mps
+    # less than this on top of gps accuracy is not progress
+    progress_min_m: float = Field(default=20, ge=0)
+    # this far past the stop at vehicle speed is a missed stop
+    missed_stop_m: float = Field(default=150, gt=0)
+    # fastest believable speed between check-ins
+    progress_max_speed_mps: float = Field(default=30, gt=0)
+    # low confidence normal so a detour cannot outvote route corridor
+    progress_unsure_confidence: float = Field(default=0.3, ge=0, le=1)
+
     @classmethod
     def from_env(cls, environ: Optional[Mapping[str, str]] = None) -> "Settings":
-        """Build settings from env vars named after the fields in upper case.
-
-        Unset or empty variables fall back to the defaults above. Values are
-        validated, so a typo like ``CORRIDOR_M=abc`` fails at startup.
-        """
         env = os.environ if environ is None else environ
         values = {}
         for name in cls.model_fields:

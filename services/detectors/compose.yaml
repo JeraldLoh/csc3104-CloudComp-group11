@@ -1,4 +1,4 @@
-# Local dev/testing only (deployment is Kubernetes): Redis seeded with mock trips + the three detectors.
+# Local dev/testing only (deployment is Kubernetes): Redis seeded with mock trips + the four detectors.
 #   docker compose up --build -d
 #   python dev/seed.py --request off_route | curl -s -X POST localhost:8101/internal/detect -H 'content-type: application/json' -d @-
 name: careroute-detectors
@@ -43,3 +43,7 @@ services:
     <<: *detector
     ports: ["8103:8000"]
     environment: {DETECTOR_ID: dwell-time, REDIS_URL: "redis://cloud-redis:6379/0"}
+  detector-route-progress:
+    <<: *detector
+    ports: ["8104:8000"]
+    environment: {DETECTOR_ID: route-progress, REDIS_URL: "redis://cloud-redis:6379/0"}

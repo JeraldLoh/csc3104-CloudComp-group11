@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CareRoute Demo Control</title>
+<style>
+  /* Same palette as the dashboard: one background, one text colour, three status colours. */
+  :root {
+    --bg: #0d1014;
+    --text: #d6dce4;
+    --muted: rgba(214, 220, 228, 0.62);
+    --line: rgba(214, 220, 228, 0.16);
+    --line-strong: rgba(214, 220, 228, 0.32);
+    --ok: #1fb0a0;
+    --warn: #e0a32e;
+    --bad: #f0524f;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 13px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .bar { border-bottom: 1px solid var(--line-strong); padding: 10px 16px; display: grid; gap: 8px; }
+  .row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  h1 { margin: 0 12px 0 0; font-size: 13px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+  .group { color: var(--muted); font-size: 11px; min-width: 64px; text-transform: uppercase; letter-spacing: .05em; }
+  button { font: inherit; font-size: 12px; border: 1px solid var(--line-strong); background: transparent;
+           color: var(--text); padding: 4px 10px; border-radius: 0; cursor: pointer;
+           display: inline-flex; align-items: center; gap: 6px; }
+  button:hover:not(:disabled) { border-color: var(--text); }
+  button:disabled { opacity: .4; cursor: default; }
+  button.primary { background: var(--text); border-color: var(--text); color: var(--bg); font-weight: 600; }
+  .sq { display: inline-block; width: 8px; height: 8px; flex: none; }
+  .sq.ok { background: var(--ok); } .sq.warn { background: var(--warn); } .sq.bad { background: var(--bad); }
+  .count { color: var(--muted); font-family: var(--mono); font-size: 11px; }
+  button.primary .count { color: var(--bg); opacity: .7; }
+  .status { margin-left: auto; font-family: var(--mono); font-size: 12px; color: var(--muted);
+            display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .status b { color: var(--text); font-weight: 600; }
+  .msg { font-family: var(--mono); font-size: 12px; min-height: 17px; color: var(--muted); }
+  .msg.err { color: var(--text); }
+  .msg.err::before { content: ""; display: inline-block; width: 8px; height: 8px; background: var(--bad); margin-right: 6px; }
+  .views { display: flex; height: calc(100vh - 160px); min-height: 700px; }
+  .views iframe { display: block; border: 0; height: 100%; }
+  #dash { flex: 1; min-width: 0; background: var(--bg); }
+  .side { width: 400px; flex: none; display: flex; flex-direction: column; border-left: 1px solid var(--line-strong); }
+  .side[hidden] { display: none; }
+  .side-head { padding: 8px 12px; border-bottom: 1px solid var(--line-strong); font-size: 11px; color: var(--muted);
+               text-transform: uppercase; letter-spacing: .05em; }
+  .side-head b { color: var(--text); font-weight: 600; }
+  .side-head .hint { text-transform: none; letter-spacing: 0; font-family: var(--mono); display: block; margin-top: 2px; }
+  #care { flex: 1; width: 100%; background: #fff; }   /* M5's app has a light theme */
+  @media (max-width: 640px) { .status { margin-left: 0; } }
+  @media (max-width: 1100px) { .views { flex-direction: column; height: auto; }
+    #dash { height: 900px; } .side { width: auto; height: 520px; border-left: 0; border-top: 1px solid var(--line-strong); } }
+</style>
+</head>
+<body>
+<div class="bar">
+  <div class="row">
+    <h1>Demo control</h1>
+    <span class="status">trip <b id="trip">–</b> · traveller <b id="traveller">–</b> · last check-in <b id="seq">–</b>
+      · <span class="status"><span id="state-sq" class="sq ok"></span><b id="state">IDLE</b></span></span>
+  </div>
+  <div class="row" id="journey"><span class="group">Journey</span></div>
+  <div class="row" id="services"><span class="group">Services</span>
+    <span id="no-services" class="count">stop/start needs the Docker socket (see compose.yaml)</span></div>
+  <div class="row">
+    <span class="group" title="Only when started with compose.fakes.yaml">Fakes only</span>
+    <button data-fault='{"target":"detector-route","delayMs":2000}' title="Needs the fake detectors"><span class="sq warn"></span>route-corridor slow</button>
+    <button data-fault='{"target":"detector-route","mode":"wrong"}' title="Needs the fake detectors"><span class="sq bad"></span>route-corridor faulty</button>
+    <button data-fault='{"target":"detector-route","mode":"auto","delayMs":0}' title="Needs the fake detectors"><span class="sq ok"></span>route-corridor normal</button>
+    <span class="group" style="margin-left:12px">Other</span>
+    <button id="dup">Send duplicate</button>
+    <button id="reset">Reset demo</button>
+    <button id="care-toggle" aria-pressed="true">Hide caregiver view</button>
+  </div>
+  <div id="msg" class="msg info">Pick a step of the journey; the dashboard below updates within 2 s.</div>
+</div>
+<div class="views">
+  <iframe id="dash" title="Dashboard"></iframe>
+  <aside class="side" id="side">
+    <div class="side-head"><b>Caregiver app · Alerts</b> (Member 5)
+      <span class="hint">type U-042 in Traveller · not loading? cd apps/caregiver &amp;&amp; ALERT_URL=http://127.0.0.1:8004 npm run dev</span></div>
+    <iframe id="care" title="Caregiver alerts"></iframe>
+  </aside>
+</div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+let running = null;
+const SERVICE_NAMES = { "alert-service": "Alert Service", "detector-route": "route-corridor",
+                        "detector-heading": "heading-speed", "detector-dwell": "dwell-time",
+                        "detector-progress": "route-progress" };
+const serviceButtons = {};
+
+// One button per service: the square is its state now, the label what a click does.
+function showServices(services) {
+  const names = Object.keys(services || {});
+  $("no-services").hidden = names.length > 0;
+  for (const name of names) {
+    let b = serviceButtons[name];
+    if (!b) {
+      b = serviceButtons[name] = document.createElement("button");
+      b.append(document.createElement("span"), document.createTextNode(""));
+      b.firstChild.className = "sq";
+      b.addEventListener("click", () => switchService(name, b.dataset.action));
+      $("services").append(b);
+    }
+    const up = services[name] === "running";
+    b.dataset.action = up ? "stop" : "start";
+    b.firstChild.className = "sq " + (up ? "ok" : "bad");
+    b.lastChild.textContent = (up ? "Stop " : "Start ") + (SERVICE_NAMES[name] || name);
+    b.title = (SERVICE_NAMES[name] || name) + " is " + (up ? "running" : "stopped");
+  }
+}
+
+async function switchService(name, action) {
+  const label = SERVICE_NAMES[name] || name;
+  say((action === "stop" ? "Stopping " : "Starting ") + label + "…");
+  try {
+    await post("api/demo/service", { target: name, action });
+    say(action === "stop"
+      ? label + " stopped. " + (name === "alert-service"
+          ? "Problems stay on the queue and are retried every 30 s until it's back."
+          : "The Coordinator counts it as abstain (error) and asks the other detectors.")
+      : label + " started.");
+  } catch (e) { say(e.message, true); }
+  refresh();
+}
+
+function say(text, isError) {
+  $("msg").textContent = text;
+  $("msg").className = "msg " + (isError ? "err" : "info");
+}
+
+async function post(path, body) {
+  const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" },
+                                body: body ? JSON.stringify(body) : undefined });
+  let data = {};
+  try { data = await r.json(); } catch (_) { /* empty body */ }
+  if (!r.ok) throw new Error((data.error && data.error.message) || ("HTTP " + r.status));
+  return data;
+}
+
+function setBusy(busy) {
+  document.querySelectorAll("#journey button, #dup").forEach((b) => { b.disabled = busy; });
+}
+
+async function refresh() {
+  try {
+    const s = await (await fetch("api/demo/status", { cache: "no-store" })).json();
+    $("trip").textContent = s.trip;
+    $("traveller").textContent = s.traveller;
+    $("seq").textContent = s.lastSeq ? "#" + s.lastSeq : "none";
+    running = s.running;
+    $("state").textContent = running ? "SENDING " + running.toUpperCase() : "IDLE";
+    $("state-sq").className = "sq " + (running ? "warn" : "ok");
+    setBusy(!!running);
+    showServices(s.services);
+    return s;
+  } catch (e) {
+    say("Can't reach the demo service: is the local stack running?", true);
+    return null;
+  }
+}
+
+async function init() {
+  const s = await refresh();
+  if (!s) return;
+  if (!$("dash").src) $("dash").src = s.dashboardUrl;
+  if (!$("care").src) $("care").src = s.caregiverUrl;
+  for (const sc of s.scenarios) {
+    const b = document.createElement("button");
+    if (sc.name === "journey") b.className = "primary";
+    b.append(document.createTextNode(sc.label));
+    const c = document.createElement("span");
+    c.className = "count";
+    c.textContent = "×" + sc.checkins;
+    b.append(c);
+    b.addEventListener("click", async () => {
+      try {
+        const r = await post("api/demo/run", { scenario: sc.name });
+        say("Sending " + r.checkins + " check-in" + (r.checkins === 1 ? "" : "s") + ": " + sc.label + ".");
+        refresh();
+      } catch (e) { say(e.message, true); }
+    });
+    $("journey").append(b);
+  }
+}
+
+document.querySelectorAll("[data-fault]").forEach((b) => b.addEventListener("click", async () => {
+  try {
+    await post("api/demo/fault", JSON.parse(b.dataset.fault));
+    say("Done: " + b.textContent + ".");
+  } catch (e) { say(e.message, true); }
+}));
+
+$("dup").addEventListener("click", async () => {
+  try { const r = await post("api/demo/duplicate"); say("Re-sent " + r.resent + ": the Coordinator should skip it (no new row)."); }
+  catch (e) { say(e.message, true); }
+});
+
+$("reset").addEventListener("click", async () => {
+  if (!confirm("Clear all decisions, risk and alerts, and start the trip again?")) return;
+  try { await post("api/demo/reset"); say("Reset: clean slate, trip seeded."); refresh(); }
+  catch (e) { say(e.message, true); }
+});
+
+$("care-toggle").addEventListener("click", () => {
+  const show = $("side").hidden;
+  $("side").hidden = !show;
+  $("care-toggle").textContent = show ? "Hide caregiver view" : "Show caregiver view";
+  $("care-toggle").setAttribute("aria-pressed", String(show));
+});
+
+init();
+setInterval(refresh, 1000);
+</script>
+</body>
+</html>

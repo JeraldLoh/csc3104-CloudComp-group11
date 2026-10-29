@@ -1,0 +1,14 @@
+# Deployment, Service and HPA all become detector-progress
+resources:
+  - ../base
+nameSuffix: -progress
+labels:
+  - pairs: { app: detector-progress }
+    includeSelectors: true
+    includeTemplates: true
+patches:
+  - target: { kind: Deployment }
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: { name: DETECTOR_ID, value: route-progress }

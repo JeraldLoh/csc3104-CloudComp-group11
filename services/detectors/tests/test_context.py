@@ -137,3 +137,39 @@ def test_does_not_write(redis, request_):
     before = {k: redis.type(k) for k in redis.keys("*")}
     load_context(redis, request_)
     assert {k: redis.type(k) for k in redis.keys("*")} == before
+
+
+# What the web app and the Journey Service really write
+
+def web_checkin(request_, **overrides):
+    """A check-in as the traveller app sends it before it has loaded the route pack."""
+    body = request_.checkin.model_dump(by_alias=True, mode="json")
+    body.update(stepIndex=None, routeVersion=None, speedMps=None, headingDeg=None, batteryPct=None, **overrides)
+    return DetectorRequest.model_validate({**request_.model_dump(by_alias=True, mode="json"), "checkin": body})
+
+
+def test_web_checkin_with_null_step_and_route_version_is_not_a_mismatch(redis, request_):
+    seed_route(redis)
+    seed_context(redis, stepIndex=2)
+    ctx = load_context(redis, web_checkin(request_))
+    assert ctx.route_version_mismatch is False
+    assert ctx.step_index == 2  # from the context hash
+
+
+def test_journey_service_route_cache_shape_loads(redis, request_):
+    # journey_client._publish_active: extra keys, no instruction text, from/to points, stops on train steps
+    cached = {
+        "routeId": "R-007", "routeVersion": 3, "travellerId": "U-042",
+        "steps": [
+            {"stepIndex": 0, "mode": "walk", "line": None, "from": {"name": None, "code": None, "lat": 1.4, "lng": 103.9},
+             "to": {"name": "Punggol Int", "code": "65009", "lat": 1.405, "lng": 103.902},
+             "expectedDurationS": 480, "underground": False},
+            {"stepIndex": 1, "mode": "train", "line": "NEL", "from": {}, "to": {}, "expectedDurationS": 900,
+             "underground": True, "stops": ["NE17", "NE16"]},
+        ],
+        "path": [[1.4, 103.9], [1.405, 103.902]],
+    }
+    redis.set(f"trip:{TRIP}:route", json.dumps(cached))
+    ctx = load_context(redis, request_)
+    assert [s["mode"] for s in ctx.steps] == ["walk", "train"]
+    assert ctx.path == [(1.4, 103.9), (1.405, 103.902)]

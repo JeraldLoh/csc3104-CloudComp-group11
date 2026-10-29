@@ -168,3 +168,10 @@ def test_replay_long_dwell_with_real_window_never_guesses(suffix):
 @pytest.mark.parametrize("scenario", ["normal", "normal_bus_wait", "normal_bus_wait-browser", "off_route", "poor_gps"])
 def test_replay_other_scenarios_never_flag(scenario, window_size):
     assert not [v for _, v in replay(scenario, window_size) if v.verdict == "problem"]
+
+
+def test_train_step_uses_the_transit_limit():
+    # MRT steps are "train" in the contract; waiting there is not a walking dwell
+    steps = [{"stepIndex": 0, "mode": "train"}]
+    vote = vote_for(still(10, every=40), steps=steps)
+    assert "limit 1200 s" in vote.reason and vote.verdict != "problem"

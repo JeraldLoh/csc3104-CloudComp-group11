@@ -55,6 +55,15 @@ def replay_command(args) -> None:
         results[name] = rows
         print(f"-> {replay_mod.write_csv(rows, name, args.results)}")
     print("\n" + replay_mod.format_summary(replay_mod.summarize(results)))
+    # A dead detector shows up only as "error" in the table: say why, once per detector
+    first = {}
+    for rows in results.values():
+        for row in rows:
+            for v in row["votes"]:
+                if v["verdict"] == "error":
+                    first.setdefault(v["detectorId"], v["reason"])
+    for name, why in first.items():
+        print(f"{name}: {why}")
 
 
 def main(argv: Optional[List[str]] = None) -> int:

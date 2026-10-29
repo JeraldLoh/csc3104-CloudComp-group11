@@ -13,6 +13,7 @@ This folder is how our services agree on what they send each other. If your code
 | `tables.md` | DynamoDB tables and their keys |
 | `redis-keys.md` | Redis key names and who writes/reads them |
 | `queues.md` | SQS queues: who sends, who receives |
+| `problem-definitions.md` | Which detector reports which problem type, and when each type applies (DRAFT) |
 
 ## Owners
 

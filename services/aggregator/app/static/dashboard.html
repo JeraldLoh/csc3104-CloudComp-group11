@@ -1,0 +1,462 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CareRoute Detection</title>
+<style>
+  /* One background, one text colour (borders and muted text are that colour at lower
+     opacity), three status colours. Status colours were checked for colour-blind
+     separation and contrast on this background, and always come with a text label. */
+  :root {
+    --bg: #0d1014;
+    --text: #d6dce4;
+    --muted: rgba(214, 220, 228, 0.62);
+    --line: rgba(214, 220, 228, 0.16);
+    --line-strong: rgba(214, 220, 228, 0.32);
+    --grid: rgba(214, 220, 228, 0.09);
+    --ok: #1fb0a0;
+    --warn: #e0a32e;
+    --bad: #f0524f;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 13px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .num, .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 10px 16px;
+           border-bottom: 1px solid var(--line-strong); }
+  header h1 { margin: 0; font-size: 13px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+  header .sub { color: var(--muted); font-size: 12px; }
+  .spacer { flex: 1; }
+  .live { display: flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 12px; }
+  .sq { display: inline-block; width: 8px; height: 8px; flex: none; }
+  .sq.ok { background: var(--ok); } .sq.warn { background: var(--warn); } .sq.bad { background: var(--bad); }
+  .sq.none { background: transparent; border: 1px dashed var(--muted); }
+  button { font: inherit; font-size: 12px; background: transparent; color: var(--text); cursor: pointer;
+           border: 1px solid var(--line-strong); border-radius: 0; padding: 4px 10px; }
+  button:hover { border-color: var(--text); }
+  main { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; padding: 12px 16px 24px; }
+  main > * { min-width: 0; }
+  .panel { border: 1px solid var(--line); }
+  .panel > h2 { margin: 0; padding: 6px 10px; font-size: 11px; font-weight: 600; letter-spacing: .06em;
+                text-transform: uppercase; color: var(--muted); border-bottom: 1px solid var(--line);
+                display: flex; align-items: center; gap: 10px; }
+  .panel > h2 .note { text-transform: none; letter-spacing: 0; font-weight: 400; }
+  /* Hero metrics */
+  .tiles { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); border: 1px solid var(--line); }
+  .tile { padding: 8px 10px 6px; border-right: 1px solid var(--line); min-width: 0; }
+  .tile:last-child { border-right: 0; }
+  .tile .label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em;
+                 white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tile .value { font-family: var(--mono); font-size: 22px; font-weight: 600; margin-top: 2px;
+                 font-variant-numeric: tabular-nums; }
+  .tile .hint { font-size: 11px; color: var(--muted); font-family: var(--mono); white-space: nowrap;
+                overflow: hidden; text-overflow: ellipsis; }
+  .tile svg { display: block; width: 100%; height: 26px; margin-top: 4px; }
+  /* Charts + travellers */
+  .row2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.9fr); gap: 12px; }
+  .chart { position: relative; padding: 6px 4px 2px; }
+  .chart svg { display: block; width: 100%; height: 190px; }
+  .tip { position: absolute; pointer-events: none; background: var(--bg); border: 1px solid var(--line-strong);
+         padding: 6px 8px; font-family: var(--mono); font-size: 11px; white-space: nowrap; display: none; z-index: 2; }
+  .tip div { display: flex; align-items: center; gap: 6px; }
+  .empty { padding: 18px 10px; color: var(--muted); font-size: 12px; }
+  .scroll { overflow: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 4px 10px; border-bottom: 1px solid var(--line); vertical-align: top;
+           white-space: nowrap; }
+  th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: .05em;
+       position: sticky; top: 0; background: var(--bg); }
+  td.num, th.num { text-align: right; }
+  tbody tr:last-child td { border-bottom: 0; }
+  tr.clickable { cursor: pointer; }
+  tr.clickable:hover td, tr.selected td { background: var(--grid); }
+  tr.problem td:first-child { box-shadow: inset 3px 0 0 var(--bad); }
+  tr.fresh td { animation: fresh 2s ease-out; }
+  @keyframes fresh { from { background: rgba(214, 220, 228, 0.14); } to { background: transparent; } }
+  .st { display: inline-flex; align-items: center; gap: 6px; }
+  .votes { display: flex; flex-wrap: wrap; gap: 4px 12px; font-family: var(--mono); font-size: 12px; }
+  .vote { display: inline-flex; align-items: center; gap: 5px; }
+  .vote .det { color: var(--text); }
+  .vote .meta { color: var(--muted); }
+  .tag { font-family: var(--mono); font-size: 11px; border: 1px solid var(--line-strong); padding: 0 5px; }
+  .ledger { max-height: 440px; }
+  .filter { display: none; }
+  .filter.on { display: inline-flex; align-items: center; gap: 8px; text-transform: none; letter-spacing: 0; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 6px 10px; border-top: 1px solid var(--line);
+            color: var(--muted); font-size: 11px; }
+  @media (max-width: 1100px) {
+    .tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .tile:nth-child(3n) { border-right: 0; }
+    .tile:nth-child(-n+3) { border-bottom: 1px solid var(--line); }
+    .row2 { grid-template-columns: minmax(0, 1fr); }
+  }
+  @media (max-width: 560px) {
+    header, main { padding-left: 16px; padding-right: 16px; }
+    .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .tile { border-right: 1px solid var(--line) !important; border-bottom: 1px solid var(--line); }
+    .tile:nth-child(2n) { border-right: 0 !important; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>CareRoute · Check-in analysis</h1>
+    <div class="sub">Coordinator + Aggregator · all 4 detectors by default (REDUNDANCY_MODE=fixed4); adaptive asks 2 at normal risk</div>
+  </div>
+  <div class="spacer"></div>
+  <div class="live"><span id="dot" class="sq none"></span><span id="conn">CONNECTING</span>
+    <span>LAST UPDATE <span id="updated" class="num">--:--:--.---</span></span></div>
+  <button id="pause" type="button">Pause</button>
+</header>
+
+<main>
+  <section class="tiles" aria-label="Metrics over the decisions shown">
+    <div class="tile"><div class="label">Detectors / decision</div><div class="value" id="m-k">–</div>
+      <div class="hint" id="m-k-hint">fixed redundancy = 4.00</div><svg id="s-k" aria-hidden="true"></svg></div>
+    <div class="tile"><div class="label">Problems</div><div class="value" id="m-prob">–</div>
+      <div class="hint" id="m-prob-hint">&nbsp;</div><svg id="s-prob" aria-hidden="true"></svg></div>
+    <div class="tile"><div class="label">Escalations</div><div class="value" id="m-esc">–</div>
+      <div class="hint">too few answers / asked the rest</div><svg id="s-esc" aria-hidden="true"></svg></div>
+    <div class="tile"><div class="label">Abstains</div><div class="value" id="m-abs">–</div>
+      <div class="hint" id="m-abs-hint">&nbsp;</div><svg id="s-abs" aria-hidden="true"></svg></div>
+    <div class="tile"><div class="label">Travellers elevated</div><div class="value" id="m-elev">–</div>
+      <div class="hint" id="m-elev-hint">&nbsp;</div><svg id="s-elev" aria-hidden="true"></svg></div>
+    <div class="tile"><div class="label">Max detector latency</div><div class="value" id="m-lat">–</div>
+      <div class="hint">timeout at 500 ms</div><svg id="s-lat" aria-hidden="true"></svg></div>
+  </section>
+
+  <div class="row2">
+    <section class="panel">
+      <h2>Detectors asked per decision <span class="note">k, oldest → newest</span></h2>
+      <div class="chart" id="c-k"></div>
+    </section>
+    <section class="panel">
+      <h2>Risk score <span class="note mono" id="risk-who">–</span></h2>
+      <div class="chart" id="c-risk"></div>
+    </section>
+    <section class="panel">
+      <h2>Travellers <span class="note">click to filter</span></h2>
+      <div class="scroll" style="max-height:214px">
+        <table>
+          <thead><tr><th>Traveller</th><th>Risk</th><th class="num">Score</th><th class="num">Next k</th><th class="num">Calm</th><th>Last</th></tr></thead>
+          <tbody id="travellers"></tbody>
+        </table>
+      </div>
+      <div id="travellers-empty" class="empty">No travellers yet. Send a check-in.</div>
+    </section>
+  </div>
+
+  <section class="panel">
+    <h2>Decision ledger <span class="note">newest first</span>
+      <span id="filter" class="filter"><span class="tag" id="filter-name"></span><button id="clear" type="button">Show all</button></span>
+    </h2>
+    <div class="scroll ledger">
+      <table>
+        <thead><tr><th>Time</th><th>Check-in</th><th>Step</th><th class="num">k</th><th>Votes (verdict · confidence · latency)</th>
+          <th>Decision</th><th class="num">Score</th><th>Risk</th><th>Alert</th></tr></thead>
+        <tbody id="decisions"></tbody>
+      </table>
+    </div>
+    <div id="decisions-empty" class="empty">No decisions yet.</div>
+    <div class="legend">
+      <span class="st"><span class="sq ok"></span>normal</span>
+      <span class="st"><span class="sq bad"></span>problem</span>
+      <span class="st"><span class="sq none"></span>abstain (no answer in time, error, or can't judge yet)</span>
+      <span class="st"><span class="sq warn"></span>elevated risk / escalated (asked the remaining detectors)</span>
+      <span>step: pair chosen for walking / waiting / riding</span>
+    </div>
+  </section>
+</main>
+
+<script>
+"use strict";
+const POLL_MS = 2000, WINDOW = 200, STALE_MS = 6000;
+const SHORT = { "route-corridor": "route", "heading-speed": "heading", "dwell-time": "dwell", "route-progress": "progress" };
+const SVG = "http://www.w3.org/2000/svg";
+let paused = false, traveller = null, seen = new Set(), firstLoad = true, lastOk = 0;
+
+const $ = (id) => document.getElementById(id);
+
+// Every value from the API is inserted as text nodes, never parsed as HTML.
+function el(tag, attrs, ...children) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === "class") node.className = v; else if (k === "title") node.title = v; else node.setAttribute(k, v);
+  }
+  for (const c of children) {
+    if (c === null || c === undefined) continue;
+    node.append(c instanceof Node ? c : document.createTextNode(String(c)));
+  }
+  return node;
+}
+function svg(tag, attrs) {
+  const n = document.createElementNS(SVG, tag);
+  for (const [k, v] of Object.entries(attrs || {})) n.setAttribute(k, v);
+  return n;
+}
+function svgText(x, y, text, attrs) {
+  const t = svg("text", { x, y, fill: "var(--muted)", "font-size": "10", "font-family": "var(--mono)", ...attrs });
+  t.textContent = text;
+  return t;
+}
+const sq = (kind) => el("span", { class: "sq " + kind });
+const statusOf = (verdict) => verdict === "problem" ? "bad" : verdict === "normal" ? "ok" : "none";
+
+function hms(iso, ms) {
+  if (!iso) return "–";
+  const d = iso instanceof Date ? iso : new Date(iso);
+  if (isNaN(d)) return String(iso);
+  const p = (n, w = 2) => String(n).padStart(w, "0");
+  return p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds()) + (ms ? "." + p(d.getMilliseconds(), 3) : "");
+}
+
+// --- sparklines (one neutral series per tile; the tile's title names it) -------------
+function spark(id, values, yMax) {
+  const s = $(id);
+  s.replaceChildren();
+  const w = s.clientWidth || 160, h = 26;
+  s.setAttribute("viewBox", `0 0 ${w} ${h}`);
+  if (values.length < 2) return;
+  const max = yMax ?? Math.max(1, ...values);
+  const x = (i) => (i / (values.length - 1)) * (w - 2) + 1;
+  const y = (v) => h - 2 - (Math.min(v, max) / max) * (h - 4);
+  s.append(svg("line", { x1: 0, x2: w, y1: h - 2, y2: h - 2, stroke: "var(--grid)", "stroke-width": 1 }));
+  s.append(svg("polyline", { points: values.map((v, i) => `${x(i)},${y(v)}`).join(" "), fill: "none",
+                             stroke: "var(--text)", "stroke-width": 1.5, "stroke-linejoin": "round", "stroke-linecap": "round" }));
+}
+
+// --- line chart: one series, real axes, crosshair + tooltip ----------------------------
+function lineChart(host, pts, opt) {
+  host.replaceChildren();
+  if (pts.length < 2) { host.append(el("div", { class: "empty" }, opt.empty)); return; }
+  const W = host.clientWidth || 400, H = 190, m = { l: 34, r: 14, t: 10, b: 22 };
+  const pw = W - m.l - m.r, ph = H - m.t - m.b;
+  const x = (i) => m.l + (i / (pts.length - 1)) * pw;
+  const y = (v) => m.t + ph - ((v - opt.yMin) / (opt.yMax - opt.yMin)) * ph;
+  const s = svg("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": opt.aria });
+  for (const t of opt.yTicks) {
+    s.append(svg("line", { x1: m.l, x2: W - m.r, y1: y(t), y2: y(t), stroke: "var(--grid)", "stroke-width": 1 }));
+    s.append(svgText(m.l - 6, y(t) + 3, opt.yFmt(t), { "text-anchor": "end" }));
+  }
+  s.append(svg("line", { x1: m.l, x2: m.l, y1: m.t, y2: m.t + ph, stroke: "var(--line-strong)", "stroke-width": 1 }));
+  s.append(svg("line", { x1: m.l, x2: W - m.r, y1: m.t + ph, y2: m.t + ph, stroke: "var(--line-strong)", "stroke-width": 1 }));
+  const nTicks = Math.min(5, pts.length);
+  for (let j = 0; j < nTicks; j++) {
+    const i = Math.round((j / (nTicks - 1)) * (pts.length - 1));
+    s.append(svg("line", { x1: x(i), x2: x(i), y1: m.t + ph, y2: m.t + ph + 4, stroke: "var(--line-strong)" }));
+    s.append(svgText(x(i), H - 6, opt.xFmt(pts[i]), { "text-anchor": j === 0 ? "start" : j === nTicks - 1 ? "end" : "middle" }));
+  }
+  const refLabels = [];
+  for (const r of opt.refs || []) {
+    s.append(svg("line", { x1: m.l, x2: W - m.r, y1: y(r.y), y2: y(r.y), stroke: "var(--line-strong)", "stroke-width": 1 }));
+    // Drawn after the series, with a background halo, so a line passing under it can't hide it.
+    refLabels.push(svgText(m.l + 4, y(r.y) - 3, r.label, { "text-anchor": "start", stroke: "var(--bg)", "stroke-width": 3,
+                                                           "paint-order": "stroke", "stroke-linejoin": "round" }));
+  }
+  const d = pts.map((p, i) => (opt.step && i ? `H${x(i)}V${y(p.v)}` : `${i ? "L" : "M"}${x(i)},${y(p.v)}`)).join("");
+  s.append(svg("path", { d, fill: "none", stroke: "var(--text)", "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }));
+  pts.forEach((p, i) => {
+    const kind = opt.marker && opt.marker(p);
+    if (kind) s.append(svg("circle", { cx: x(i), cy: y(p.v), r: 4, fill: `var(--${kind})`, stroke: "var(--bg)", "stroke-width": 2 }));
+  });
+  s.append(...refLabels);
+  // crosshair
+  const cross = svg("line", { y1: m.t, y2: m.t + ph, stroke: "var(--line-strong)", "stroke-width": 1, visibility: "hidden" });
+  const hit = svg("rect", { x: m.l, y: m.t, width: pw, height: ph, fill: "transparent" });
+  s.append(cross, hit);
+  host.append(s);
+  const tip = el("div", { class: "tip" });
+  host.append(tip);
+  const move = (ev) => {
+    const r = s.getBoundingClientRect();
+    const px = ((ev.clientX - r.left) / r.width) * W;
+    const i = Math.max(0, Math.min(pts.length - 1, Math.round(((px - m.l) / pw) * (pts.length - 1))));
+    cross.setAttribute("x1", x(i)); cross.setAttribute("x2", x(i)); cross.setAttribute("visibility", "visible");
+    tip.replaceChildren(...opt.tip(pts[i]));
+    tip.style.display = "block";
+    const left = (x(i) / W) * r.width;
+    tip.style.left = Math.min(Math.max(4, left + 10), r.width - tip.offsetWidth - 4) + "px";
+    tip.style.top = "8px";
+  };
+  hit.addEventListener("pointermove", move);
+  hit.addEventListener("pointerleave", () => { cross.setAttribute("visibility", "hidden"); tip.style.display = "none"; });
+}
+
+// --- tiles, charts, tables --------------------------------------------------------------
+function renderMetrics(rows) {          // rows: oldest -> newest
+  const n = rows.length;
+  const ks = rows.map((d) => d.k || 0);
+  const avg = n ? ks.reduce((a, b) => a + b, 0) / n : null;
+  $("m-k").textContent = avg === null ? "–" : avg.toFixed(2);
+  $("m-k-hint").textContent = n ? `last ${n} · fixed = 4.00` : "fixed redundancy = 4.00";
+  spark("s-k", ks, 4);
+
+  const problems = rows.filter((d) => d.decision === "problem");
+  const fresh = problems.filter((d) => d.alertCreated).length;
+  $("m-prob").textContent = n ? problems.length : "–";
+  $("m-prob-hint").textContent = n ? `${fresh} new alert${fresh === 1 ? "" : "s"} · ${problems.length - fresh} repeat` : " ";
+  spark("s-prob", rows.map((d) => Number(d.problemScore) || 0), 1);
+
+  let esc = 0;
+  $("m-esc").textContent = n ? rows.filter((d) => d.escalated).length : "–";
+  spark("s-esc", rows.map((d) => (esc += d.escalated ? 1 : 0)));
+
+  const votes = rows.flatMap((d) => d.votes || []);
+  const abstainsPer = rows.map((d) => (d.votes || []).filter((v) => v.verdict === "abstain").length);
+  const abstains = abstainsPer.reduce((a, b) => a + b, 0);
+  const timeouts = votes.filter((v) => v.verdict === "abstain" && v.reason === "timeout").length;
+  $("m-abs").textContent = n ? abstains : "–";
+  $("m-abs-hint").textContent = n ? `of ${votes.length} votes · ${timeouts} timeout${timeouts === 1 ? "" : "s"}` : " ";
+  spark("s-abs", abstainsPer);
+
+  const levels = new Map(), elevatedOverTime = [];
+  for (const d of rows) {
+    if (d.riskAfter && d.travellerId) levels.set(d.travellerId, d.riskAfter.level);
+    elevatedOverTime.push([...levels.values()].filter((l) => l === "elevated").length);
+  }
+  const elevated = elevatedOverTime.length ? elevatedOverTime[elevatedOverTime.length - 1] : 0;
+  $("m-elev").textContent = n ? elevated : "–";
+  $("m-elev-hint").textContent = n ? `of ${levels.size} traveller${levels.size === 1 ? "" : "s"}` : " ";
+  spark("s-elev", elevatedOverTime);
+
+  const lat = rows.map((d) => Math.max(0, ...(d.votes || []).map((v) => Number(v.latencyMs) || 0)));
+  $("m-lat").textContent = n ? Math.round(lat[lat.length - 1]) + " ms" : "–";
+  spark("s-lat", lat, 600);
+}
+
+function renderCharts(rows) {
+  lineChart($("c-k"), rows.map((d) => ({ v: d.k || 0, d })), {
+    yMin: 0, yMax: 4.4, yTicks: [0, 1, 2, 3, 4], yFmt: (v) => String(Math.round(v)), step: true,
+    refs: [{ y: 4, label: "fixed-4" }], aria: "Detectors asked per decision",
+    xFmt: (p) => hms(p.d.decidedAt), empty: "Needs at least 2 decisions.",
+    marker: (p) => p.d.escalated ? "warn" : null,
+    tip: (p) => [el("div", {}, `${p.d.requestId}  ${hms(p.d.decidedAt)}`),
+                 el("div", {}, `k = ${p.d.k}${p.d.situation ? " · " + p.d.situation : ""}${p.d.escalated ? " · escalated" : ""}`),
+                 el("div", {}, sq(statusOf(p.d.decision)), `${p.d.decision}${p.d.problemType ? " · " + p.d.problemType : ""}`)],
+  });
+  const who = traveller || (rows.length ? rows[rows.length - 1].travellerId : null);
+  $("risk-who").textContent = who ? who + (traveller ? "" : " (latest)") : "–";
+  const mine = rows.filter((d) => d.travellerId === who && d.riskAfter);
+  lineChart($("c-risk"), mine.map((d) => ({ v: Number(d.riskAfter.score) || 0, d })), {
+    yMin: 0, yMax: 1, yTicks: [0, 0.25, 0.5, 0.75, 1], yFmt: (v) => v.toFixed(2),
+    refs: [{ y: 0.4, label: "escalate ≥ 0.40" }, { y: 0.15, label: "de-escalate < 0.15" }],
+    aria: "Risk score over this traveller's decisions", xFmt: (p) => hms(p.d.decidedAt),
+    empty: "Needs at least 2 decisions for this traveller.",
+    marker: (p) => p.d.decision === "problem" ? "bad" : null,
+    tip: (p) => [el("div", {}, `${p.d.requestId}  ${hms(p.d.decidedAt)}`),
+                 el("div", {}, `score ${Number(p.d.riskAfter.score).toFixed(2)} · ${p.d.riskAfter.level}`),
+                 el("div", {}, sq(statusOf(p.d.decision)), p.d.decision)],
+  });
+}
+
+function riskCell(level) {
+  return el("span", { class: "st" }, sq(level === "elevated" ? "warn" : "ok"), level || "–");
+}
+
+function renderTravellers(rows) {
+  $("travellers").replaceChildren(...rows.map((r) => {
+    const tr = el("tr", { class: "clickable" + (r.travellerId === traveller ? " selected" : "") },
+      el("td", { class: "mono" }, r.travellerId),
+      el("td", {}, riskCell(r.riskLevel)),
+      el("td", { class: "num" }, (Number(r.riskScore) || 0).toFixed(2)),
+      el("td", { class: "num" }, r.nextDetectors ?? "–"),
+      el("td", { class: "num" }, r.calmStreak ?? "–"),
+      el("td", { class: "mono" }, r.lastDecision
+        ? el("span", { class: "st", title: `last decision: ${r.lastDecision} (#${r.lastSeq})` }, sq(statusOf(r.lastDecision)), `#${r.lastSeq}`) : "–"));
+    tr.addEventListener("click", () => setFilter(r.travellerId === traveller ? null : r.travellerId));
+    return tr;
+  }));
+  $("travellers-empty").style.display = rows.length ? "none" : "block";
+}
+
+function voteCell(v) {
+  const verdict = ["problem", "normal", "abstain"].includes(v.verdict) ? v.verdict : "abstain";
+  const meta = verdict === "abstain" ? String(v.reason || "abstain") : Number(v.confidence).toFixed(2);
+  const lat = v.latencyMs !== null && v.latencyMs !== undefined ? Math.round(v.latencyMs) + "ms" : "";
+  return el("span", { class: "vote", title: `${v.detectorId}: ${verdict}${v.reason ? " (" + v.reason + ")" : ""}` },
+    sq(statusOf(verdict)), el("span", { class: "det" }, SHORT[v.detectorId] || v.detectorId || "?"),
+    el("span", { class: "meta" }, meta.length > 28 ? meta.slice(0, 27) + "…" : meta), lat ? el("span", { class: "meta" }, lat) : null);
+}
+
+function renderLedger(newestFirst) {
+  $("decisions").replaceChildren(...newestFirst.map((d) => {
+    const fresh = !firstLoad && !seen.has(d.requestId);
+    const before = (d.riskBefore || {}).level, after = (d.riskAfter || {}).level;
+    const risk = before && after && before !== after
+      ? el("span", { class: "st" }, sq("warn"), `${before} → ${after}`) : riskCell(after);
+    const alert = !d.incidentId ? "–" : el("span", { class: "st", title: d.incidentId },
+      sq(d.alertCreated ? "bad" : "none"), d.alertCreated ? "new alert" : "repeat");
+    return el("tr", { class: [fresh ? "fresh" : "", d.decision === "problem" ? "problem" : ""].join(" ").trim() },
+      el("td", { class: "mono" }, hms(d.decidedAt)),
+      el("td", { class: "mono" }, d.requestId || "–", el("div", { style: "color:var(--muted)" }, d.travellerId || "")),
+      el("td", { class: "mono" }, (d.stepIndex ?? "–") + (d.situation ? " " + d.situation : "")),
+      el("td", { class: "num" }, String(d.k ?? "–"), d.escalated ? el("div", {}, el("span", { class: "st" }, sq("warn"), "esc")) : null),
+      el("td", {}, el("div", { class: "votes" }, ...(d.votes || []).map(voteCell))),
+      el("td", {}, el("span", { class: "st" }, sq(statusOf(d.decision)), d.decision + (d.problemType ? " · " + d.problemType : ""))),
+      el("td", { class: "num" }, d.problemScore === null || d.problemScore === undefined ? "–" : Number(d.problemScore).toFixed(2)),
+      el("td", {}, risk),
+      el("td", {}, alert));
+  }));
+  $("decisions-empty").style.display = newestFirst.length ? "none" : "block";
+  newestFirst.forEach((d) => seen.add(d.requestId));
+  firstLoad = false;
+}
+
+function setFilter(id) {
+  traveller = id;
+  $("filter").classList.toggle("on", !!id);
+  $("filter-name").textContent = id || "";
+  seen = new Set(); firstLoad = true;
+  refresh();
+}
+
+function setLive(kind, text) {
+  $("dot").className = "sq " + kind;
+  $("conn").textContent = text;
+}
+
+async function getJSON(url) {
+  const r = await fetch(url, { cache: "no-store" });
+  if (!r.ok) throw new Error(url + " → HTTP " + r.status);
+  return r.json();
+}
+
+async function refresh() {
+  try {
+    const q = (traveller ? "?travellerId=" + encodeURIComponent(traveller) + "&" : "?") + "limit=" + WINDOW;
+    const [travellers, decisions] = await Promise.all([getJSON("api/status/travellers"), getJSON("api/decisions" + q)]);
+    const chronological = decisions.slice().reverse();
+    renderTravellers(travellers);
+    renderMetrics(chronological);
+    renderCharts(chronological);
+    renderLedger(decisions);
+    lastOk = Date.now();
+    $("updated").textContent = hms(new Date(lastOk), true);
+    setLive(paused ? "warn" : "ok", paused ? "PAUSED" : "LIVE");
+  } catch (e) {
+    setLive("bad", "OFFLINE");
+    $("conn").title = e.message;
+  }
+}
+
+setInterval(() => {
+  if (lastOk && !paused && Date.now() - lastOk > STALE_MS) setLive("warn", "STALE");
+}, 1000);
+
+$("pause").addEventListener("click", () => {
+  paused = !paused;
+  $("pause").textContent = paused ? "Resume" : "Pause";
+  setLive(paused ? "warn" : "ok", paused ? "PAUSED" : "LIVE");
+  if (!paused) refresh();
+});
+$("clear").addEventListener("click", () => setFilter(null));
+window.addEventListener("resize", () => refresh());
+
+refresh();
+setInterval(() => { if (!paused && !document.hidden) refresh(); }, POLL_MS);
+</script>
+</body>
+</html>
