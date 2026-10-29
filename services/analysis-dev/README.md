@@ -23,19 +23,6 @@ docker compose -f services/analysis-dev/compose.yaml down          # stop (data 
 `curl localhost:8000/ready` (Coordinator) and `curl localhost:8001/ready` (Aggregator) should
 both answer `{"status":"ready"}`.
 
-## Demo panel: http://localhost:8005
-
-Drives everything from the browser, with the dashboard embedded below (no terminal needed):
-
-- **Journey:** walk, wait at the bus stop, ride, go off route, back on route, or the full 15-check-in journey.
-- **Services:** stop or start the Alert Service or any detector. These are real outages (the
-  container stops), so they work with the real services. The square shows its state now.
-- **Fakes only:** make route-corridor slow or faulty (needs `compose.fakes.yaml`, below).
-- **Send duplicate** (the Coordinator skips it) and **Reset demo** (clears Redis and the incidents,
-  re-seeds the trip).
-
-It's `services/demo-control`, local only. It mounts the Docker socket to stop and start containers.
-
 ## Detectors need a trip in Redis
 
 The detectors read the trip from Redis. A `seed` job writes the route and context for
@@ -79,7 +66,6 @@ ElasticMQ's web UI (queue depths, dead-letter queue): http://localhost:9325
 | detector-progress | 9004 | real route-progress detector (second judge of off-route and wrong direction; missed stops) |
 | alert-service | 8004 | real (Member 5): one incident per problem, kept in DynamoDB |
 | dynamodb | – | DynamoDB Local, in memory (empty after a restart) |
-| demo-control | 8005 | the demo panel |
 
 ## Scenarios to try
 
@@ -91,12 +77,12 @@ Observed with the real detectors (route-corridor needs 3 usable check-ins before
 | `send --seq 3`, `--seq 4` (on route) | `k=4 ... -> normal` |
 | `send --seq 5`, `6`, `7` with `--off-route` | `normal`, `normal`, then `-> problem`, `ALERT` (route-corridor needs 3 usable check-ins to flag) |
 | `send --seq 7 --off-route` again | `skip T-001#7: already decided`, no new incident |
-| panel: Stop Alert Service, go off route, Start Alert Service | `not processed, it will be retried` (Aggregator 503); ≤30 s after it's back, `decided` and the incident exists |
-| panel: Stop route-corridor, walk | route-corridor `abstain` (`error: ConnectError`), k=4, the other three still decide |
+| `docker compose stop alert-service`, send 3 off-route, `docker compose start alert-service` | `not processed, it will be retried` (Aggregator 503); ≤30 s after it's back, `decided` and the incident exists |
+| `docker compose stop detector-route`, send on-route | route-corridor `abstain` (`error: ConnectError`), k=4, the other three still decide |
 
 ## Fault demos (fake detectors)
 
-The real detectors can be stopped (panel or `docker compose stop detector-route`), but they never
+The real detectors can be stopped (`docker compose stop detector-route`), but they never
 answer slowly or wrongly. For that, run the same stack with fake detectors instead (`compose.fakes.yaml` replaces the
 four detector services; only one of each runs):
 

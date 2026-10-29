@@ -124,28 +124,6 @@ services:
     depends_on:
       redis: { condition: service_healthy }
 
-  # --- demo panel: drive the journey from a browser (http://localhost:8005) ---------------
-  demo-control:
-    build: ../demo-control
-    image: careroute-demo-control:dev
-    environment:
-      <<: *aws
-      REDIS_URL: redis://redis:6379/0
-      CHECKINS_QUEUE: careroute-checkins
-      ROUTE_FILE: /tools/route.json
-      DASHBOARD_URL: http://localhost:8001/dashboard
-      DYNAMODB_ENDPOINT_URL: http://dynamodb:8000   # Reset demo clears the incidents here
-    # The Docker socket lets the panel's Services buttons stop and start containers of this stack
-    # (real outages). Local only: whoever holds the socket controls Docker, hence root.
-    user: root
-    volumes:
-      - ../../contracts/examples/route.json:/tools/route.json:ro
-      - /var/run/docker.sock:/var/run/docker.sock
-    ports: ["127.0.0.1:8005:8000"]
-    depends_on:
-      redis: { condition: service_healthy }
-      elasticmq: { condition: service_started }
-
   # --- tool: put a check-in on the queue ---------------------------------------------------
   send:
     image: careroute-coordinator:dev        # reuses its Python + boto3
