@@ -43,7 +43,7 @@ services:
       <<: *aws
       REDIS_URL: redis://redis:6379/0
       CHECKINS_QUEUE: careroute-checkins
-      REDUNDANCY_MODE: ${REDUNDANCY_MODE:-adaptive}
+      REDUNDANCY_MODE: ${REDUNDANCY_MODE:-fixed4}   # adaptive | fixed2 for the experiment
       # Detector and Aggregator URLs: the defaults match the service names below.
     ports: ["127.0.0.1:8000:8000"]
     depends_on:
