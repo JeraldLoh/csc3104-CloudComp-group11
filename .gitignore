@@ -31,5 +31,14 @@ services/journey-service/app/saved_data/
 # AWS
 iam_policy.json
 
+# pytest
+.pytest_cache/
+
+# Redis snapshots from local test runs
+dump.rdb
+
+# Evaluation raw runs and server logs (large; recreate with evaluation/run.py)
+evaluation/results/*
+!evaluation/results/summary.json
 # Simulator replay output
 results/
