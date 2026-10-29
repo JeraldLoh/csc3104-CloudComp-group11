@@ -1,4 +1,4 @@
-# Check-in analysis running locally with the real detectors and a fake Alert Service.
+# Check-in analysis running locally with the real detectors and the real Alert Service (Member 5).
 #
 #   docker compose -f services/analysis-dev/compose.yaml up --build -d
 #   docker compose -f services/analysis-dev/compose.yaml run --rm send --seq 1
@@ -86,11 +86,30 @@ services:
     environment: { DETECTOR_ID: route-progress, REDIS_URL: "redis://redis:6379/0" }
     ports: ["127.0.0.1:9004:8000"]
 
-  # --- fakes for other members' services -------------------------------------------------
+  # --- Alert Service (Member 5), with a local DynamoDB for its incidents -------------------
+  # Incidents: http://localhost:8004/api/incidents?travellerId=U-042
   alert-service:
-    build: ../fake-alert
-    image: careroute-fake-alert:dev
+    build: ../alert-service
+    image: careroute-alert-service:dev
+    environment:
+      AWS_DEFAULT_REGION: ap-southeast-1
+      AWS_ACCESS_KEY_ID: local
+      AWS_SECRET_ACCESS_KEY: local
+      # One endpoint per AWS service (boto3 reads these when the code passes no endpoint_url)
+      AWS_ENDPOINT_URL_DYNAMODB: http://dynamodb:8000
+      AWS_ENDPOINT_URL_SQS: http://elasticmq:9324
+      REDIS_URL: redis://redis:6379/0
+      CREATE_RESOURCES: "true"         # its tables and the careroute-disruptions queue, on startup
     ports: ["127.0.0.1:8004:8000"]
+    restart: on-failure                # DynamoDB may still be starting the first time
+    depends_on:
+      redis: { condition: service_healthy }
+      dynamodb: { condition: service_started }
+      elasticmq: { condition: service_started }
+
+  dynamodb:
+    image: amazon/dynamodb-local:2.5.4
+    command: ["-jar", "DynamoDBLocal.jar", "-inMemory", "-sharedDb"]   # empty on every restart
 
   # The detectors read the trip from Redis. This writes the route and context for T-001, standing in
   # for the Journey Service at trip start.
@@ -104,6 +123,28 @@ services:
     entrypoint: ["python", "/tools/seed_trip.py"]
     depends_on:
       redis: { condition: service_healthy }
+
+  # --- demo panel: drive the journey from a browser (http://localhost:8005) ---------------
+  demo-control:
+    build: ../demo-control
+    image: careroute-demo-control:dev
+    environment:
+      <<: *aws
+      REDIS_URL: redis://redis:6379/0
+      CHECKINS_QUEUE: careroute-checkins
+      ROUTE_FILE: /tools/route.json
+      DASHBOARD_URL: http://localhost:8001/dashboard
+      DYNAMODB_ENDPOINT_URL: http://dynamodb:8000   # Reset demo clears the incidents here
+    # The Docker socket lets the panel's Services buttons stop and start containers of this stack
+    # (real outages). Local only: whoever holds the socket controls Docker, hence root.
+    user: root
+    volumes:
+      - ../../contracts/examples/route.json:/tools/route.json:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports: ["127.0.0.1:8005:8000"]
+    depends_on:
+      redis: { condition: service_healthy }
+      elasticmq: { condition: service_started }
 
   # --- tool: put a check-in on the queue ---------------------------------------------------
   send:

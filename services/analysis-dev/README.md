@@ -1,14 +1,14 @@
 # Check-in analysis: local run
 
 Runs the Coordinator and Aggregator on your laptop with stand-ins for everything else:
-Redis, ElasticMQ (a local SQS, no account needed), the real detectors and a fake Alert
-Service. No AWS, no cost.
+Redis, ElasticMQ (a local SQS, no account needed), the real detectors and the real Alert
+Service (Member 5) with a local DynamoDB. No AWS, no cost.
 
 ```
 send ──► ElasticMQ ──► coordinator ──► detector-route / -heading / -dwell / -progress (real)
                            │
                            ▼
-           Redis ◄── aggregator ──► alert-service (fake)
+           Redis ◄── aggregator ──► alert-service (real) ──► DynamoDB (local)
 ```
 
 Run all commands from the repo root.
@@ -22,6 +22,19 @@ docker compose -f services/analysis-dev/compose.yaml down          # stop (data 
 
 `curl localhost:8000/ready` (Coordinator) and `curl localhost:8001/ready` (Aggregator) should
 both answer `{"status":"ready"}`.
+
+## Demo panel: http://localhost:8005
+
+Drives everything from the browser, with the dashboard embedded below (no terminal needed):
+
+- **Journey:** walk, wait at the bus stop, ride, go off route, back on route, or the full 15-check-in journey.
+- **Services:** stop or start the Alert Service or any detector. These are real outages (the
+  container stops), so they work with the real services. The square shows its state now.
+- **Fakes only:** make route-corridor slow or faulty (needs `compose.fakes.yaml`, below).
+- **Send duplicate** (the Coordinator skips it) and **Reset demo** (clears Redis and the incidents,
+  re-seeds the trip).
+
+It's `services/demo-control`, local only. It mounts the Docker socket to stop and start containers.
 
 ## Detectors need a trip in Redis
 
@@ -49,7 +62,7 @@ Or from the terminal:
 
 ```bash
 docker compose -f services/analysis-dev/compose.yaml logs -f coordinator aggregator alert-service
-curl localhost:8004/api/incidents                                                    # alerts
+curl 'localhost:8004/api/incidents?travellerId=U-042'                              # alerts (M5's service)
 docker compose -f services/analysis-dev/compose.yaml exec redis redis-cli hgetall risk:U-042
 docker compose -f services/analysis-dev/compose.yaml exec redis redis-cli lindex decisions:U-042 0
 ```
@@ -64,14 +77,9 @@ ElasticMQ's web UI (queue depths, dead-letter queue): http://localhost:9325
 | detector-dwell | 9002 | real dwell-time detector |
 | detector-heading | 9003 | real heading-speed detector |
 | detector-progress | 9004 | real route-progress detector (second judge of off-route and wrong direction; missed stops) |
-| alert-service | 8004 | fake: creates one incident per problem |
-
-Change the fake Alert Service while it runs:
-
-```bash
-curl -X POST localhost:8004/control -H 'Content-Type: application/json' -d '{"mode":"error"}'  # Alert Service down
-curl -X POST localhost:8004/control/reset                                                       # clear incidents
-```
+| alert-service | 8004 | real (Member 5): one incident per problem, kept in DynamoDB |
+| dynamodb | – | DynamoDB Local, in memory (empty after a restart) |
+| demo-control | 8005 | the demo panel |
 
 ## Scenarios to try
 
@@ -83,12 +91,13 @@ Observed with the real detectors (route-corridor needs 3 usable check-ins before
 | `send --seq 3`, `--seq 4` (on route) | `k=4 ... -> normal` |
 | `send --seq 5`, `6`, `7` with `--off-route` | `normal`, `normal`, then `-> problem`, `ALERT` (route-corridor needs 3 usable check-ins to flag) |
 | `send --seq 7 --off-route` again | `skip T-001#7: already decided`, no new incident |
-| alert-service `mode: error`, send off-route, then `mode: ok` | `not processed, it will be retried`; ~30 s after it's back, `decided` |
+| panel: Stop Alert Service, go off route, Start Alert Service | `not processed, it will be retried` (Aggregator 503); ≤30 s after it's back, `decided` and the incident exists |
+| panel: Stop route-corridor, walk | route-corridor `abstain` (`error: ConnectError`), k=4, the other three still decide |
 
 ## Fault demos (fake detectors)
 
-The real detectors always behave correctly, so they can't show a detector being slow, wrong or
-down. For that, run the same stack with fake detectors instead (`compose.fakes.yaml` replaces the
+The real detectors can be stopped (panel or `docker compose stop detector-route`), but they never
+answer slowly or wrongly. For that, run the same stack with fake detectors instead (`compose.fakes.yaml` replaces the
 four detector services; only one of each runs):
 
 ```bash
