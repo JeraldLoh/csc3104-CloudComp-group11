@@ -1,6 +1,6 @@
 import pytest
 
-from app.risk import ELEVATED, NORMAL, Risk, RiskPolicy, signal, update_risk
+from app.risk import ELEVATED, NORMAL, Risk, RiskPolicy, detectors_failed, signal, update_risk
 from app.voting import Decision
 
 PROBLEM = Decision("problem", "off_route", 0.9, 0.9, 2)
@@ -148,3 +148,41 @@ def test_out_of_range_score_in_hash_is_clamped():
 
 def test_hash_from_an_older_writer_without_calm_streak():
     assert Risk.from_hash({"score": "0.5", "level": "elevated"}) == Risk(0.5, ELEVATED, 0)
+
+
+
+# --- inconclusive: failed detectors vs "can't judge yet" ------------------------------------------
+
+def test_inconclusive_without_failures_changes_nothing():
+    prev = Risk(0.2, NORMAL, 2)
+    assert update_risk(prev, FINAL_INCONCLUSIVE, failed=False) is prev
+
+
+def test_inconclusive_with_failures_escalates():
+    assert update_risk(Risk(), FINAL_INCONCLUSIVE, failed=True).level == ELEVATED
+
+
+def test_failed_flag_only_matters_for_inconclusive():
+    assert update_risk(Risk(), PROBLEM, failed=False).level == ELEVATED
+    assert update_risk(Risk(), NORMAL_CLEAR, failed=True).level == NORMAL
+
+
+def abstain(reason):
+    return {"detectorId": "route-corridor", "verdict": "abstain", "confidence": 0.0, "reason": reason}
+
+
+@pytest.mark.parametrize("reason", ["timeout", "error: HTTP 500", "error: ConnectError", "internal error: KeyError"])
+def test_failures_are_recognised(reason):
+    assert detectors_failed([abstain(reason)])
+
+
+@pytest.mark.parametrize("reason", ["only 1 usable check-in(s), need 3", "no route in Redis for this trip",
+                                    "GPS accuracy 80 m exceeds 50 m limit", "fake: fixed mode abstain", "", None])
+def test_cant_judge_yet_is_not_a_failure(reason):
+    assert not detectors_failed([abstain(reason)])
+
+
+def test_only_abstains_count_as_failures():
+    vote = {"detectorId": "route-corridor", "verdict": "normal", "confidence": 0.9, "reason": "timeout-ish"}
+    assert not detectors_failed([vote])
+    assert detectors_failed([vote, abstain("timeout")])

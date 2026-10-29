@@ -155,13 +155,39 @@ def test_close_call_then_four_votes_decides():
     assert len(state["decisions"]) == 1 and state["decisions"][0]["k"] == 4
 
 
-def test_final_inconclusive_records_and_raises_risk_without_alert():
-    blind = [v("route-corridor", "problem", 0.9)] + [v(d, "abstain", 0.0) for d in ("dwell-time", "heading-speed", "route-progress")]
+def abstain(detector, reason):
+    return {**v(detector, "abstain", 0.0), "reason": reason}
+
+
+def test_final_inconclusive_because_detectors_failed_raises_risk_without_alert():
+    blind = [v("route-corridor", "problem", 0.9), abstain("dwell-time", "timeout"),
+             abstain("heading-speed", "error: ConnectError"), abstain("route-progress", "timeout")]
     [reply], state, alert = run([("T-001#17", blind)])
     assert reply["decision"] == "inconclusive" and reply["needsMoreVotes"] is False
     assert alert.reports == []
     assert state["risk"]["level"] == "elevated"
     assert state["decisions"][0]["decision"] == "inconclusive"
+
+
+def test_start_of_trip_inconclusive_leaves_risk_unchanged():
+    # First check-in: the detectors need history before they can judge (their own reasons).
+    warming_up = [v("dwell-time", "normal", 0.95),
+                  abstain("route-corridor", "only 1 usable check-in(s), need 3"),
+                  abstain("heading-speed", "not moving enough to judge direction (0 of 1 usable check-ins)"),
+                  abstain("route-progress", "only 1 usable check-in(s), need 3")]
+    [reply], state, alert = run([("T-001#17", warming_up)])
+    assert reply["decision"] == "inconclusive"
+    assert reply["riskLevel"] == "normal"
+    assert alert.reports == []
+    assert state["decisions"][0]["decision"] == "inconclusive"        # still recorded for the dashboard
+    assert state["decisions"][0]["riskAfter"] == {"level": "normal", "score": 0.0}
+
+
+def test_journey_start_then_normal_stays_at_normal_risk():
+    warming_up = [v("dwell-time", "normal", 0.95), abstain("route-corridor", "only 1 usable check-in(s), need 3"),
+                  abstain("route-progress", "only 1 usable check-in(s), need 3"), abstain("heading-speed", "not moving")]
+    replies, _, _ = run([("T-001#1", warming_up), ("T-001#2", warming_up), ("T-001#3", BOTH_NORMAL)])
+    assert [r["riskLevel"] for r in replies] == ["normal", "normal", "normal"]
 
 
 # --- repeats are safe ---------------------------------------------------------------------------

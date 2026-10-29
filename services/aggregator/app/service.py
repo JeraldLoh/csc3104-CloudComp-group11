@@ -20,7 +20,7 @@ import httpx
 
 from .config import Settings
 from .reports import build_problem_report, iso_z
-from .risk import Risk, update_risk
+from .risk import Risk, detectors_failed, update_risk
 from .voting import Decision, aggregate
 
 log = logging.getLogger("aggregator")
@@ -128,7 +128,7 @@ class AggregatorService:
             incident = await self._report_problem(build_problem_report(request_id, checkin, votes, d, now))
 
         before = Risk.from_hash(await self.redis.hgetall(risk_key(traveller_id)))
-        after = update_risk(before, d, self.s.risk)
+        after = update_risk(before, d, self.s.risk, failed=detectors_failed(votes))
         reply = answer(d, after.level)
         record = json.dumps(decision_record(request_id, checkin, votes, d, escalated, before, after, incident, now,
                                             situation))
