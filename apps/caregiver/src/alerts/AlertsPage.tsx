@@ -1,7 +1,9 @@
-// Live alerts for one traveller (issue 5.3). Existing incidents load from GET /api/incidents;
-// new ones and every change arrive instantly over GET /api/stream (Server-Sent Events).
-import { useCallback, useEffect, useRef, useState } from "react";
-import { acknowledge, fetchIncidents, resolve, STREAM_URL } from "./api";
+// Live alerts for the logged-in caregiver's travellers (issues 5.1 and 5.3). Existing incidents load from
+// GET /api/incidents; new ones and every change arrive instantly over GET /api/stream (Server-Sent Events).
+// The Alert Service only lets a caregiver see their own travellers, so this page can't show anyone else's.
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { isCaregiverId, type MyTravellers } from "../profiles";
+import { acknowledge, fetchIncidents, resolve, streamUrl } from "./api";
 import {
   applyEvent,
   mergeIncidents,
@@ -14,34 +16,38 @@ import {
 import "./alerts.css";
 
 const FRESH_MS = 4000; // how long a new alert stays highlighted
-const TYPING_PAUSE_MS = 400; // wait for the traveller ID to stop changing before loading
 // The Alert Service pings every 15 s. Hearing nothing for this long means the connection is dead even
 // if the browser thinks it's open (a proxy can hold it open after the service has gone), so reconnect.
 const SILENCE_MS = 40_000;
 
 type Connection = "connecting" | "live" | "reconnecting";
 
-export function AlertsPage({ travellerId, caregiverId }: { travellerId: string; caregiverId: string }) {
+// Mounted with key={caregiverId}: switching caregiver starts from an empty page and a new connection.
+export function AlertsPage({ caregiverId, my }: { caregiverId: string; my: MyTravellers }) {
   const [incidents, setIncidents] = useState<IncidentMap>({});
   const [connection, setConnection] = useState<Connection>("connecting");
   const [error, setError] = useState<string | null>(null);
   const [showResolved, setShowResolved] = useState(false);
+  const [only, setOnly] = useState<string>(""); // "" = all my travellers
   const [busy, setBusy] = useState<string | null>(null);
   const [fresh, setFresh] = useState<ReadonlySet<string>>(new Set());
-  const travellerRef = useRef(travellerId);
-  travellerRef.current = travellerId;
+  const loggedIn = isCaregiverId(caregiverId);
+
+  const travellerIds = my.travellers.map((t) => t.travellerId);
+  const idsKey = travellerIds.join(",");
+  const idsRef = useRef(travellerIds);
+  idsRef.current = travellerIds;
+  const names = Object.fromEntries(my.travellers.map((t) => [t.travellerId, t.name]));
 
   const reload = useCallback(async () => {
-    const id = travellerRef.current.trim();
-    if (!id) return;
     try {
-      const loaded = await fetchIncidents(id);
-      setIncidents((current) => mergeIncidents(current, loaded));
+      const lists = await Promise.all(idsRef.current.map((id) => fetchIncidents(id, caregiverId)));
+      setIncidents((current) => mergeIncidents(current, lists.flat()));
       setError(null);
     } catch (e) {
       setError(`Couldn't load alerts: ${(e as Error).message}`);
     }
-  }, []);
+  }, [caregiverId]);
 
   const highlight = useCallback((incidentId: string) => {
     setFresh((s) => new Set(s).add(incidentId));
@@ -52,22 +58,22 @@ export function AlertsPage({ travellerId, caregiverId }: { travellerId: string; 
     }), FRESH_MS);
   }, []);
 
-  // Load the list when the traveller changes (once typing pauses).
+  // Load alerts whenever the list of travellers changes (e.g. one was just added).
   useEffect(() => {
-    const timer = setTimeout(() => void reload(), TYPING_PAUSE_MS);
-    return () => clearTimeout(timer);
-  }, [travellerId, reload]);
+    if (loggedIn) void reload();
+  }, [idsKey, loggedIn, reload]);
 
   // Live alerts. EventSource reconnects by itself when the connection drops; the silence check below
   // covers a connection that looks open but is dead. After every reconnect the list is reloaded,
   // so anything that happened while disconnected still shows up.
   useEffect(() => {
+    if (!loggedIn) return;
     let source: EventSource;
     let openedBefore = false;
     let lastHeard = Date.now();
 
     const connect = () => {
-      source = new EventSource(STREAM_URL);
+      source = new EventSource(streamUrl(caregiverId));
       source.onopen = () => {
         lastHeard = Date.now();
         setConnection("live");
@@ -81,7 +87,8 @@ export function AlertsPage({ travellerId, caregiverId }: { travellerId: string; 
       source.onmessage = (msg) => {
         lastHeard = Date.now();
         const event: AlertEvent = JSON.parse(msg.data);
-        if (event.incident.travellerId !== travellerRef.current.trim()) return;
+        // The service already sends only this caregiver's travellers; this also covers AUTH_MODE=off.
+        if (!idsRef.current.includes(event.incident.travellerId)) return;
         setIncidents((current) => applyEvent(current, event));
         if (event.event === "incident.opened" || event.event === "incident.reopened") {
           highlight(event.incident.incidentId);
@@ -102,7 +109,7 @@ export function AlertsPage({ travellerId, caregiverId }: { travellerId: string; 
       clearInterval(silenceCheck);
       source.close();
     };
-  }, [reload, highlight]);
+  }, [caregiverId, loggedIn, reload, highlight]);
 
   async function act(action: typeof acknowledge, incidentId: string) {
     setBusy(incidentId);
@@ -116,61 +123,128 @@ export function AlertsPage({ travellerId, caregiverId }: { travellerId: string; 
     }
   }
 
-  const mine = Object.values(incidents).filter((i) => i.travellerId === travellerId.trim());
+  if (!loggedIn) {
+    return (
+      <div className="al">
+        <div className="al__inner">
+          <Empty title="Who's signed in?">
+            Enter a caregiver ID such as <code>G-001</code> in <strong>Act as</strong>.
+          </Empty>
+        </div>
+      </div>
+    );
+  }
+
+  const mine = Object.values(incidents).filter(
+    (i) => travellerIds.includes(i.travellerId) && (!only || i.travellerId === only),
+  );
   const shown = sortForDisplay(mine.filter((i) => showResolved || i.state !== "resolved"));
-  const openCount = mine.filter((i) => i.state === "open").length;
+  const count = (test: (i: Incident) => boolean) => mine.filter(test).length;
 
   return (
     <div className="al">
-      <div className="al__bar">
-        <h2 className="al__count">
-          {openCount === 0 ? "No open alerts" : `${openCount} open alert${openCount > 1 ? "s" : ""}`}
-        </h2>
-        <label className="al__toggle">
-          <input type="checkbox" checked={showResolved} onChange={(e) => setShowResolved(e.target.checked)} />
-          Show resolved
-        </label>
-        <span className={`al__connection al__connection--${connection}`} role="status">
-          {connection === "live" ? "● Live" : connection === "connecting" ? "Connecting…" : "Reconnecting…"}
-        </span>
+      <div className="al__inner">
+        <header className="al__head">
+          <div>
+            <h1 className="al__h1">Alerts</h1>
+            <p className="al__sub">Live updates for the travellers you look after</p>
+          </div>
+          <span className={`al__live al__live--${connection}`} role="status">
+            <span className="al__dot" aria-hidden="true" />
+            {connection === "live" ? "Live" : connection === "connecting" ? "Connecting…" : "Reconnecting…"}
+          </span>
+        </header>
+
+        <div className="al__toolbar">
+          <div className="al__stats">
+            <Stat label="Open" value={count((i) => i.state === "open")} tone="open" />
+            <Stat label="Urgent" value={count((i) => i.state !== "resolved" && i.severity === "urgent")} tone="urgent" />
+            <Stat label="Acknowledged" value={count((i) => i.state === "acknowledged")} tone="ack" />
+          </div>
+          <div className="al__filters">
+            {my.travellers.length > 1 && (
+              <select value={only} onChange={(e) => setOnly(e.target.value)} aria-label="Which traveller">
+                <option value="">All travellers</option>
+                {my.travellers.map((t) => <option key={t.travellerId} value={t.travellerId}>{t.name}</option>)}
+              </select>
+            )}
+            <label className="al__toggle">
+              <input type="checkbox" checked={showResolved} onChange={(e) => setShowResolved(e.target.checked)} />
+              Show resolved
+            </label>
+          </div>
+        </div>
+
+        {(error || my.error) && (
+          <p className="al__error" role="alert">
+            {error ?? my.error}
+          </p>
+        )}
+
+        {my.loaded && my.travellers.length === 0 ? (
+          <Empty title="No travellers yet">
+            Add a traveller in the <strong>Travellers</strong> tab, or ask a caregiver who looks after them to add you.
+          </Empty>
+        ) : shown.length === 0 ? (
+          <Empty title="All clear">Nothing needs your attention right now.</Empty>
+        ) : (
+          <ul className="al__cards">
+            {shown.map((incident) => (
+              <AlertCard
+                key={incident.incidentId}
+                incident={incident}
+                name={names[incident.travellerId] ?? incident.travellerName ?? incident.travellerId}
+                fresh={fresh.has(incident.incidentId)}
+                busy={busy === incident.incidentId}
+                onAcknowledge={() => act(acknowledge, incident.incidentId)}
+                onResolve={() => act(resolve, incident.incidentId)}
+              />
+            ))}
+          </ul>
+        )}
       </div>
-
-      {error && (
-        <p className="al__error" role="alert">
-          {error}
-        </p>
-      )}
-
-      {shown.length === 0 ? (
-        <p className="al__empty">Nothing needs your attention for {travellerId.trim() || "this traveller"}.</p>
-      ) : (
-        <ul className="al__cards">
-          {shown.map((incident) => (
-            <AlertCard
-              key={incident.incidentId}
-              incident={incident}
-              fresh={fresh.has(incident.incidentId)}
-              busy={busy === incident.incidentId}
-              onAcknowledge={() => act(acknowledge, incident.incidentId)}
-              onResolve={() => act(resolve, incident.incidentId)}
-            />
-          ))}
-        </ul>
-      )}
     </div>
+  );
+}
+
+function Stat({ label, value, tone }: { label: string; value: number; tone: "open" | "urgent" | "ack" }) {
+  return (
+    <div className={`al__stat al__stat--${tone}`}>
+      <span className="al__stat-value">{value}</span>
+      <span className="al__stat-label">{label}</span>
+    </div>
+  );
+}
+
+function Empty({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div className="al__empty">
+      <p className="al__empty-title">{title}</p>
+      <p>{children}</p>
+    </div>
+  );
+}
+
+function PinIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+      strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 21s-7-6.1-7-11a7 7 0 0 1 14 0c0 4.9-7 11-7 11z" />
+      <circle cx="12" cy="10" r="2.5" />
+    </svg>
   );
 }
 
 interface CardProps {
   incident: Incident;
+  name: string;
   fresh: boolean;
   busy: boolean;
   onAcknowledge: () => void;
   onResolve: () => void;
 }
 
-function AlertCard({ incident: i, fresh, busy, onAcknowledge, onResolve }: CardProps) {
-  const name = i.travellerName ?? i.travellerId;
+function AlertCard({ incident: i, name, fresh, busy, onAcknowledge, onResolve }: CardProps) {
   const urgent = i.severity === "urgent" && i.state !== "resolved";
   const details = [
     i.tripId && `Trip ${i.tripId}`,
@@ -183,17 +257,17 @@ function AlertCard({ incident: i, fresh, busy, onAcknowledge, onResolve }: CardP
     <li className={`al__card al__card--${i.state}${urgent ? " al__card--urgent" : ""}${fresh ? " al__card--fresh" : ""}`}>
       <div className="al__card-top">
         <span className={`al__badge al__badge--${urgent ? "urgent" : i.state}`}>{urgent ? "Urgent" : i.state}</span>
-        <time dateTime={i.createdAt}>{formatTime(i.createdAt)}</time>
+        <time className="al__time" dateTime={i.createdAt}>{formatTime(i.createdAt)}</time>
       </div>
       <h3 className="al__title">
-        {name}: {problemTitle(i.problemType)}
+        <span className="al__name">{name}</span> · {problemTitle(i.problemType)}
       </h3>
       {i.disruption?.message && <p className="al__text">{i.disruption.message}</p>}
       {details.length > 0 && <p className="al__details">{details.join(" · ")}</p>}
       <div className="al__actions">
         {i.lastLocation && (
           <a href={`https://www.google.com/maps?q=${i.lastLocation.lat},${i.lastLocation.lng}`} target="_blank" rel="noreferrer">
-            Last location
+            <PinIcon /> Last known location
           </a>
         )}
         {i.state === "open" && (

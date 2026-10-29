@@ -13,6 +13,7 @@ Always run teardown when you finish.
 | **1. Create the environment** (first time in a session) | `bash scripts/macos/deploy.sh --email you@gmail.com` | `.\scripts\windows\deploy.ps1 -BudgetEmail you@gmail.com` |
 | **2. Deploy your service** (as often as you like) | `bash scripts/macos/deploy.sh --service coordinator` | `.\scripts\windows\deploy.ps1 -Service coordinator` |
 | **3. Delete everything** (end of session) | `bash scripts/macos/teardown.sh` | `.\scripts\windows\teardown.ps1` |
+| **Create the environment and every service** (e.g. before integration tests or the demo) | `bash scripts/macos/deploy.sh --all-services` | `.\scripts\windows\deploy.ps1 -AllServices` |
 
 Run them from the repo root. On Windows, if scripts are blocked, run them as
 `powershell -ExecutionPolicy Bypass -File scripts\windows\deploy.ps1 ...`.
@@ -57,6 +58,9 @@ deploys the template app (`cloud-fastapi`) to check that everything works. It fi
   when spending reaches $64 and $80. AWS sends you **two confirmation emails: click both**, or the
   warnings won't arrive.
 - If you run it again while the environment exists, it only updates what changed (a few minutes).
+- **`--all-services`** (`-AllServices` on Windows) does the same, then deploys every service in
+  `k8s/eks/services/` as in step 2. Use it after a teardown to bring everything back in one go.
+  If one service fails, the rest still deploy, and the summary at the end lists which failed.
 
 ## Step 2: Deploy your service
 
@@ -84,6 +88,42 @@ them in from the environment (and never saves the filled-in version to Git):
 | `__REDIS_ENDPOINT__` | The Redis address |
 | `__CHECKINS_QUEUE_URL__` | URL of the `careroute-checkins` queue |
 | `__DISRUPTIONS_QUEUE_URL__` | URL of the `careroute-disruptions` queue |
+| `__FILES_BUCKET__` | The shared S3 bucket, `careroute-files-<account id>` |
+| `__ALB_SG_ID__` | The load balancer's security group (for the `alb.ingress.kubernetes.io/security-groups` annotation on your Ingress) |
+| `__ROLE_ARN__` | Your service's own IAM role (see "Your own IAM role" below) |
+
+If the manifest has a placeholder that isn't in this table (e.g. a typo like `__ALB_SGID__`), the
+script stops and names it instead of deploying it as literal text. Placeholders inside YAML comments
+are ignored.
+
+### Your own IAM role (optional)
+
+By default, services use the shared `cloud-fastapi` service account. Its role can read and write
+every `careroute-*` table, queue and bucket, but it can't call `DescribeTable`. If you want a
+least-privilege role for your service instead:
+
+1. Create the role in a CloudFormation stack (your own stack, or ask for it to be added to the
+   platform template). Its trust policy must allow the service account
+   `system:serviceaccount:careroute:<name>` through the platform stack's `OidcProviderArn` output.
+2. Give that stack an output named after your service in PascalCase followed by `RoleArn`:
+   `checkin-service` → `CheckinServiceRoleArn`.
+3. In your manifest, add a ServiceAccount and use it in your Deployment:
+
+   ```yaml
+   apiVersion: v1
+   kind: ServiceAccount
+   metadata:
+     name: checkin-service
+     namespace: __NAMESPACE__
+     annotations:
+       eks.amazonaws.com/role-arn: __ROLE_ARN__
+   ---
+   # ...and in the Deployment's pod spec:  serviceAccountName: checkin-service
+   ```
+
+The script finds the output in any stack in the region. It stops if no stack has it, or if more
+than one does. Teardown only deletes the platform stack, so **delete your own stack yourself**
+before or after teardown, or its role and anything else in it stay behind.
 
 Example `k8s/eks/services/coordinator.yaml`:
 
@@ -166,6 +206,8 @@ If several people use the same AWS account:
 | `Stack careroute-stack-1 is NONE. Run this script without --service first` | The environment doesn't exist yet: run step 1 |
 | `No Dockerfile at services/<name>/Dockerfile` or `No manifest at ...` | Check the folder and file names match `--service` exactly |
 | Pods stuck in `Pending` | Fargate pods take 1-2 minutes to start. If it's longer, check the manifest's namespace is `__NAMESPACE__` |
+| `... has unknown placeholders: __X__` | Fix the spelling, or use only the placeholders in the step 2 table |
+| `... uses __ROLE_ARN__, but 0 stacks ... have an output named <Name>RoleArn` | Deploy your role's stack first, and check the output name matches your service name |
 | Pods in `CrashLoopBackOff` | Your app is crashing: `kubectl logs -n careroute deploy/<name>` |
 | The first deploy failed half-way | Just run it again; it carries on from where it stopped |
 | Not sure if you're still being charged | Run teardown; it's safe to run even if things are already deleted |

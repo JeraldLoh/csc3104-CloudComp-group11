@@ -1,7 +1,6 @@
 # Journey Service for the platform's quick path:  .\scripts\windows\deploy.ps1 -Service journey-service
-# deploy.ps1 fills in the __PLACEHOLDERS__ (see scripts/README.md). It has no placeholder for the account ID, so the
-# pack bucket (careroute-files-<account id>) is not set here and /api/trips/{id}/pack returns 503. It also doesn't
-# create the API-key Secret or the bucket's CORS rule. For all of that, use
+# deploy.ps1 fills in the __PLACEHOLDERS__ (see scripts/README.md), including the pack bucket. It doesn't create
+# the API-key Secret or the bucket's CORS rule, so pack downloads from the traveller app need those. For that, use
 # services/journey-service/deploy/windows/deploy-eks.ps1 (or macos/deploy-eks.sh) instead (same Deployment, from
 # deploy/eks/journey-service.yaml).
 # Before the first -Service deploy, create the Secret once:
@@ -31,6 +30,7 @@ spec:
             - { name: ROUTES_STORE, value: "dynamodb" }
             - { name: ROUTES_TABLE, value: "careroute-routes" }
             - { name: TRIPS_TABLE, value: "careroute-trips" }
+            - { name: PACKS_BUCKET, value: "__FILES_BUCKET__" }   # packs go under packs/
             - { name: ONEMAP_MODE, value: "live" }
             - { name: LTA_MODE, value: "live" }
             - { name: AUTH_MODE, value: "off" }

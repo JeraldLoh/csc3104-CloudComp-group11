@@ -1,0 +1,400 @@
+/* Travellers page (issue 5.1). Every class starts with "pf" so nothing clashes with the planner (rp…),
+   the alerts (al…) or the shell (shell…). Colours match the alerts page. */
+.pf {
+  --pf-text: #0f172a;
+  --pf-muted: #64748b;
+  --pf-border: #e2e8f0;
+  --pf-surface: #ffffff;
+  --pf-bg: #f8fafc;
+  --pf-accent: #2563eb;
+  height: 100%;
+  overflow-y: auto;
+  background: var(--pf-bg);
+  color: var(--pf-text);
+  font-size: 15px;
+}
+
+.pf__inner {
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: 28px 20px 48px;
+}
+
+.pf__head {
+  margin-bottom: 20px;
+}
+
+.pf__h1 {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.pf__sub {
+  margin: 4px 0 0;
+  color: var(--pf-muted);
+  max-width: 640px;
+}
+
+.pf__grid {
+  display: grid;
+  grid-template-columns: minmax(260px, 340px) 1fr;
+  gap: 20px;
+  align-items: start;
+}
+
+@media (max-width: 760px) {
+  .pf__grid { grid-template-columns: 1fr; }
+}
+
+.pf__card {
+  padding: 18px 20px;
+  border: 1px solid var(--pf-border);
+  border-radius: 14px;
+  background: var(--pf-surface);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.pf__card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.pf__card-head h2 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 650;
+}
+
+.pf__count {
+  min-width: 24px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: var(--pf-muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-align: center;
+}
+
+.pf__muted {
+  margin: 2px 0;
+  color: var(--pf-muted);
+  font-size: 0.875rem;
+}
+
+/* --- people list ------------------------------------------------------------ */
+.pf__people {
+  list-style: none;
+  margin: 6px -6px 12px;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.pf__person {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+.pf__person:hover {
+  background: #f8fafc;
+}
+
+.pf__person[aria-pressed="true"] {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+}
+
+.pf__person-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.pf__person-text .pf__muted {
+  margin: 0;
+  font-size: 0.8rem;
+}
+
+.pf__avatar {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.pf__avatar--large {
+  width: 56px;
+  height: 56px;
+  font-size: 1.2rem;
+}
+
+/* --- profile ------------------------------------------------------------------- */
+.pf__profile {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.pf__profile-name {
+  margin: 0 0 4px;
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.pf__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 4px 2px 10px;
+  border: 1px solid var(--pf-border);
+  border-radius: 999px;
+  background: #f8fafc;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.85rem;
+}
+
+.pf__chip-btn {
+  padding: 2px 10px;
+  border: none;
+  border-radius: 999px;
+  background: #e0e7ff;
+  color: #3730a3;
+  font: inherit;
+  font-family: system-ui, sans-serif;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.pf__section {
+  padding-top: 16px;
+}
+
+.pf__section h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 650;
+}
+
+.pf__places {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  border: 1px solid #f1f5f9;
+  border-radius: 10px;
+}
+
+.pf__places li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+}
+
+.pf__places li + li {
+  border-top: 1px solid #f1f5f9;
+}
+
+.pf__places a {
+  margin-left: auto;
+  color: var(--pf-accent);
+  font-size: 0.85rem;
+  text-decoration: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.pf__places a:hover {
+  text-decoration: underline;
+}
+
+.pf__pin {
+  color: #ef4444;
+  flex: none;
+}
+
+/* --- forms -------------------------------------------------------------------- */
+.pf__form {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.pf__form--place {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr 1fr auto;
+}
+
+@media (max-width: 560px) {
+  .pf__form--place { grid-template-columns: 1fr 1fr; }
+}
+
+.pf__form input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #fff;
+  font: inherit;
+  font-size: 0.9rem;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.pf__form input:focus {
+  outline: none;
+  border-color: var(--pf-accent);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+}
+
+.pf__btn {
+  padding: 8px 14px;
+  border: 1px solid var(--pf-accent);
+  border-radius: 8px;
+  background: var(--pf-accent);
+  color: #fff;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+.pf__btn:hover:not(:disabled) {
+  background: #1d4ed8;
+}
+
+.pf__btn--secondary {
+  background: #fff;
+  border-color: #cbd5e1;
+  color: var(--pf-text);
+}
+
+.pf__btn--secondary:hover:not(:disabled) {
+  background: #f1f5f9;
+}
+
+.pf__btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.pf__btn--danger {
+  background: #dc2626;
+  border-color: #dc2626;
+}
+
+.pf__btn--danger:hover:not(:disabled) {
+  background: #b91c1c;
+}
+
+.pf__btn--danger-outline {
+  background: #fff;
+  border-color: #fecaca;
+  color: #dc2626;
+}
+
+.pf__btn--danger-outline:hover:not(:disabled) {
+  background: #fef2f2;
+}
+
+.pf__profile-action {
+  margin-left: auto;
+  align-self: flex-start;
+}
+
+.pf__confirm {
+  margin-top: 14px;
+  padding: 14px 16px;
+  border: 1px solid #fecaca;
+  border-radius: 10px;
+  background: #fef2f2;
+}
+
+.pf__confirm p {
+  margin: 0;
+  font-size: 0.9rem;
+  color: #7f1d1d;
+}
+
+.pf__confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+/* --- messages and placeholders ---------------------------------------------------- */
+.pf__msg {
+  margin: 14px 0 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 0.9rem;
+}
+
+.pf__msg--ok {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  color: #15803d;
+}
+
+.pf__msg--error {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #dc2626;
+}
+
+.pf__placeholder {
+  padding: 48px 24px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 14px;
+  background: var(--pf-surface);
+  text-align: center;
+  color: var(--pf-muted);
+}
+
+.pf__placeholder--inline {
+  border: none;
+  padding: 56px 16px;
+}
+
+.pf__placeholder p {
+  margin: 0;
+}
+
+.pf__placeholder-title {
+  margin-bottom: 6px !important;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--pf-text);
+}
+
+.pf code {
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #f1f5f9;
+}
