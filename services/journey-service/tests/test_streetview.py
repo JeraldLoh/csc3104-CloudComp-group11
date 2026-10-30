@@ -1,15 +1,19 @@
 """Step photos: Street View on save (best-effort), caregiver uploads, and presigned links in answers and packs."""
 import dataclasses
+import io
 from datetime import date
 
 import fakeredis
 import httpx
 import pytest
 import respx
+from pydantic import ValidationError
 
 from app.journey_client import JourneyClient, PhotoInvalid
+from app.models import Step
+from app.route_store import RouteNotFound
 from app.streetview import (IMAGE_URL, METADATA_URL, bearing, distance_m, fetch, field_of_view, nearest, photo_key,
-                            walks_to_station)
+                            target, walks_to_station)
 from helpers import SETTINGS, route_data
 
 JPEG = b"\xff\xd8\xff\xe0" + b"0" * 100
@@ -75,6 +79,28 @@ def test_distance_nearest_and_station_walks():
     assert walks_to_station({"mode": "train", "to": station}) is None
 
 
+def test_change_of_line_inside_a_station_gets_no_street_photo():
+    ne6 = {"name": "Dhoby Ghaut MRT Station", "code": "NE6", "lat": 1.29962, "lng": 103.84538}
+    ns24 = {"name": "Dhoby Ghaut MRT Station", "code": "NS24", "lat": 1.29869, "lng": 103.84612}
+    change = {"mode": "walk", "from": ne6, "to": ns24}
+    assert target(change) is None and walks_to_station(change) is None
+    from_bus = {"mode": "walk", "from": {**ne6, "code": "08057"}, "to": ns24}
+    assert walks_to_station(from_bus) == ns24 and target(from_bus) == (1.29869, 103.84612)
+
+
+@pytest.mark.parametrize("key, ok", [
+    ("media/uploads/abc.jpg", True), ("media/streetview/v2/1.30400_103.83180.jpg", True),
+    ("media/streetview/v2/rough/1.30400_103.83180.jpg", True), ("packs/R-1-v1.json", False),
+    ("media/../packs/x.jpg", False), ("media/uploads/abc.exe", False)])
+def test_saved_photo_keys(key, ok):
+    """PUT /api/routes sends back the keys the service stored, Street View ones included (two folders deep)."""
+    if ok:
+        assert Step.model_validate({**route_data()["steps"][0], "photoKey": key}).photoKey == key
+    else:
+        with pytest.raises(ValidationError):
+            Step.model_validate({**route_data()["steps"][0], "photoKey": key})
+
+
 # ----- recent panoramas, Google's own first -----
 
 STOP = (1.4052, 103.9024)
@@ -117,6 +143,7 @@ def test_recent_upload_at_the_stop_when_google_has_nothing_recent():
     image = image_ok()
     assert fetch(*STOP, httpx.Client(), "g-key", 1) == (JPEG, False)
     assert image.calls[0].request.url.params["pano"] == "UPLOAD"
+    assert "heading" not in image.calls[0].request.url.params          # at the stop: the panorama's own view
     assert field_of_view(10) == 80 and field_of_view(60) == 53
 
 
@@ -260,3 +287,54 @@ def test_upload_checks_the_bytes_not_the_name():
         j.upload_photo(rid, b"just some text")
     with pytest.raises(PhotoInvalid):
         j.upload_photo(rid, JPEG + b"0" * SETTINGS.photo_max_bytes)
+
+
+# ----- rough photos are looked for again; exits and uploads -----
+
+def echo(taken):
+    """A Google panorama right where each question is asked, taken `taken` ("2018-01")."""
+    return lambda request: httpx.Response(200, json=pano("P", *map(float, request.url.params["location"].split(",")),
+                                                          taken=taken))
+
+
+@respx.mock
+def test_rough_photo_is_replaced_once_google_has_a_recent_one():
+    bucket = FakeBucket()
+    j = client(bucket=bucket)
+    meta = respx.get(METADATA_URL).mock(side_effect=echo(f"{date.today().year - 8}-01"))
+    image = image_ok()
+    first = j.create_route(route_data())
+    assert all(s["photoKey"].startswith("media/streetview/v2/rough/") for s in first["steps"] if s.get("photoKey"))
+    downloads = image.call_count
+
+    again = j.create_route({**route_data(), "steps": first["steps"]})              # still only old ones there
+    assert [s.get("photoKey") for s in again["steps"]] == [s.get("photoKey") for s in first["steps"]]
+    assert image.call_count == downloads                                            # no paid download again
+
+    meta.side_effect = httpx.ConnectError("down")                                   # Google down: keep the rough one
+    assert j.create_route({**route_data(), "steps": first["steps"]})["steps"] == again["steps"]
+
+    meta.side_effect = echo(f"{date.today().year - 1}-01")                          # the street car came by
+    later = j.create_route({**route_data(), "steps": first["steps"]})
+    keys = [s.get("photoKey") for s in later["steps"] if s.get("photoKey")]
+    assert keys and not any("/rough/" in k for k in keys) and set(keys) <= set(bucket.objects)
+
+
+@respx.mock
+def test_no_exits_found_is_only_remembered_for_an_hour():
+    respx.get(ONEMAP_SEARCH).mock(return_value=httpx.Response(200, json={"found": 0, "totalNumPages": 1, "results": []}))
+    respx.get(METADATA_URL).mock(return_value=httpx.Response(200, json={"status": "ZERO_RESULTS"}))
+    j = client(bucket=FakeBucket())
+    assert j.station_exits("Sengkang MRT Station (NE16)") == []
+    assert 0 < j._r.ttl("journey:cache:station-exits:SENGKANG MRT STATION") <= JourneyClient.NO_EXITS_TTL_S
+
+
+def test_upload_is_not_read_before_the_route_is_checked():
+    class Unreadable:
+        def read(self, n):
+            raise AssertionError("read before the route was checked")
+    with pytest.raises(RouteNotFound):
+        client(key="", bucket=FakeBucket()).upload_photo("R-000000", Unreadable())
+    j = client(key="", bucket=FakeBucket())
+    rid = j.create_route(route_data())["routeId"]
+    assert j.upload_photo(rid, io.BytesIO(JPEG))["photoKey"].endswith(".jpg")

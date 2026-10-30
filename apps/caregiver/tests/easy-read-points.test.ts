@@ -9,6 +9,8 @@ describe("photoHint", () => {
     expect(photoHint({ mode: "bus", to: stop("67009") })).toMatch(/bus stop/);
     expect(photoHint({ mode: "walk", to: stop("67009") })).toMatch(/where this walk ends/);   // to a bus stop
     expect(photoHint({ mode: "walk", to: stop(null) })).toMatch(/where this walk ends/);
+    expect(photoHint({ mode: "walk", from: stop("NE6"), to: stop("NS24") })).toMatch(/signs to the other line/);
+    expect(photoHint({ mode: "walk", from: stop("67009"), to: stop("NE16") })).toMatch(/entrance or the gantry/);
   });
 
   it("asks the caregiver to check a rough photo (only an old one was found)", () => {

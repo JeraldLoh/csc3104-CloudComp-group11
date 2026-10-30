@@ -290,10 +290,9 @@ def create_app(
     @app.post("/api/routes/{route_id}/photos", status_code=201)
     def upload_photo(route_id: str, request: Request, photo: UploadFile = File(),
                      caller: Caller | None = Depends(current_caller)):
-        """contracts/api.md, step photos: one image (multipart field `photo`). Reads one byte past the limit, so a
-        huge upload is refused without being read whole."""
-        data = photo.file.read(s.photo_max_bytes + 1)
-        return request.app.state.journey.upload_photo(route_id_or_404(route_id), data, caller)
+        """contracts/api.md, step photos: one image (multipart field `photo`). The file is read only after the route
+        and the caller are checked, and only one byte past the limit, so a huge upload isn't read whole."""
+        return request.app.state.journey.upload_photo(route_id_or_404(route_id), photo.file, caller)
 
     def trip_id_or_404(trip_id: str) -> str:
         if not TRIP_ID.match(trip_id):

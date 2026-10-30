@@ -66,7 +66,7 @@ class Step(BaseModel):
     # A photo in the pack bucket's media/ folder only (a Street View photo or an upload): the API hands out a
     # presigned link to it, so any other key (e.g. another route's pack) must be refused.
     photoKey: str | None = Field(default=None, max_length=200,
-                                 pattern=r"^media/[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+\.(jpg|jpeg|png|webp)$")
+                                 pattern=r"^media/(?:[A-Za-z0-9_-]+/)+[A-Za-z0-9_.-]+\.(jpg|jpeg|png|webp)$")
     audioKey: str | None = None
     backup: Backup | None = None
 

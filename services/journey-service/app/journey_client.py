@@ -23,7 +23,7 @@ import secrets
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
-from typing import Callable
+from typing import BinaryIO, Callable
 
 import httpx
 
@@ -415,6 +415,7 @@ class JourneyClient:
         return places[:limit]
 
     STATION_EXITS_TTL_S = 7 * 24 * 3600               # exits don't move
+    NO_EXITS_TTL_S = 3600                             # none found: maybe a blip in OneMap's search, so ask again soon
 
     def station_exits(self, station_name: str) -> list[tuple[float, float]]:
         """Where an MRT/LRT station's exits are, from OneMap's search ("SENGKANG MRT STATION EXIT A"); [] if unknown.
@@ -437,7 +438,7 @@ class JourneyClient:
 
         try:
             return [(lat, lng) for lat, lng in self._cache.cached(f"station-exits:{name}", self.STATION_EXITS_TTL_S,
-                                                                  look_up)]
+                                                                  look_up, empty_ttl_s=self.NO_EXITS_TTL_S)]
         except (httpx.HTTPError, ValueError, KeyError, TypeError) as e:
             log.warning("couldn't look up the exits of %s (%s)", name, type(e).__name__)
             return []
@@ -838,29 +839,33 @@ class JourneyClient:
     # easyRead). Responses carry `photoUrl`, a presigned link made per response and never stored.
 
     def _with_photos(self, data: dict) -> dict:
-        """Street View photos for steps with no photoKey (under rough/ when only an old panorama was there).
-        Best-effort: a step stays without one when Street View has no panorama there at all, Google or S3 fails, or
+        """Street View photos for steps with no photoKey (under rough/ when only an old panorama was there), and a
+        recent one for a step with a rough photo once Google has one. Best-effort: a step stays without one when Street View has no panorama there at all, Google or S3 fails, or
         photos are off (no API key or no bucket)."""
         steps = [{k: v for k, v in s.items() if k != "photoUrl"} for s in data["steps"]]
         if not (self._s.google_maps_api_key and self._packs):
             return {**data, "steps": steps}
         wanted = {}
         for i, step in enumerate(steps):
-            point = None if step.get("photoKey") else self._photo_target(step)
+            key = step.get("photoKey")
+            point = self._photo_target(step) if not key or streetview.is_rough(key) else None
             if point:
                 wanted[i] = point
 
         def one(point: tuple[float, float]) -> str | None:
+            good, rough = streetview.photo_key(*point), streetview.photo_key(*point, rough=True)
             try:
-                for key in (streetview.photo_key(*point), streetview.photo_key(*point, rough=True)):
-                    if self._packs.exists(key):       # the same stop in another route: already fetched
-                        return key
+                if self._packs.exists(good):          # the same stop in another route: already fetched
+                    return good
+                # A rough photo is looked for again on every save, so a recent one replaces it once Google has one.
+                have_rough = self._packs.exists(rough)
                 photo = streetview.fetch(*point, self._photo_http, self._s.google_maps_api_key,
-                                         self._s.streetview_timeout_s, self._s.streetview_max_age_years)
-                if photo is None:
-                    return None
-                key = streetview.photo_key(*point, rough=photo.rough)
-                self._packs.put(key, photo.image, "image/jpeg")
+                                         self._s.streetview_timeout_s, self._s.streetview_max_age_years, have_rough)
+                if photo is None:                     # Google down or refusing: the rough photo is still better
+                    return rough if have_rough else None
+                key = rough if photo.rough else good
+                if photo.image is not None:
+                    self._packs.put(key, photo.image, "image/jpeg")
                 return key
             except PackUnavailable as e:
                 log.warning("couldn't store a street view photo: %s", e)
@@ -894,12 +899,14 @@ class JourneyClient:
     # Magic bytes, so the file's own claim about its type isn't trusted. WebP is RIFF....WEBP, checked below.
     PHOTO_TYPES = ((b"\xff\xd8\xff", "jpg", "image/jpeg"), (b"\x89PNG\r\n\x1a\n", "png", "image/png"))
 
-    def upload_photo(self, route_id: str, data: bytes, caller: Caller | None = None) -> dict:
+    def upload_photo(self, route_id: str, photo: bytes | BinaryIO, caller: Caller | None = None) -> dict:
         """Stores a caregiver's photo for a step: {"photoKey", "photoUrl"}. The route itself is not changed: the
-        editor puts the key in the step and the caregiver's save stores it (so Cancel really discards it)."""
+        editor puts the key in the step and the caregiver's save stores it (so Cancel really discards it).
+        A file is only read once the route and the caller are checked, and only one byte past the size limit."""
         route = self.get_route(route_id, caller)
         if caller is not None and not self._owns(caller, route):
             raise Forbidden("Only the route's caregiver can change its photos.")
+        data = photo if isinstance(photo, bytes) else photo.read(self._s.photo_max_bytes + 1)
         if len(data) > self._s.photo_max_bytes:
             raise PhotoInvalid(f"The photo is too big. The limit is {self._s.photo_max_bytes // (1024 * 1024)} MB.")
         found = next(((ext, ctype) for magic, ext, ctype in self.PHOTO_TYPES if data.startswith(magic)), None)

@@ -21,10 +21,12 @@ export function easyReadPoints(text: string | null | undefined): string[] {
 
 /** What photo the caregiver could add for a step that has none. Street View can't see inside stations or malls,
  *  and has no recent picture of some stops, so these are the steps that need the caregiver's own photo. */
-export function photoHint(step: Pick<RouteStep, "mode" | "to">): string {
-  const code = step.to?.code ?? "";
+export function photoHint(step: Pick<RouteStep, "mode" | "to"> & Partial<Pick<RouteStep, "from">>): string {
+  const isStation = (code: string | null | undefined) => !!code && !/^\d+$/.test(code);   // NE16; bus stops are digits
   if (step.mode === "train") return "Add a photo of the gantry or the platform, so the traveller knows where to go.";
-  if (step.mode === "walk" && code && !/^\d+$/.test(code))        // a station code (NE16); bus stops are all digits
+  if (step.mode === "walk" && isStation(step.from?.code) && isStation(step.to?.code))      // a change of line
+    return "Add a photo of the signs to the other line, so the traveller knows which way to walk.";
+  if (step.mode === "walk" && isStation(step.to?.code))
     return "No street photo of this station. Add one of the entrance or the gantry.";
   if (step.mode === "bus") return "No street photo of this stop. Add one of the bus stop.";
   return "No street photo of this place. Add one of where this walk ends.";

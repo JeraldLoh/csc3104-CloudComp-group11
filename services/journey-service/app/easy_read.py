@@ -25,8 +25,10 @@ EASY_WORDS = [(r"\bPr Sch\b", "Primary School"), (r"\bSec Sch\b", "Secondary Sch
 
 def plain(name: str | None) -> str | None:
     """A stop name with LTA's short forms spelled out, as the easy-read text shows it."""
+    if not name:
+        return name
     for pattern, full in EASY_WORDS:
-        name = re.sub(pattern, full, name) if name else name
+        name = re.sub(pattern, full, name)
     return name
 
 
