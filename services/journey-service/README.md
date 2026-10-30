@@ -2,7 +2,7 @@
 
 Plans routes (OneMap), serves live bus/train/traffic data (LTA DataMall), and will own routes, trips and route packs (see `contracts/api.md`).
 
-**Status:** proof of concept. Route planning (OneMap + LTA cross-check), saved and approved routes, trips, route packs and the disruption checker all work, against LocalStack (DynamoDB, S3, SQS) and Redis locally. Not built: AI easy-read, the Profiles lookups (traveller and caregiver names), photos and audio.
+**Status:** proof of concept. Route planning (OneMap + LTA cross-check), saved and approved routes, trips, route packs and the disruption checker all work, against LocalStack (DynamoDB, S3, SQS) and Redis locally. AI easy-read (through the Easy-read Service and Ollama, for the caregiver to review) and step photos (Street View or the caregiver's own) work too. Not built: the Profiles lookups (traveller and caregiver names) and audio.
 
 **Demoing it:** see [`DEMO.md`](DEMO.md) (a step-by-step script with every command).
 The service runs on **saved API responses by default** (see "Saved-data mode"), so it needs no keys, no internet
@@ -20,6 +20,7 @@ The service has two deployable parts that share a little code, so the files are 
 | `demo_tools.py` (pretend disruption / crowding, live/saved switch; `DEMO_UI` only) | local demos | no |
 | `journey_client.py` (the API's logic in one class: OneMap, planning, routes, trips, packs) | yes | no |
 | `easy_read.py` (plain-language wording for route steps, no imports from the rest of `app/`) | yes | no |
+| `easy_read_ai.py` (asks the Easy-read Service for simpler wording), `streetview.py` (step photos) | yes | no |
 | `route_store.py`, `trip_store.py`, `pack_store.py` (DynamoDB / Redis / S3 storage) | yes | no |
 | `lta.py` (LTA DataMall client), `cache.py` (Redis JSON cache), `config.py` (settings), `data_mode.py` (live/saved switch) | yes | **yes** (shared) |
 | `disruption.py` (`DisruptionChecker`), `lambda_handler.py` (entry point) | not used | **yes** |
@@ -72,7 +73,7 @@ Each option has:
 - `summary`: `durationS`, `startTime`, `endTime`, `walkDistanceM`, `transfers`, `fare`, `modes`, `crowd`
   (`low`/`moderate`/`high` for the busiest leg, `null` when LTA has no data)
 - `steps`: one per OneMap leg, in the `contracts/examples/route.json` step format
-  (`mode` is `walk`, `bus` or `train`; `easyRead`, `photoKey`, `audioKey`, `backup` are null for now;
+  (`mode` is `walk`, `bus` or `train`; `photoKey`, `audioKey`, `backup` are null in a plan (photos are added on save);
   `underground` is null for train steps because OneMap doesn't say)
 - `path`: `[lat, lng]` points for the whole journey
 - `live`: for each bus step the next buses (LTA BusArrival; `nextBuses` is `[]` outside service hours), each with
@@ -274,11 +275,56 @@ AWS rejects it.
 
 ## Easy-read wording
 
-`easy_read(step)` in `app/easy_read.py` writes short plain-language text for each step, e.g. "At Opposite Fengshan Primary
-School, wait for bus number 45. Get on and tap your card. Get off at Tanah Merah Station Exit 2 after 5 stops."
-It uses only the step's own facts (bus number, station names, stop count), so nothing can be invented. Plans and saved
+`easy_read(step)` in `app/easy_read.py` writes short plain-language text for each step as a checklist: one action
+per sentence, each starting with a verb, e.g. "Go to Opposite Fengshan Primary School. Wait for bus number 45. Get on
+the bus. Tap your card. Count 5 stops. Get off at Tanah Merah Station Exit 2." The caregiver app shows each sentence
+as a bullet point (tests: `tests/test_easy_read.py`). It uses only the step's own facts (bus number, station names, stop count), so nothing can be invented. Plans and saved
 routes get it automatically; text a caregiver wrote is kept. Bus and train steps carry an extra `stopCount` field.
-The contract's `POST /internal/easyread` endpoint and an AI rewrite (with this text as the fallback) are not built.
+
+### Simpler wording with AI
+
+On the **Saved routes** tab, **Simplify with AI** sends the route's steps to the Easy-read Service
+(`services/easyread-service`, which runs a small model on Ollama) and opens the editor with its wording. The caregiver
+checks and edits each step, then saves (a new version that needs approving again). Nothing is saved before that.
+
+- `POST /api/routes/{routeId}/easy-read` (route owner only) -> `{"steps": [{stepIndex, easyRead, fallback}], "provider"}`.
+- The AI rewrites the template text above, not text a caregiver wrote. Names that aren't public stops ("Home", an
+  address) are sent as `[place 1]` and put back afterwards (`easy_read_ai.py`), as `contracts/api.md` asks.
+- The Easy-read Service checks each step (`hallucination_check.py` there): the bus number, stop names and stop count must
+  still be there, and every number must come from the step. A step that fails keeps the template text (`fallback: true`).
+- `EASYREAD_URL` unset, the service down or slower than `EASYREAD_TIMEOUT_S` (90 s): every step gets the template text
+  and `provider: "template"`. Planning, saving and trips never call it, and `/ready` doesn't check it.
+
+## Step photos
+
+Saving a route adds a Google Street View photo of where each walk and bus step ends (the stop to wait at, the stop to
+get off at, the destination), turned to face it, so the traveller can check they are in the right place
+(`streetview.py`). Train steps get none: a street above an underground platform would mislead.
+
+- **Recent panoramas, Google's own first.** Anything older than `STREETVIEW_MAX_AGE_YEARS` (default 5) is skipped:
+  Google's indoor walk-throughs (malls, stations) date from 2014-2019, while the street car came by in 2022-2025.
+  The metadata call only gives the panorama nearest the point asked about, and next to a station or stop that is
+  nearly always someone's upload (by the metadata's `copyright`), often indoors (a restaurant, a mall corridor). The
+  street car stays on the road, often 60-90 m away, so rings of 8 points 30, 60 and 90 m around the stop are asked
+  too (metadata calls are free) until a recent Google panorama turns up; the closest within 100 m is used, the
+  camera zoomed in the further away it is. If there is none, the closest recent upload within 50 m is used. Neither:
+  the closest older panorama is still used (Google's first), stored under `media/streetview/v2/rough/`, and the
+  caregiver app shows it with a hint to check it or add a better one. No panorama at all: the step saves without a
+  photo, for the caregiver to add one (e.g. of the gantry).
+- **A walk to an MRT/LRT station is photographed at its exit**, the one nearest to where the walk starts: the
+  station's own point is underground or inside a mall. Exits come from OneMap's search ("SENGKANG MRT STATION EXIT
+  A", no token needed; cached 7 days); this lookup is always live, also with saved data. Unknown exits: the station
+  point is used, as before.
+- Needs `GOOGLE_MAPS_API_KEY` (Street View Static API) and `PACKS_BUCKET`. Without them routes save without photos.
+- Photos are stored in the pack bucket as `media/streetview/v2/<lat>_<lng>.jpg`, so a stop used by many routes is
+  fetched once (`v2`: photos stored before Google-only weren't reused; routes saved with one keep it until **Use
+  Street View photo**). A step whose photo can't be fetched (no panorama nearby, Google or S3 down) saves without one.
+- The caregiver can replace a step's photo in the editor: `POST /api/routes/{routeId}/photos` (multipart field
+  `photo`; JPEG, PNG or WebP, checked by its bytes, up to 5 MB) stores it as `media/uploads/<hash>.<ext>` and returns
+  `{photoKey, photoUrl}`; saving the route with that `photoKey` keeps it. **Use Street View photo** sets it back to null.
+- `photoKey` must be a key under `media/` (`models.py`), because answers hand out a presigned `photoUrl` for it.
+  `photoUrl` is made for each answer (route answers and packs, valid for `PHOTO_URL_TTL_S`, 7 days) and never stored.
+- Google's terms limit how long Street View images may be stored; keeping them in S3 is a shortcut for this project.
 
 ## Route geometry
 

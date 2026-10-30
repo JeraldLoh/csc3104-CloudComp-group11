@@ -1,7 +1,8 @@
-"""Where route packs are kept: S3 (LocalStack locally).
+"""Where route packs and step photos are kept: S3 (LocalStack locally).
 
 A pack is the offline file the traveller's phone downloads (contracts/examples/route-pack.json). It is
-written to S3 and handed out as a temporary presigned link, so the bucket itself stays private.
+written to S3 and handed out as a temporary presigned link, so the bucket itself stays private. Step photos
+(media/streetview/..., media/uploads/...) live in the same bucket and are handed out the same way.
 
 The link is signed for `public_client`'s endpoint. Locally that matters: the service reaches LocalStack as
 http://cloud-localstack:4566, but a browser can only reach http://localhost:4566, and the host is part of the
@@ -37,14 +38,26 @@ class S3PackStorage:
     def ping(self) -> None:
         self._s3.head_bucket(Bucket=self._bucket)
 
-    def put(self, key: str, body: bytes) -> None:
+    def put(self, key: str, body: bytes, content_type: str = "application/json") -> None:
         from botocore.exceptions import BotoCoreError, ClientError
         try:
-            self._s3.put_object(Bucket=self._bucket, Key=key, Body=body, ContentType="application/json")
+            self._s3.put_object(Bucket=self._bucket, Key=key, Body=body, ContentType=content_type)
         except (BotoCoreError, ClientError) as e:
             raise PackUnavailable(type(e).__name__) from e
 
-    def url(self, key: str) -> str:
-        """A link that works for `url_ttl_s` seconds. Signing is local; no request is made."""
+    def exists(self, key: str) -> bool:
+        from botocore.exceptions import BotoCoreError, ClientError
+        try:
+            self._s3.head_object(Bucket=self._bucket, Key=key)
+            return True
+        except ClientError as e:
+            if e.response.get("Error", {}).get("Code") in ("404", "NoSuchKey", "NotFound"):
+                return False
+            raise PackUnavailable(type(e).__name__) from e
+        except BotoCoreError as e:
+            raise PackUnavailable(type(e).__name__) from e
+
+    def url(self, key: str, ttl_s: int | None = None) -> str:
+        """A link that works for `ttl_s` seconds (default `url_ttl_s`). Signing is local; no request is made."""
         return self._public.generate_presigned_url(
-            "get_object", Params={"Bucket": self._bucket, "Key": key}, ExpiresIn=self._ttl)
+            "get_object", Params={"Bucket": self._bucket, "Key": key}, ExpiresIn=ttl_s or self._ttl)

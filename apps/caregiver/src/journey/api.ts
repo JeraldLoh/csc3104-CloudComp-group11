@@ -1,8 +1,8 @@
 // Talking to the Journey Service. The planner only depends on the PlannerApi interface, so a
 // host app can pass its own client (its own login, base URL or caching) or a fake in tests.
 import type {
-  DataModeInfo, DataSource, DisruptionCheck, PackLink, PlaceResult, PlanOption, PlanRequest, RouteDraft, RouteStep,
-  RouteUpdate, SavedRoute, Trip,
+  DataModeInfo, DataSource, DisruptionCheck, EasyReadSuggestion, PackLink, PlaceResult, PlanOption, PlanRequest,
+  RouteDraft, RouteStep, RouteUpdate, SavedRoute, Trip, UploadedPhoto,
 } from "./types";
 
 /** What the route planner needs from the backend. */
@@ -29,6 +29,13 @@ export interface SavedRoutesApi {
    * refused (409) instead of deleted. Refused too while one of its trips is under way (409).
    */
   deleteRoute(routeId: string, version?: number): Promise<void>;
+  /**
+   * AI wording for every step, for the caregiver to check and edit. Nothing is saved. Slow (the AI runs on
+   * CPU); when the AI is unavailable the answer has the standard wording and `provider: "template"`.
+   */
+  suggestEasyRead(routeId: string): Promise<EasyReadSuggestion>;
+  /** Stores a photo for a step (JPEG, PNG or WebP, up to 5 MB). The route only changes when it is saved with the key. */
+  uploadStepPhoto(routeId: string, photo: File): Promise<UploadedPhoto>;
 }
 
 /** What the trips list needs from the backend. */
@@ -122,6 +129,16 @@ export class JourneyApi implements PlannerApi, SavedRoutesApi, TripsApi, Disrupt
     await this.request<null>(`/api/routes/${encodeURIComponent(routeId)}${query}`, { method: "DELETE" });
   }
 
+  suggestEasyRead(routeId: string): Promise<EasyReadSuggestion> {
+    return this.request<EasyReadSuggestion>(`/api/routes/${encodeURIComponent(routeId)}/easy-read`, { method: "POST" });
+  }
+
+  uploadStepPhoto(routeId: string, photo: File): Promise<UploadedPhoto> {
+    const form = new FormData();
+    form.append("photo", photo);
+    return this.request<UploadedPhoto>(`/api/routes/${encodeURIComponent(routeId)}/photos`, { method: "POST", body: form });
+  }
+
   async listTrips(travellerId: string): Promise<Trip[]> {
     const body = await this.request<{ trips: Trip[] }>(`/api/trips?travellerId=${encodeURIComponent(travellerId)}`);
     return body.trips;
@@ -162,7 +179,8 @@ export class JourneyApi implements PlannerApi, SavedRoutesApi, TripsApi, Disrupt
 
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const headers: Record<string, string> = {};
-    if (init.body) headers["Content-Type"] = "application/json";
+    // A FormData body (a photo) sets its own multipart Content-Type, boundary included.
+    if (init.body && !(init.body instanceof FormData)) headers["Content-Type"] = "application/json";
     const token = this.getToken();
     if (token) headers.Authorization = `Bearer ${token}`;
     const devUser = this.getDevUser()?.trim();

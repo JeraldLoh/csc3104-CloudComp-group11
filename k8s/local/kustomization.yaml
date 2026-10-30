@@ -5,3 +5,4 @@ resources:
   - localstack.yaml
   - fastapi.yaml
   - journey-service.yaml
+  - easyread-service.yaml

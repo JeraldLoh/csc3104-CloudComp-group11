@@ -6,6 +6,8 @@ POST /api/routes                         save a route (version 1, not approved)
 GET  /api/routes?travellerId=            a traveller's saved routes (not in the contract yet)
 GET/PUT /api/routes/{routeId}            load / edit a route (edit: version + 1, approval cleared)
 POST /api/routes/{routeId}/approve       approve a route
+POST /api/routes/{routeId}/easy-read     AI wording for every step, for the caregiver to review (nothing saved)
+POST /api/routes/{routeId}/photos        upload the caregiver's own photo for a step -> {photoKey, photoUrl}
 POST /api/trips                          a trip on an approved route, on a date (planned)
 POST /api/trips/{tripId}/start           planned -> active; writes the Redis keys the detectors and checker read
 POST /api/trips/{tripId}/end             active -> completed; removes them
@@ -34,7 +36,7 @@ from datetime import date as date_type
 
 import boto3
 import redis
-from fastapi import Depends, FastAPI, Query, Request
+from fastapi import Depends, FastAPI, File, Query, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
@@ -44,7 +46,8 @@ from . import aws_resources
 from .auth import AuthUnavailable, Authenticator, Caller, Forbidden, Unauthorized
 from .config import Settings, settings as default_settings
 from .data_mode import DataMode
-from .journey_client import JourneyClient, OneMapAuthError, OneMapError, OneMapUnavailable, StorageNotReady
+from .journey_client import (JourneyClient, OneMapAuthError, OneMapError, OneMapUnavailable, PhotoInvalid,
+                             StorageNotReady)
 from .lta import LtaAuthError, LtaUnavailable
 from .models import DataModeIn, DisruptionCheckIn, PlanRequest, RouteIn, RouteUpdate, TripIn
 from .pack_store import PackUnavailable, S3PackStorage
@@ -167,8 +170,12 @@ def create_app(
 
     @app.exception_handler(PackUnavailable)
     async def _pack_unavailable(_: Request, e: PackUnavailable):
-        log.error("route pack storage problem: %s", e)
-        return error(503, "upstream_unavailable", "The route pack can't be prepared right now. Please retry.")
+        log.error("pack/photo storage problem: %s", e)          # packs and step photos share the bucket
+        return error(503, "upstream_unavailable", "File storage isn't available right now. Please retry.")
+
+    @app.exception_handler(PhotoInvalid)
+    async def _photo_invalid(_: Request, e: PhotoInvalid):
+        return error(400, "invalid_photo", str(e))
 
     @app.exception_handler(RouteInvalid)
     async def _route_invalid(_: Request, e: RouteInvalid):
@@ -237,25 +244,30 @@ def create_app(
             raise RouteNotFound(route_id)
         return route_id
 
+    # Every route answer carries a temporary photoUrl per step (with_photo_urls); it is never stored.
     @app.post("/api/routes", status_code=201)
     def create_route(body: RouteIn, request: Request, caller: Caller | None = Depends(current_caller)):
-        return request.app.state.journey.create_route(body.model_dump(by_alias=True), caller)
+        journey = request.app.state.journey
+        return journey.with_photo_urls(journey.create_route(body.model_dump(by_alias=True), caller))
 
     @app.get("/api/routes")
     def list_routes(request: Request, travellerId: str = Query(min_length=1, max_length=64),
                     caller: Caller | None = Depends(current_caller)):
         """Not in contracts/api.md yet: a traveller's saved routes, newest first (only those the caller may see)."""
-        return {"routes": request.app.state.journey.list_routes(travellerId, caller)}
+        journey = request.app.state.journey
+        return {"routes": [journey.with_photo_urls(r) for r in journey.list_routes(travellerId, caller)]}
 
     @app.get("/api/routes/{route_id}")
     def get_route(route_id: str, request: Request, caller: Caller | None = Depends(current_caller)):
-        return request.app.state.journey.get_route(route_id_or_404(route_id), caller)
+        journey = request.app.state.journey
+        return journey.with_photo_urls(journey.get_route(route_id_or_404(route_id), caller))
 
     @app.put("/api/routes/{route_id}")
     def update_route(route_id: str, body: RouteUpdate, request: Request,
                      caller: Caller | None = Depends(current_caller)):
         data = body.model_dump(by_alias=True, exclude={"version"})
-        return request.app.state.journey.update_route(route_id_or_404(route_id), data, body.version, caller)
+        journey = request.app.state.journey
+        return journey.with_photo_urls(journey.update_route(route_id_or_404(route_id), data, body.version, caller))
 
     @app.delete("/api/routes/{route_id}", status_code=204)
     def delete_route(route_id: str, request: Request, version: int | None = Query(default=None, ge=1),
@@ -266,7 +278,22 @@ def create_app(
 
     @app.post("/api/routes/{route_id}/approve")
     def approve_route(route_id: str, request: Request, caller: Caller | None = Depends(current_caller)):
-        return request.app.state.journey.approve_route(route_id_or_404(route_id), caller)
+        journey = request.app.state.journey
+        return journey.with_photo_urls(journey.approve_route(route_id_or_404(route_id), caller))
+
+    @app.post("/api/routes/{route_id}/easy-read")
+    def suggest_easy_read(route_id: str, request: Request, caller: Caller | None = Depends(current_caller)):
+        """contracts/api.md, Easy-read Service: {"steps": [{stepIndex, easyRead, fallback}], "provider": "ollama" |
+        "template"}. Slow (the AI runs on CPU); always answers with usable wording."""
+        return request.app.state.journey.suggest_easy_read(route_id_or_404(route_id), caller)
+
+    @app.post("/api/routes/{route_id}/photos", status_code=201)
+    def upload_photo(route_id: str, request: Request, photo: UploadFile = File(),
+                     caller: Caller | None = Depends(current_caller)):
+        """contracts/api.md, step photos: one image (multipart field `photo`). Reads one byte past the limit, so a
+        huge upload is refused without being read whole."""
+        data = photo.file.read(s.photo_max_bytes + 1)
+        return request.app.state.journey.upload_photo(route_id_or_404(route_id), data, caller)
 
     def trip_id_or_404(trip_id: str) -> str:
         if not TRIP_ID.match(trip_id):

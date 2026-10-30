@@ -3,6 +3,9 @@
 import { useEffect, useState } from "react";
 import type { DisruptionCheck } from "../journey/types";
 import { DisruptedStep, DisruptionWarnings, splitDisruptions } from "./DisruptionWarnings";
+import { EasyReadPoints } from "./EasyReadPoints";
+import { isRoughPhoto, photoHint, roughPhotoHint } from "./format";
+import { StepPhoto } from "./StepPhoto";
 import { RouteEditor } from "./RouteEditor";
 import type { SavedRoutesState } from "./useSavedRoutes";
 import type { TripsState } from "./useTrips";
@@ -23,6 +26,9 @@ export function SavedRoutes({ saved, trips, disruptions }: Props) {
   const [asking, setAsking] = useState<string | null>(null);
   // A different route, a reload or a saved edit all end editing.
   useEffect(() => setEditing(false), [opened]);
+  // The AI's wording has come back for the open route: show it in the editor for the caregiver to check.
+  const suggestion = saved.suggestion && saved.suggestion.routeId === opened?.routeId ? saved.suggestion : null;
+  useEffect(() => { if (suggestion) setEditing(true); }, [suggestion]);
 
   // The opened route's current disruptions, laid over the steps they affect.
   const openedCheck = opened ? disruptions?.[opened.routeId] : undefined;
@@ -78,6 +84,16 @@ export function SavedRoutes({ saved, trips, disruptions }: Props) {
                           Approve
                         </button>
                       )}
+                      <button
+                        type="button"
+                        className="rp__btn rp__btn--small"
+                        disabled={saved.suggestingId !== null}
+                        aria-label={`Simplify the wording of ${r.name} with AI`}
+                        title="AI rewrites each step in simpler words. You check and edit it before saving."
+                        onClick={() => void saved.suggest(r.routeId)}
+                      >
+                        {saved.suggestingId === r.routeId ? "Simplifying..." : "Simplify with AI"}
+                      </button>
                       <button
                         type="button"
                         className="rp__btn rp__btn--secondary rp__btn--small"
@@ -148,23 +164,35 @@ export function SavedRoutes({ saved, trips, disruptions }: Props) {
           </div>
           {editing ? (
             <RouteEditor
+              key={suggestion ? "suggested" : "saved"}   // new AI wording starts the editor afresh
               route={opened}
               affectedTrips={affectedTrips}
               saving={saved.saving}
+              suggested={suggestion}
+              onUploadPhoto={saved.uploadPhoto}
               onSave={(changes) => void saved.update(changes)}
               onCancel={() => setEditing(false)}
             />
           ) : (
             <>
               <ol className="rp__steps">
-                {opened.steps.map((step) => (
+                {opened.steps.map((step, i) => (
                   <DisruptedStep key={step.stepIndex} className={`rp__step rp__step--${step.mode}`} warnings={openedByStep.get(step.stepIndex)}>
                     <div>{step.instruction}</div>
-                    {step.easyRead && <div className="rp__easy">{step.easyRead}</div>}
+                    <EasyReadPoints text={step.easyRead} />
+                    <StepPhoto
+                      url={step.photoUrl}
+                      alt={`Where step ${i + 1} ends`}
+                      fallback={<div className="rp__photo-hint">{`${photoHint(step)} (Edit, then Replace photo.)`}</div>}
+                      note={isRoughPhoto(step.photoKey) &&
+                        <div className="rp__photo-hint">{`${roughPhotoHint(step)} (Edit, then Replace photo.)`}</div>}
+                    />
                   </DisruptedStep>
                 ))}
               </ol>
-              <div className="rp__meta">The line under each step is the wording the traveller reads.</div>
+              <div className="rp__meta">
+                The points under each step are the wording the traveller reads, and the photo shows where the step ends.
+              </div>
               <DisruptionWarnings check={openedCheck} onSteps={false} />
             </>
           )}

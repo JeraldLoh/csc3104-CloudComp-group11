@@ -91,6 +91,23 @@ Scenarios: `normal`, `missed_stop`, `wrong_direction`, `long_dwell`, `silence`, 
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
-| POST | `/internal/easyread` | `{"steps": [{"stepIndex": 0, "instruction": "..."}]}` | `{"steps": [{"stepIndex": 0, "easyRead": "..."}], "provider": "groq"}` |
+| POST | `/internal/easyread` | `{"steps": [{"stepIndex": 0, "mode": "bus", "text": "<template wording>", "keep": ["45", "Opposite Fengshan Primary School", "5"]}]}` | `{"steps": [{"stepIndex": 0, "easyRead": "...", "fallback": false}], "provider": "ollama", "model": "qwen2.5:1.5b"}` |
 
-Only route steps are sent. Never names, addresses or labels like "Home".
+Only route steps are sent. Never names, addresses or labels like "Home": a place without a stop code is sent as
+`[place 1]`, `[place 2]`, ... and the Journey Service puts the name back.
+
+- `text` is the Journey Service's own template wording for the step; it is also the fallback.
+- `keep` lists what the AI must not lose (bus/line number, stop names, stop count, `[place N]` tokens).
+- `fallback: true` means the AI's text failed the checks (dropped a `keep` item, added a number, too long) and `easyRead` is `text`.
+- `provider: "template"` means Ollama was unavailable and every step is `text`. The endpoint still answers `200`.
+- `easyRead` (here and on route steps) stays one string, written as one short action per sentence ("Wait for bus
+  number 45. Tap your card. Count 5 stops."). Apps may show each sentence as a bullet point.
+
+The caregiver app reaches it through the Journey Service: `POST /api/routes/{routeId}/easy-read` (route owner only)
+returns `{"steps": [{"stepIndex", "easyRead", "fallback"}], "provider"}` and saves nothing; the caregiver checks
+the wording in the editor and saves the route as usual.
+
+Step photos (Journey Service): saving a route adds a Google Street View photo of where each walk/bus step ends
+(`photoKey`, an S3 key under `media/`; a recent panorama, Google's own first, else a recent upload close by, else an older one under `media/streetview/v2/rough/` for the caregiver to check; a walk to a station shows its nearest exit). `POST /api/routes/{routeId}/photos` (multipart field `photo`, JPEG/PNG/WebP
+up to 5 MB) stores the caregiver's own photo and returns `{"photoKey", "photoUrl"}` for the editor to save in a step.
+Route answers and packs carry `photoUrl`, a temporary link.

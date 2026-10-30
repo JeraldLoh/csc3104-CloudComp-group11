@@ -4,7 +4,8 @@
 
     client.search_places("Tampines Mall")        OneMap place/address search
     client.plan(origin, destination, ...)        OneMap itineraries -> contract steps, checked against LTA
-    client.create_route / create_trip / ...      saved routes, trips, route packs
+    client.create_route / create_trip / ...      saved routes (with Street View photos), trips, route packs
+    client.suggest_easy_read / upload_photo      AI wording for the caregiver to review; their own step photo
     client.bus_arrival("83139")                  LTA data, through the shared LtaClient in client.lta
 
 The LTA client lives in lta.py and the disruption checker in disruption.py: they are shared with / run by the
@@ -13,6 +14,7 @@ Lambda, which must not need this file's login, route and pack code.
 Failures raise LtaError / OneMapError subclasses; plan() degrades instead when only LTA is down.
 Redis is optional here (a cache for lookups; stores for routes and trips when no DynamoDB table is configured).
 """
+import hashlib
 import json
 import logging
 import math
@@ -25,6 +27,7 @@ from typing import Callable
 
 import httpx
 
+from . import easy_read_ai, streetview
 from .auth import Caller, Forbidden
 from .cache import JsonCache
 from .config import Settings
@@ -67,6 +70,10 @@ class StorageNotReady(Exception):
     def __init__(self, label: str, code: str):
         super().__init__(f"{label}: {code}")
         self.label, self.code = label, code
+
+
+class PhotoInvalid(ValueError):
+    """An uploaded step photo that isn't a JPEG, PNG or WebP image, or is too big."""
 
 
 class OneMapError(Exception):
@@ -279,6 +286,8 @@ class JourneyClient:
         pack_store=None,
         lta: LtaClient | None = None,
         mode=None,                                   # data_mode.DataMode; None = ONEMAP_MODE / LTA_MODE, fixed
+        easyread_http: httpx.Client | None = None,   # the Easy-read Service (tests pass a mocked one)
+        photo_http: httpx.Client | None = None,      # Google Street View
     ):
         self._s = settings
         self._r = redis_client
@@ -302,6 +311,8 @@ class JourneyClient:
         self._onemap_recorded_http: httpx.Client | None = None    # built on first use in saved-data mode
         # Logs in with the OneMap account when there is one, and only when live data is asked for.
         self._token = OneMapToken(settings, redis_client, clock=clock)
+        self._easyread_http = easyread_http or httpx.Client()
+        self._photo_http = photo_http or httpx.Client()
 
     # ===== OneMap transport =====
 
@@ -402,6 +413,34 @@ class JourneyClient:
                 "lng": lng,
             })
         return places[:limit]
+
+    STATION_EXITS_TTL_S = 7 * 24 * 3600               # exits don't move
+
+    def station_exits(self, station_name: str) -> list[tuple[float, float]]:
+        """Where an MRT/LRT station's exits are, from OneMap's search ("SENGKANG MRT STATION EXIT A"); [] if unknown.
+        Exits are fixed public data and the search needs no token, so this always asks live OneMap, also in
+        saved-data mode (like the Street View photos it is for). Best-effort: a failure means no exits."""
+        name = re.sub(r"\s*\(.*?\)", "", station_name).strip().upper()     # "Sengkang MRT Station (NE16)"
+
+        def look_up() -> list[list[float]]:
+            exits = []
+            for page in (1, 2, 3):                       # 10 results a page; big interchanges have more exits
+                r = self._onemap_http.get("/api/common/elastic/search", params={
+                    "searchVal": f"{name} EXIT", "returnGeom": "Y", "getAddrDetails": "N", "pageNum": str(page)})
+                r.raise_for_status()
+                found = r.json()
+                exits += [[float(x["LATITUDE"]), float(x["LONGITUDE"])] for x in found.get("results") or []
+                          if (x.get("SEARCHVAL") or "").upper().startswith(f"{name} EXIT ")]
+                if page >= int(found.get("totalNumPages") or 1):
+                    break
+            return exits
+
+        try:
+            return [(lat, lng) for lat, lng in self._cache.cached(f"station-exits:{name}", self.STATION_EXITS_TTL_S,
+                                                                  look_up)]
+        except (httpx.HTTPError, ValueError, KeyError, TypeError) as e:
+            log.warning("couldn't look up the exits of %s (%s)", name, type(e).__name__)
+            return []
 
     def route_pt(self, start: tuple[float, float], end: tuple[float, float], when: datetime,
                  mode: str = "TRANSIT", max_walk_m: int | None = None, num_itineraries: int | None = None) -> dict:
@@ -731,7 +770,8 @@ class JourneyClient:
             if data.get("caregiverId") != caller.id:
                 raise Forbidden("A route can only be saved as yourself: caregiverId must be your own id.")
         store = self._route_store()
-        route = {**with_easy_read(data), "version": 1, "approved": False, "updatedAt": self._now_iso()}
+        route = {**self._with_photos(with_easy_read(data)), "version": 1, "approved": False,
+                 "updatedAt": self._now_iso()}
         for _ in range(5):                       # ids are random; a clash is vanishingly rare
             candidate = self._ordered({**route, "routeId": "R-" + secrets.token_hex(3).upper()})
             try:
@@ -755,8 +795,8 @@ class JourneyClient:
         for field in ("travellerId", "caregiverId"):
             if data.get(field) != current[field]:
                 raise RouteInvalid(f"{field} can't be changed on a saved route")
-        route = self._ordered({**with_easy_read(data), "routeId": route_id, "version": current["version"] + 1,
-                               "approved": False, "updatedAt": self._now_iso()})
+        route = self._ordered({**self._with_photos(with_easy_read(data)), "routeId": route_id,
+                               "version": current["version"] + 1, "approved": False, "updatedAt": self._now_iso()})
         self._route_store().replace(route, expected_version)
         return route
 
@@ -790,6 +830,97 @@ class JourneyClient:
         if caller is not None:
             routes = [r for r in routes if self._participates(caller, r)]
         return sorted(routes, key=lambda r: r["updatedAt"], reverse=True)
+
+    # ----- step photos and AI wording -----
+    #
+    # A step's `photoKey` is an S3 key in the pack bucket: a Street View photo (media/streetview/..., filled in on
+    # save for steps without one) or the caregiver's upload (media/uploads/..., kept like caregiver-written
+    # easyRead). Responses carry `photoUrl`, a presigned link made per response and never stored.
+
+    def _with_photos(self, data: dict) -> dict:
+        """Street View photos for steps with no photoKey (under rough/ when only an old panorama was there).
+        Best-effort: a step stays without one when Street View has no panorama there at all, Google or S3 fails, or
+        photos are off (no API key or no bucket)."""
+        steps = [{k: v for k, v in s.items() if k != "photoUrl"} for s in data["steps"]]
+        if not (self._s.google_maps_api_key and self._packs):
+            return {**data, "steps": steps}
+        wanted = {}
+        for i, step in enumerate(steps):
+            point = None if step.get("photoKey") else self._photo_target(step)
+            if point:
+                wanted[i] = point
+
+        def one(point: tuple[float, float]) -> str | None:
+            try:
+                for key in (streetview.photo_key(*point), streetview.photo_key(*point, rough=True)):
+                    if self._packs.exists(key):       # the same stop in another route: already fetched
+                        return key
+                photo = streetview.fetch(*point, self._photo_http, self._s.google_maps_api_key,
+                                         self._s.streetview_timeout_s, self._s.streetview_max_age_years)
+                if photo is None:
+                    return None
+                key = streetview.photo_key(*point, rough=photo.rough)
+                self._packs.put(key, photo.image, "image/jpeg")
+                return key
+            except PackUnavailable as e:
+                log.warning("couldn't store a street view photo: %s", e)
+                return None
+
+        if wanted:
+            with ThreadPoolExecutor(max_workers=min(8, len(wanted))) as pool:
+                for i, key in zip(wanted, pool.map(one, wanted.values())):
+                    if key:
+                        steps[i] = {**steps[i], "photoKey": key}
+        return {**data, "steps": steps}
+
+    def _photo_target(self, step: dict) -> tuple[float, float] | None:
+        """Where a step's photo looks: the end of the step, but for a walk to a station the exit nearest to where
+        the walk starts (the station's own point is underground or inside a mall)."""
+        station = streetview.walks_to_station(step)
+        start = step.get("from") or {}
+        if station and start.get("lat") is not None and start.get("lng") is not None:
+            exit_point = streetview.nearest(self.station_exits(station["name"]), (start["lat"], start["lng"]))
+            if exit_point:
+                return exit_point
+        return streetview.target(step)
+
+    def _photo_url(self, key: str | None) -> str | None:
+        return self._packs.url(key, self._s.photo_url_ttl_s) if key and self._packs else None
+
+    def with_photo_urls(self, route: dict) -> dict:
+        """The route as the API returns it: each step with a temporary `photoUrl` for its photo (or null)."""
+        return {**route, "steps": [{**s, "photoUrl": self._photo_url(s.get("photoKey"))} for s in route["steps"]]}
+
+    # Magic bytes, so the file's own claim about its type isn't trusted. WebP is RIFF....WEBP, checked below.
+    PHOTO_TYPES = ((b"\xff\xd8\xff", "jpg", "image/jpeg"), (b"\x89PNG\r\n\x1a\n", "png", "image/png"))
+
+    def upload_photo(self, route_id: str, data: bytes, caller: Caller | None = None) -> dict:
+        """Stores a caregiver's photo for a step: {"photoKey", "photoUrl"}. The route itself is not changed: the
+        editor puts the key in the step and the caregiver's save stores it (so Cancel really discards it)."""
+        route = self.get_route(route_id, caller)
+        if caller is not None and not self._owns(caller, route):
+            raise Forbidden("Only the route's caregiver can change its photos.")
+        if len(data) > self._s.photo_max_bytes:
+            raise PhotoInvalid(f"The photo is too big. The limit is {self._s.photo_max_bytes // (1024 * 1024)} MB.")
+        found = next(((ext, ctype) for magic, ext, ctype in self.PHOTO_TYPES if data.startswith(magic)), None)
+        if found is None and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+            found = ("webp", "image/webp")
+        if found is None:
+            raise PhotoInvalid("The file isn't a photo. Use a JPEG, PNG or WebP image.")
+        if self._packs is None:
+            raise PackUnavailable("photo storage is not configured")
+        key = f"media/uploads/{hashlib.sha256(data).hexdigest()[:16]}.{found[0]}"
+        self._packs.put(key, data, found[1])
+        return {"photoKey": key, "photoUrl": self._photo_url(key)}
+
+    def suggest_easy_read(self, route_id: str, caller: Caller | None = None) -> dict:
+        """AI wording for every step of a saved route, for the caregiver to check and edit before saving. Nothing
+        is saved. Template wording (provider "template") when the Easy-read Service can't help (easy_read_ai.py)."""
+        route = self.get_route(route_id, caller)
+        if caller is not None and not self._owns(caller, route):
+            raise Forbidden("Only the route's caregiver can reword it.")
+        return easy_read_ai.suggest(route["steps"], self._easyread_http, self._s.easyread_url,
+                                    self._s.easyread_timeout_s)
 
     @staticmethod
     def _ordered(route: dict) -> dict:
@@ -940,7 +1071,7 @@ class JourneyClient:
                 "easyRead": step.get("easyRead") or easy_read(step),
                 "lat": target.get("lat"), "lng": target.get("lng"),     # where this step ends
                 "underground": step.get("underground"),
-                "photoUrl": step.get("photoKey"), "audioUrl": step.get("audioKey"),
+                "photoUrl": self._photo_url(step.get("photoKey")), "audioUrl": step.get("audioKey"),
                 "backup": (step.get("backup") or {}).get("instruction"),
             })
         return {
