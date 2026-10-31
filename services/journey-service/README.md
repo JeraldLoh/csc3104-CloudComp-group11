@@ -276,11 +276,29 @@ AWS rejects it.
 
 ## Easy-read wording
 
-`easy_read(step)` in `app/easy_read.py` writes short plain-language text for each step as a checklist: one action
-per sentence, each starting with a verb, e.g. "Go to Opposite Fengshan Primary School. Wait for bus number 45. Get on
-the bus. Tap your card. Count 5 stops. Get off at Tanah Merah Station Exit 2." The caregiver app shows each sentence
-as a bullet point (tests: `tests/test_easy_read.py`). It uses only the step's own facts (bus number, station names, stop count), so nothing can be invented. Plans and saved
-routes get it automatically; text a caregiver wrote is kept. Bus and train steps carry an extra `stopCount` field.
+`app/easy_read.py` writes short plain-language text for each step as a checklist: one action per sentence, each
+starting with a verb. The caregiver app shows each sentence as a bullet point (tests: `tests/test_easy_read.py`). It
+uses only the route's own facts, so nothing can be invented, and says what heads off the usual mistakes:
+
+| Step | Example | Why |
+|---|---|---|
+| bus | Find bus stop 84039 at Bedok Station Exit A. Check the number on the pole. Raise your hand for bus 28 to Toa Payoh Interchange. It comes every 10 to 13 minutes. Tap your card to get on. The ride takes about 17 minutes. After Block 14 Market and Food Centre, press the bell. Get off at Paya Lebar Station Exit D. Tap your card to get off. | The stop across the road has the same name but goes the other way (its pole number differs); buses only stop when someone waits or rings; fares are by distance, so tap out; a bus skips stops nobody waits at, so the stop before is the cue, not a count |
+| train | Tap your card at the gantry. Follow the purple signs for the North East Line. Take the train going to HarbourFront. Get off at Dhoby Ghaut MRT Station. It is the 11th stop. | Both platforms are the same line: the signs say "Towards HarbourFront". No gantry after a change of line. |
+| walk | Walk to the bus stop at Block 119D. / Change to the red North South Line. Follow the red signs. / Walk to ION Orchard. You have arrived. | What is at the end; the line to change to; the destination by name |
+
+- `route_wording(steps, destination)` words each step knowing the one before it and whether it is the last.
+  Plans use it (without the destination's name, which a plan doesn't have); saving a route redoes wording that is
+  still the planner's own with the name ("Walk to your destination." -> "Walk to ION Orchard."). Text a caregiver
+  wrote is kept.
+- Which way a train goes is worked out from the first and last station codes and `TRAIN_SIGNS`, each line's two
+  ends as of 2026 (update it when a line is extended). LRT loops get no direction.
+- A bus step keeps every stop of the ride (`stops`, as train steps do) for the stop before getting off, and gets
+  `towards` (where the bus is going, its front sign; none for a loop service) and `every` ([low, high] minutes
+  between buses in the daytime) from LTA's BusRoutes and BusServices lists (`lta.bus_service()`: fetched live, also
+  with saved data, cached a week and prefetched at startup, as they take ~9 s; best-effort).
+- Bus wording stays within 300 characters (`MAX_CHARS`, the caregiver app's and the Easy-read Service's limit), so
+  the traveller app's main button stays on screen: how often the bus comes is left out first, then the ride's
+  length. LTA's short forms are spelled out (Blk, Opp, Int, Stn, Bef, Aft, Mkt/Fc, Ave, Rd, ...).
 
 ### Simpler wording with AI
 

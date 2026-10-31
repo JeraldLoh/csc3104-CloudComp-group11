@@ -22,7 +22,7 @@ import re
 
 import httpx
 
-from .easy_read import LINE_NAMES, easy_read, plain, stop_count
+from .easy_read import LINE_NAMES, ordinal, plain, route_wording, stop_count
 
 log = logging.getLogger("journey")
 
@@ -31,7 +31,9 @@ SPOT_FIELDS = ("id", "name", "kind", "metres", "side")      # what the AI is tol
 Landmarks = dict[int, dict[str, list[dict]]]          # {stepIndex: {spot: [landmark]}}, from landmarks.offer()
 
 
-def ai_request(steps: list[dict], landmarks: Landmarks | None = None) -> tuple[dict, dict[str, str]]:
+def ai_request(steps: list[dict], landmarks: Landmarks | None = None,
+               destination: str | None = None) -> tuple[dict, dict[str, str]]:
+    """`destination`: the route's, named by its last walk ("Walk to [place 2]. You have arrived.")."""
     tokens: dict[str, str] = {}                                    # real name -> "[place N]"
 
     def public(point: dict | None) -> dict:
@@ -41,22 +43,24 @@ def ai_request(steps: list[dict], landmarks: Landmarks | None = None) -> tuple[d
             return point
         return {**point, "name": tokens.setdefault(name, f"[place {len(tokens) + 1}]")}
 
+    # The instruction is left out: it repeats the names (e.g. "Walk 200 m to Home"); only the count is needed.
+    safe_steps = [{**step, "from": public(step.get("from")), "to": public(step.get("to")),
+                   "stopCount": stop_count(step), "instruction": ""} for step in steps]
+    place = public({"name": destination})["name"] if destination else None
     sent = []
-    for step in steps:
-        # The instruction is left out: it repeats the names (e.g. "Walk 200 m to Home"); only the count is needed.
-        safe = {**step, "from": public(step.get("from")), "to": public(step.get("to")),
-                "stopCount": stop_count(step), "instruction": ""}
-        # What the template text names, so it must survive the rewrite. A walk's text only names where it ends.
+    for step, safe, text in zip(steps, safe_steps, route_wording(safe_steps, place)):
+        # What the template text names, so it must survive the rewrite: stop codes, bus and line, names, counts,
+        # where the bus is going. Only what this step's text says (a change of line doesn't name the station).
         mode, line, count = step.get("mode"), step.get("line"), safe["stopCount"]
-        ends = [safe["to"]] if mode == "walk" else [safe["from"], safe["to"]]
-        keep = [plain(p["name"]) for p in ends if p.get("name")]
-        if mode == "bus" and line:
-            keep.insert(0, line)
-        if mode == "train" and line in LINE_NAMES:
-            keep.insert(0, LINE_NAMES[line])
-        if mode in ("bus", "train") and count is not None:
-            keep.append(str(count))
-        out = {"stepIndex": step["stepIndex"], "mode": mode, "text": easy_read(safe), "keep": list(dict.fromkeys(keep))}
+        frm, to = safe["from"], safe["to"]
+        candidates = [frm.get("code") if mode == "bus" else None, line if mode == "bus" else None,
+                      LINE_NAMES.get(line) if mode == "train" else None, plain(frm.get("name")),
+                      plain(to.get("name")), plain(step.get("towards")), place if mode == "walk" else None,
+                      str(count) if count is not None and mode == "bus" else None]
+        if mode == "train" and count is not None:
+            candidates.append(ordinal(count))
+        keep = [k for k in candidates if k and k.lower() in text.lower()]
+        out = {"stepIndex": step["stepIndex"], "mode": mode, "text": text, "keep": list(dict.fromkeys(keep))}
         if spots := (landmarks or {}).get(step["stepIndex"]):
             out["spots"] = {spot: [{k: b[k] for k in SPOT_FIELDS} for b in found] for spot, found in spots.items()}
         sent.append(out)
@@ -68,11 +72,12 @@ def _restore(text: str, names: dict[str, str]) -> str:
 
 
 def suggest(steps: list[dict], http: httpx.Client, url: str, timeout: float,
-            landmarks: Landmarks | None = None) -> dict:
-    template = [{"stepIndex": s["stepIndex"], "easyRead": easy_read(s), "fallback": True, "landmarks": []} for s in steps]
+            landmarks: Landmarks | None = None, destination: str | None = None) -> dict:
+    template = [{"stepIndex": s["stepIndex"], "easyRead": text, "fallback": True, "landmarks": []}
+                for s, text in zip(steps, route_wording(steps, destination))]
     if not url:
         return {"steps": template, "provider": "template"}
-    body, names = ai_request(steps, landmarks)
+    body, names = ai_request(steps, landmarks, destination)
     offered = {i: {b["id"]: b for found in spots.values() for b in found} for i, spots in (landmarks or {}).items()}
     try:
         r = http.post(f"{url.rstrip('/')}/internal/easyread", json=body, timeout=timeout)

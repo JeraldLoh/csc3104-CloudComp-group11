@@ -4,7 +4,7 @@ import json
 import httpx
 import respx
 
-from app.easy_read import easy_read
+from app.easy_read import easy_read, route_wording
 from app.easy_read_ai import ai_request, suggest
 
 EASYREAD = "http://easyread.test:8000"
@@ -24,13 +24,20 @@ def test_request_hides_names_without_a_stop_code():
     assert "Home" not in sent and "Grandma" not in sent
     assert names == {"[place 1]": "Home", "[place 2]": "Grandma's flat"}
     last = body["steps"][2]
-    assert last["text"] == "Walk to [place 2]." and last["keep"] == ["[place 2]"]
+    assert last["text"] == "Walk to [place 2]. You have arrived." and last["keep"] == ["[place 2]"]
+
+
+def test_request_names_the_destination_by_its_token():
+    last = {**LAST, "to": {"name": None, "code": None}}            # how a planned route's last step ends
+    body, names = ai_request([WALK, BUS, last], destination="Clinic")
+    assert body["steps"][2]["text"] == "Walk to [place 2]. You have arrived." and names["[place 2]"] == "Clinic"
+    assert "Clinic" not in json.dumps(body)
 
 
 def test_request_keeps_the_facts_the_text_names():
     bus = ai_request(STEPS)[0]["steps"][1]
     # Short forms are spelled out, as in the text; the stop count comes from the instruction for older routes.
-    assert bus["keep"] == ["190", "Opposite Block 123", "Punggol Interchange", "6"]
+    assert bus["keep"] == ["65009", "190", "Opposite Block 123", "Punggol Interchange", "6"]
     assert all(k in bus["text"] for k in bus["keep"])
 
 
@@ -44,7 +51,7 @@ def test_suggest_puts_the_real_names_back():
     respx.post(f"{EASYREAD}/internal/easyread").mock(side_effect=answer)
     out = suggest(STEPS, httpx.Client(), EASYREAD, 5)
     assert out["provider"] == "ollama"
-    assert out["steps"][2] == {"stepIndex": 2, "easyRead": "WALK TO Grandma's flat.", "fallback": False,
+    assert out["steps"][2] == {"stepIndex": 2, "easyRead": "WALK TO Grandma's flat. YOU HAVE ARRIVED.", "fallback": False,
                                 "landmarks": []}
     assert out["steps"][1]["fallback"] is True
 
@@ -55,7 +62,7 @@ def test_suggest_falls_back_when_the_service_is_down_or_unset():
     for url in (EASYREAD, ""):
         out = suggest(STEPS, httpx.Client(), url, 5)
         assert out["provider"] == "template"
-        assert [s["easyRead"] for s in out["steps"]] == [easy_read(s) for s in STEPS]
+        assert [s["easyRead"] for s in out["steps"]] == route_wording(STEPS)
         assert all(s["fallback"] for s in out["steps"])
 
 

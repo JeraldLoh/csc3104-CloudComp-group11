@@ -31,7 +31,7 @@ from . import easy_read_ai, landmarks, streetview
 from .auth import Caller, Forbidden
 from .cache import JsonCache
 from .config import Settings
-from .easy_read import LINE_NAMES, easy_read, with_easy_read
+from .easy_read import LINE_NAMES, easy_read, route_wording, with_easy_read
 from .geo import EARTH_RADIUS_M, distance_to_path_m
 from .lta import LINE_CODES, SST, LtaClient, LtaError
 from .onemap_token import OneMapToken
@@ -566,12 +566,25 @@ class JourneyClient:
         # Extras (not in contracts/examples/route.json): how many stops to ride, which easy-read wording uses.
         if step_mode in ("bus", "train"):
             step["stopCount"] = stops
-        if step_mode == "train":
-            # Every station on the leg, so check_disruptions() can tell whether an MRT fault falls between the two ends.
+        if step_mode in ("bus", "train"):
+            # Every stop on the leg: for a train, so check_disruptions() can tell whether an MRT fault falls between
+            # the two ends and easy_read() which way it goes; for a bus, the stop before getting off ("After
+            # Block 301, press the bell").
             every = [leg["from"], *(leg.get("intermediateStops") or []), leg["to"]]
             step["stops"] = [{"code": s.get("stopCode"), "name": pretty(s.get("name"))} for s in every]
         step["easyRead"] = easy_read(step)
         return step
+
+    def _with_bus_service(self, step: dict) -> dict:
+        """A bus step with where the bus is going (`towards`, its front sign) and how often it comes (`every`, in
+        minutes), from LTA's static lists. Best-effort."""
+        board, alight = (step.get("from") or {}).get("code"), (step.get("to") or {}).get("code")
+        if step["mode"] != "bus" or not (step.get("line") and board and alight):
+            return step
+        found = self.lta.bus_service(step["line"], board, alight)
+        if not found:
+            return step
+        return {**step, "towards": pretty(found["towards"]), "every": found["every"]}
 
     @staticmethod
     def _leg_path(leg: dict) -> list[tuple[float, float]]:
@@ -673,7 +686,7 @@ class JourneyClient:
     def _option(self, number: int, itinerary: dict, live: _LiveData, walk_limit_m: int) -> dict:
         steps, path, step_paths, live_entries, warnings = [], [], [], [], []
         for i, leg in enumerate(itinerary.get("legs", [])):
-            steps.append(self._step(i, leg))
+            steps.append(self._with_bus_service(self._step(i, leg)))
             leg_path = self._leg_path(leg)                   # decoded once: drawn here, checked in _check_leg
             pts = [list(pt) for pt in leg_path]
             # OneMap's legs can end up to ~80 m apart (a bus stop sits off the snapped road). Start each
@@ -695,6 +708,10 @@ class JourneyClient:
             entries, warns = self._check_leg(i, leg, live, leg_path)
             live_entries += entries
             warnings += warns
+
+        # The wording again, now each step knows the one before it (and the buses where they are going).
+        for step, text in zip(steps, route_wording(steps)):
+            step["easyRead"] = text
 
         total_walk = itinerary.get("walkDistance", 0)
         if total_walk > 2 * walk_limit_m:                 # a few short walks can still add up to too much
@@ -1002,7 +1019,7 @@ class JourneyClient:
             raise Forbidden("Only the route's caregiver can reword it.")
         found = self.route_landmarks(route) if self._s.easyread_url and self._s.easyread_landmarks else {}
         answer = easy_read_ai.suggest(route["steps"], self._easyread_http, self._s.easyread_url,
-                                      self._s.easyread_timeout_s, found)
+                                      self._s.easyread_timeout_s, found, (route.get("destination") or {}).get("name"))
         # A photo of each landmark the wording names, so the caregiver sees what the traveller will look for
         # before saving (each new one is a paid Street View image; the same place is fetched only once).
         if self._photos_on:

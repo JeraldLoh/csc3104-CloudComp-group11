@@ -243,3 +243,33 @@ def test_steps_without_spots_keep_the_single_call():
     chat = respx.post(f"{OLLAMA}/api/chat").mock(return_value=answer((2, "Walk to [place 1].")))
     assert post(WALK).json()["steps"][0]["fallback"] is False
     assert chat.call_count == 1 and "tools" not in sent(chat.calls[0])
+
+
+NEW_BUS = {"stepIndex": 4, "mode": "bus", "keep": ["65009", "136"], "text": (
+    "Find bus stop 65009 at Block 119D. Check the number on the pole. Raise your hand for bus 136 to Punggol "
+    "Interchange. It comes every 8 to 12 minutes. Tap your card to get on. The ride takes about 12 minutes. "
+    "After Block 301, press the bell. Get off at Block 302. Tap your card to get off.")}
+PLAZA = {"id": "L7", "name": "City Plaza", "kind": "mall", "metres": 40, "side": "left"}
+EXCHANGE = {"id": "L8", "name": "Geylang Telephone Exchange", "kind": "building", "metres": 60, "side": "right"}
+
+
+def test_landmark_joins_the_bell_cue_and_spare_sentences_make_room():
+    bus = place(NEW_BUS, [("before_stop", PLAZA), ("end", EXCHANGE)], 300)
+    assert "After Block 301, look out for City Plaza on your left. Press the bell. Get off at Block 302." in bus["text"]
+    assert bus["text"].count("Press the bell") == 1
+    # Too long with both: the ride's length goes first, then the landmark at the stop; how often stays.
+    assert "The ride takes" not in bus["text"] and "Geylang" not in bus["text"] and "It comes every" in bus["text"]
+    assert len(bus["text"]) <= 300 and bus["landmarks"] == ["L7"] and "City Plaza" in bus["keep"]
+
+
+def test_walk_landmark_goes_before_arriving():
+    walk = {"stepIndex": 5, "mode": "walk", "keep": [], "text": "Walk to [place 2]. It takes about 3 minutes. You have arrived."}
+    assert place(walk, [("end", MALL)], 300)["text"] == ("Walk to [place 2]. It takes about 3 minutes. "
+                                                         "Look for Tampines Mall on your left. You have arrived.")
+
+
+def test_with_a_long_stop_name_the_landmark_becomes_the_bell_cue():
+    long = {**NEW_BUS, "text": NEW_BUS["text"].replace("After Block 301,", "After Block 14 Market and Food Centre Along Upper Changi Road,")}
+    bus = place(long, [("before_stop", PLAZA)], 300)
+    assert "Look out for City Plaza on your left. Press the bell. Get off at Block 302." in bus["text"]
+    assert "Block 14" not in bus["text"] and len(bus["text"]) <= 300 and bus["landmarks"] == ["L7"]

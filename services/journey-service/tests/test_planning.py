@@ -61,8 +61,9 @@ def test_bus_itinerary_maps_to_contract_steps():
     assert s["line"] == expected["route"]
     assert s["from"]["code"] == expected["from"]["stopCode"]
     assert s["instruction"].startswith(f"Take bus {s['line']} from")
-    assert set(s) == {"stepIndex", "mode", "instruction", "easyRead", "from", "to", "line", "stopCount",
+    assert set(s) == {"stepIndex", "mode", "instruction", "easyRead", "from", "to", "line", "stopCount", "stops",
                       "expectedDurationS", "underground", "photoKey", "audioKey", "backup"}
+    assert len(s["stops"]) == s["stopCount"] + 1                     # every stop on the ride, both ends included
     assert [x["stepIndex"] for x in opt["steps"]] == list(range(len(opt["steps"])))
     assert all(1.1 < lat < 1.5 and 103.5 < lng < 104.1 for lat, lng in opt["path"])
     assert len(opt["path"]) > 5
@@ -143,7 +144,7 @@ def test_nearby_incident_flagged_and_far_incident_ignored():
 @respx.mock
 def test_lta_down_still_returns_options_with_warning():
     mock_onemap("route_pt_bus_only_short.json")
-    for path in ("v3/BusArrival", "TrainServiceAlerts", "TrafficIncidents"):
+    for path in ("v3/BusArrival", "TrainServiceAlerts", "TrafficIncidents", "BusRoutes", "BusServices"):
         respx.get(f"{LTA}/{path}").mock(return_value=httpx.Response(503))
     options = plan()
     assert options
@@ -263,3 +264,22 @@ def test_options_can_be_sorted_by_walking_crowding_or_time():
     assert first_buses == ["62", "43e", "85"]                   # low, moderate, high
     assert [o["summary"]["crowd"] for o in result["options"]] == ["low", "moderate", "high"]
     assert [o["option"] for o in result["options"]] == [1, 2, 3] and result["sortedBy"] == "crowding"
+
+
+@respx.mock
+def test_bus_step_says_where_the_bus_is_going_and_how_often():
+    mock_onemap("route_pt_bus_only_short.json")
+    leg = first_leg("route_pt_bus_only_short.json", "BUS")
+    board, alight = leg["from"]["stopCode"], leg["to"]["stopCode"]
+    mock_lta(bus_routes=[{"ServiceNo": leg["route"], "Direction": 1, "StopSequence": i, "BusStopCode": c}
+                         for i, c in enumerate([board, "00001", alight, "00002"])],
+             bus_services=[{"ServiceNo": leg["route"], "Direction": 1, "OriginCode": board, "DestinationCode": "00002",
+                            "AM_Offpeak_Freq": "06-09"}])
+    respx.get(f"{LTA}/BusStops").mock(return_value=httpx.Response(200, json={"value": [
+        {"BusStopCode": "00002", "Description": "Punggol Temp Int", "RoadName": "x", "Latitude": 1.4, "Longitude": 103.9}]}))
+    bus_step = next(s for s in plan()[0]["steps"] if s["mode"] == "bus")
+    assert (bus_step["towards"], bus_step["every"]) == ("Punggol Temp Int", [6, 9])
+    assert f"Raise your hand for bus {leg['route']} to Punggol Temp Interchange." in bus_step["easyRead"]
+    # How often: said when it fits; with this route's long stop names it is the first sentence left out.
+    text, every = bus_step["easyRead"], " It comes every 6 to 9 minutes."
+    assert len(text) <= 300 and (every.strip() in text or len(text) + len(every) > 300)

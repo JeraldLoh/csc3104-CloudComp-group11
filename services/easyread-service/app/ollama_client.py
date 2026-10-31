@@ -47,10 +47,14 @@ Rules:
 - Never add a stop, bus, exit, number, direction or landmark that is not in the input.
 - Keep the steps in the same order and keep each stepIndex.
 
-Example input step: {"stepIndex": 7, "mode": "bus", "text": "At Opposite Fengshan Primary School, wait \
-for bus number 45 and get on, then tap your card. Get off at Tanah Merah Station Exit 2 after 5 stops."}
-Example output step: {"stepIndex": 7, "easyRead": "Go to Opposite Fengshan Primary School. \
-Wait for bus number 45. Get on the bus. Tap your card. Count 5 stops. Get off at Tanah Merah Station Exit 2."}
+Example input step: {"stepIndex": 7, "mode": "bus", "text": "Find bus stop 85091 at Opposite Fengshan Primary \
+School and check the number on the pole, then raise your hand for bus 45 to Tampines Interchange, which comes every \
+8 to 12 minutes. Tap your card to get on. After Block 731, press the bell and get off at Tanah Merah Station Exit 2. \
+Tap your card to get off."}
+Example output step: {"stepIndex": 7, "easyRead": "Find bus stop 85091 at Opposite Fengshan Primary School. \
+Check the number on the pole. Raise your hand for bus 45 to Tampines Interchange. It comes every 8 to 12 minutes. \
+Tap your card to get on. After Block 731, press the bell. Get off at Tanah Merah Station Exit 2. \
+Tap your card to get off."}
 
 Answer with JSON only: {"steps": [{"stepIndex": <number>, "easyRead": "<text>"}]}."""
 
@@ -99,30 +103,73 @@ def _on(side: str | None) -> str:
     return f" on your {side}" if side in ("left", "right") else ""
 
 
-def place(step: dict, picks: list[tuple[str, dict]]) -> dict:
+BELL_CUE = re.compile(r"^After (.+), press the bell\.$")        # journey-service's bus wording
+# To stay within the limit, this goes first, then the next...: journey-service's spare bus sentences (the ride's
+# length, how often it comes), the stop named in the bell cue once a landmark is the cue ("Look out for City Plaza.
+# Press the bell."), and landmark spots, the least useful first. The landmark before the stop is worth more than
+# all of the sentences.
+RIDE = re.compile(r"^The ride takes about \d+ minutes\.$")
+EVERY = re.compile(r"^It comes every [\d to]+ minutes\.$")
+SHORT_CUE = "short cue"
+LEAST_NEEDED = (RIDE, "end", SHORT_CUE, EVERY, "start", "middle", "before_stop")
+
+
+def _without(text: str, pattern: re.Pattern) -> str:
+    return " ".join(s for s in re.split(r"(?<=[.!?])\s+", text.strip()) if not pattern.match(s))
+
+
+def place(step: dict, picks: list[tuple[str, dict]], max_chars: int | None = None) -> dict:
     """The step with a sentence for each (spot, landmark) where it is seen, its names in `keep` and its ids in
-    `landmarks`. Bus: before_stop just before getting off, end just after. Walk: start first, middle and end last."""
+    `landmarks`. Bus: before_stop joins the bell cue ("After Block 301, look out for City Plaza on your left.
+    Press the bell.", or goes just before getting off), end just after getting off. Walk: start first, middle and
+    end last (before "You have arrived."). To stay within `max_chars`, LEAST_NEEDED are left out in order."""
     if not picks:
         return {**step, "landmarks": []}
+    short = False
+    text = _with_sentences(step, picks)
+    for least in LEAST_NEEDED:
+        if max_chars is None or len(text) <= max_chars:
+            break
+        if least == SHORT_CUE:
+            short = True
+        elif isinstance(least, str):
+            picks = [p for p in picks if p[0] != least]
+        else:
+            step = {**step, "text": _without(step["text"], least)}
+        text = _with_sentences(step, picks, short)
+    if not picks:
+        return {**step, "landmarks": []}
+    keep = list(dict.fromkeys([*(step.get("keep") or []), *(b["name"] for _, b in picks)]))
+    return {**step, "text": text, "keep": keep, "landmarks": [b["id"] for _, b in picks]}
+
+
+def _with_sentences(step: dict, picks: list[tuple[str, dict]], short: bool = False) -> str:
+    """`short`: the landmark replaces the stop in the bell cue instead of joining it."""
     sentences = [s for s in re.split(r"(?<=[.!?])\s+", step["text"].strip()) if s]
-    get_off = next((i for i, s in enumerate(sentences) if s.lower().startswith("get off")), len(sentences))
-    before, after, first = [], [], []
+    first, middle, end = [], [], []
     for spot, b in picks:
         name, on = b["name"], _on(b.get("side"))
         if spot == "before_stop":
-            before += [f"Look out for {name}{on}.", "Press the bell."]
+            cue = next((i for i, s in enumerate(sentences) if BELL_CUE.match(s)), None)
+            if cue is not None:
+                look = f"look out for {name}{on}."
+                sentences[cue:cue + 1] = [f"Look out for {name}{on}." if short
+                                          else f"After {BELL_CUE.match(sentences[cue]).group(1)}, {look}", "Press the bell."]
+            else:
+                at = next((i for i, s in enumerate(sentences) if s.lower().startswith("get off")), len(sentences))
+                sentences[at:at] = [f"Look out for {name}{on}.", "Press the bell."]
         elif spot == "start":
             first.append(f"Look for {name}{on}.")
         elif spot == "middle":
-            after.append(f"Walk past {name}{on}.")
+            middle.append(f"Walk past {name}{on}.")
         else:                                                        # end: where the bus stops or the walk ends
-            after.append(f"Look for {name}{on}.")
+            end.append(f"Look for {name}{on}.")
     if step.get("mode") == "bus":
-        sentences = sentences[:get_off] + before + sentences[get_off:get_off + 1] + after + sentences[get_off + 1:]
-    else:
-        sentences = first + sentences + after
-    keep = list(dict.fromkeys([*(step.get("keep") or []), *(b["name"] for _, b in picks)]))
-    return {**step, "text": " ".join(sentences), "keep": keep, "landmarks": [b["id"] for _, b in picks]}
+        at = next((i + 1 for i, s in enumerate(sentences) if s.lower().startswith("get off")), len(sentences))
+        sentences[at:at] = end
+        return " ".join(sentences)
+    arrived = len(sentences) - 1 if sentences and sentences[-1] == "You have arrived." else len(sentences)
+    return " ".join(first + sentences[:arrived] + middle + end + sentences[arrived:])
 
 
 class OllamaUnavailable(Exception):
@@ -168,7 +215,7 @@ class OllamaClient:
         except (httpx.HTTPError, ValueError, KeyError, TypeError) as e:
             log.warning("landmarks not chosen (%s): rewording without them", type(e).__name__)
             picks = {}
-        return [place(step, picks.get(step["stepIndex"], [])) for step in steps]
+        return [place(step, picks.get(step["stepIndex"], []), self._s.max_chars) for step in steps]
 
     def _look_up(self, steps: list[dict], deadline: float) -> dict[int, dict[str, list[dict]]]:
         """Job 1: the model's own lookups, then every spot it skipped: what it was shown, {stepIndex: {spot: [...]}}.

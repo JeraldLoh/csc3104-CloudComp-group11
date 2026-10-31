@@ -111,6 +111,10 @@ The caregiver app reaches it through the Journey Service: `POST /api/routes/{rou
 returns `{"steps": [{"stepIndex", "easyRead", "fallback", "landmarks": [{name, kind, lat, lng, seenFrom, photoKey, sameView, photoUrl}]}], "provider"}` and saves nothing; the caregiver checks
 the wording in the editor and saves the route as usual.
 
+Bus steps may also carry `stops` (every stop of the ride, as train steps do), `towards` (where the bus is going, as
+on its front sign) and `every` ([low, high] minutes between buses in the daytime), all optional: the easy-read
+wording uses them.
+
 Route steps may carry `landmarks: [{name, kind, lat, lng, seenFrom, photoKey, sameView}]` (optional): what the wording tells
 the traveller to look out for, each with a Street View photo of it taken from `seenFrom`, the traveller's spot on the
 route (`sameView`: no photo of its own, as it would repeat the step's photo, `"step"`, or that landmark's). The

@@ -30,6 +30,7 @@ a route belongs to its caregiver and its traveller, anyone else gets 404. /inter
 """
 import logging
 import re
+import threading
 import time
 from contextlib import asynccontextmanager
 from datetime import date as date_type
@@ -110,6 +111,8 @@ def create_app(
                         now["onemap"], now["lta"])
         if journey is None:
             app.state.journey = build_journey(s, r, mode)
+            # The bus route lists take ~9 s to fetch: get them now, not in the first plan that needs them.
+            threading.Thread(target=app.state.journey.lta.warm_bus_services, daemon=True).start()
         else:
             app.state.journey = journey
         yield

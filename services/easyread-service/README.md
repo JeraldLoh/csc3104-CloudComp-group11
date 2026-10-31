@@ -31,8 +31,11 @@ and reword at once) made a 1.5B model mix up steps and make landmarks up:
    rounds). Answers come only from the step's own `spots`. A spot it didn't ask about is still offered in job 2.
 2. **Choose:** one answer per spot, the building the traveller can't miss. The JSON schema allows only that spot's own
    names ("none" only where all are plain buildings), so it can't make one up or take one from another step.
-3. **Place:** code adds a sentence for each choice where it is seen ("Look out for City Plaza on your left. Press the
-   bell." just before getting off; "Look for Tampines Mall." where a walk ends) and adds the names to `keep`.
+3. **Place:** code adds a sentence for each choice where it is seen and adds the names to `keep`. A bus landmark
+   joins the journey service's bell cue ("After Block 301, look out for City Plaza on your left. Press the bell.");
+   a walk's goes before "You have arrived.". To stay within 300 characters it leaves out, in order: the ride's
+   length, the landmark at the stop, the stop's name in the bell cue (the landmark alone is the cue), how often the
+   bus comes, then the other landmarks.
 4. **Reword:** the usual rewrite, then the checks above. A step that fails gets the template text *with* the landmark
    sentences, so its landmarks are kept either way. The ids of the ones used come back in `landmarks`.
 

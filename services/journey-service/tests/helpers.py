@@ -48,7 +48,10 @@ def mock_onemap(name: str):
     return respx.get(ROUTE).mock(return_value=httpx.Response(200, json=onemap_fixture(name)))
 
 
-def mock_lta(arrival=None, alerts=None, incidents=None, crowd=None, forecast=None):
+def mock_lta(arrival=None, alerts=None, incidents=None, crowd=None, forecast=None, bus_routes=None, bus_services=None):
+    # Where each bus goes and how often (BusRoutes / BusServices): none known unless a test gives some.
+    respx.get(f"{LTA}/BusRoutes").mock(return_value=httpx.Response(200, json={"value": bus_routes or []}))
+    respx.get(f"{LTA}/BusServices").mock(return_value=httpx.Response(200, json={"value": bus_services or []}))
     respx.get(f"{LTA}/PCDRealTime").mock(return_value=httpx.Response(200, json=crowd or {"value": []}))
     respx.get(f"{LTA}/PCDForecast").mock(return_value=httpx.Response(200, json=forecast or {"value": []}))
     respx.get(f"{LTA}/v3/BusArrival").mock(return_value=httpx.Response(200, json=arrival or {"Services": []}))
