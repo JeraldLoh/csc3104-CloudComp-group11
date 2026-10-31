@@ -29,6 +29,16 @@ export interface AlertEvent {
   sentAt: string;
 }
 
+/** arrival-event.json: also sent by GET /api/stream, when a traveller presses "I've arrived". */
+export interface ArrivalEvent {
+  event: "trip.arrived";
+  travellerId: string;
+  travellerName: string;
+  tripId: string;
+  arrivedAt: string;
+  sentAt: string;
+}
+
 export type IncidentMap = Record<string, Incident>;
 
 const PROBLEM_TITLES: Record<string, string> = {

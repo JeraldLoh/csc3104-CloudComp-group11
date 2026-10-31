@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { isCaregiverId, type MyTravellers } from "../profiles/useMyTravellers";
 import { fetchIncidents, streamUrl } from "./api";
-import { applyEvent, mergeIncidents, type AlertEvent, type Incident, type IncidentMap } from "./incidents";
+import { applyEvent, mergeIncidents, type AlertEvent, type ArrivalEvent, type Incident, type IncidentMap } from "./incidents";
 
 const FRESH_MS = 4000; // how long a new alert stays highlighted
 // The Alert Service pings every 15 s. Hearing nothing for this long means the connection is dead even
@@ -20,6 +20,7 @@ export function useLiveIncidents(caregiverId: string, my: MyTravellers) {
   const [error, setError] = useState<string | null>(null);
   const [loadedFor, setLoadedFor] = useState<string | null>(null); // which travellers the last good load covered
   const [fresh, setFresh] = useState<ReadonlySet<string>>(new Set());
+  const [arrivals, setArrivals] = useState<ArrivalEvent[]>([]); // announced while the page is open, until dismissed
   const loggedIn = isCaregiverId(caregiverId);
 
   const travellerIds = my.travellers.map((t) => t.travellerId);
@@ -78,9 +79,14 @@ export function useLiveIncidents(caregiverId: string, my: MyTravellers) {
       });
       source.onmessage = (msg) => {
         lastHeard = Date.now();
-        const event: AlertEvent = JSON.parse(msg.data);
+        const event: AlertEvent | ArrivalEvent = JSON.parse(msg.data);
+        const about = "incident" in event ? event.incident.travellerId : event.travellerId;
         // The service already sends only this caregiver's travellers; this also covers AUTH_MODE=off.
-        if (!idsRef.current.includes(event.incident.travellerId)) return;
+        if (!idsRef.current.includes(about)) return;
+        if (!("incident" in event)) {
+          setArrivals((current) => [...current.filter((a) => a.tripId !== event.tripId), event]);
+          return;
+        }
         setIncidents((current) => applyEvent(current, event));
         if (event.event === "incident.opened" || event.event === "incident.reopened") {
           highlight(event.incident.incidentId);
@@ -107,10 +113,14 @@ export function useLiveIncidents(caregiverId: string, my: MyTravellers) {
     setIncidents((current) => mergeIncidents(current, [updated]));
   }, []);
 
+  const dismissArrival = useCallback((tripId: string) => {
+    setArrivals((current) => current.filter((a) => a.tripId !== tripId));
+  }, []);
+
   /** Only this caregiver's current travellers. */
   const mine = Object.values(incidents).filter((i) => travellerIds.includes(i.travellerId));
   /** False until the current travellers' alerts have loaded, and again if a reload fails: "no alerts" means nothing then. */
   const known = my.loaded && loadedFor === idsKey;
 
-  return { mine, known, connection, error, setError, merge, fresh, loggedIn };
+  return { mine, known, connection, error, setError, merge, fresh, loggedIn, arrivals, dismissArrival };
 }

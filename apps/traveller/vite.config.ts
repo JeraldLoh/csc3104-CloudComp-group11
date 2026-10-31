@@ -43,6 +43,7 @@ export default defineConfig({
     proxy: {
       "/api/checkins": { target: checkin, changeOrigin: true },
       "/api/help": { target: alerts, changeOrigin: true },
+      "/api/arrived": { target: alerts, changeOrigin: true },
       "/api/trips": { target: journey, changeOrigin: true },
     },
   },
@@ -52,6 +53,7 @@ export default defineConfig({
     proxy: {
       "/api/checkins": { target: checkin, changeOrigin: true },
       "/api/help": { target: alerts, changeOrigin: true },
+      "/api/arrived": { target: alerts, changeOrigin: true },
       "/api/trips": { target: journey, changeOrigin: true },
     },
   },
