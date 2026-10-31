@@ -1,8 +1,9 @@
 # Alert Service (Member 5) on the local kind cluster, using LocalStack and the Redis pod.
-# Not in kustomization.yaml, so teammates without this image aren't affected. To run it:
+# Listed in kustomization.yaml, so `kubectl apply -k k8s/local` runs it. Build and load the image first:
 #   docker build -t alert-service:local services/alert-service
 #   kind load docker-image alert-service:local --name csc3104-local
-#   kubectl apply -f k8s/local/alert-service.yaml
+# After changing the code do both again, then `kubectl rollout restart deployment/alert-service -n csc3104`:
+# the tag stays the same, so applying this file doesn't replace the pods.
 apiVersion: apps/v1
 kind: Deployment
 metadata:

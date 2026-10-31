@@ -1,11 +1,10 @@
-// Stand-in for the caregiver app: a page that hosts the planner until the real dashboard
-// (and login, issue 1.5) exists. Everything it does is what a host app will do:
+// Stand-in for the caregiver app: a page that hosts the planner and the caregiver pages until
+// login (issue 1.5) exists. Everything it does is what a host app will do:
 // make an API client, say who the traveller and caregiver are, and give the planner room.
 //
 // Shareable link: /?from=1.4043,103.9021&to=1.3040,103.8318&mode=bus plans straight away.
 import { useEffect, useMemo, useState } from "react";
-import { AlertsPage } from "./alerts";
-import { TravellersPage, useMyTravellers } from "./profiles";
+import { DashboardPage, TravellersPage, useMyTravellers } from "./profiles";
 import { JourneyApi, RoutePlanner, SavedRoutes, Trips, tripProblem, useDisruptions, useSavedRoutes, useTrips } from "./planner";
 import type { Point } from "./planner/usePlanner";
 import type { DataModeInfo, DataSource, RouteStep, TravelMode } from "./journey/types";
@@ -66,15 +65,20 @@ function readLink(search = location.search): { from: Point; to: Point; mode?: Tr
   };
 }
 
-// The pages. #alerts or #travellers in the address opens that page directly.
-type Page = "plan" | "alerts" | "travellers";
-const pageFromHash = (): Page =>
-  location.hash === "#alerts" ? "alerts" : location.hash === "#travellers" ? "travellers" : "plan";
+// The pages. #dashboard or #travellers in the address opens that page directly. Alerts are on the dashboard
+// now, so the old #alerts link (services/demo-control uses it) goes there.
+type Page = "plan" | "dashboard" | "travellers";
+const pageFromHash = (): Page => {
+  const page = location.hash.slice(1);
+  return page === "dashboard" || page === "alerts" ? "dashboard" : page === "travellers" ? page : "plan";
+};
 
 export default function App() {
   const [page, setPage] = useState<Page>(pageFromHash);
-  const openPage = (next: Page) => {
+  const [focusId, setFocusId] = useState<string | null>(null); // the traveller a dashboard button was about
+  const openPage = (next: Page, travellerId: string | null = null) => {
     setPage(next);
+    setFocusId(travellerId);
     history.replaceState(null, "", next === "plan" ? location.pathname + location.search : `#${next}`);
   };
   // Dev only: with AUTH_MODE=dev the service believes this header. Real login replaces it.
@@ -94,7 +98,7 @@ export default function App() {
   }
   if (saved.opened) watched[saved.opened.routeId] = saved.opened.steps;
   const disruptions = useDisruptions(api, watched);
-  // The "Act as" caregiver's own travellers (Alert Service, issue 5.1), for the Alerts and Travellers pages.
+  // The "Act as" caregiver's own travellers (Alert Service, issue 5.1), for the Dashboard and Travellers pages.
   const me = actAs.trim();
   const myTravellers = useMyTravellers(me);
 
@@ -104,7 +108,7 @@ export default function App() {
         <strong>CareRoute caregiver</strong>
         <nav className="shell__tabs">
           <button type="button" aria-pressed={page === "plan"} onClick={() => openPage("plan")}>Plan routes</button>
-          <button type="button" aria-pressed={page === "alerts"} onClick={() => openPage("alerts")}>Alerts</button>
+          <button type="button" aria-pressed={page === "dashboard"} onClick={() => openPage("dashboard")}>Dashboard</button>
           <button type="button" aria-pressed={page === "travellers"} onClick={() => openPage("travellers")}>Travellers</button>
         </nav>
         <label>
@@ -116,8 +120,9 @@ export default function App() {
         <DataSwitch api={api} />
       </header>
       <main className="shell__main">
-        {page === "alerts" ? <AlertsPage key={me} caregiverId={me} my={myTravellers} />
-          : page === "travellers" ? <TravellersPage key={me} caregiverId={me} my={myTravellers} />
+        {page === "dashboard" ? <DashboardPage key={me} caregiverId={me} my={myTravellers} journey={api}
+            onOpenProfile={(travellerId) => openPage("travellers", travellerId)} />
+          : page === "travellers" ? <TravellersPage key={me} caregiverId={me} my={myTravellers} initialTravellerId={focusId} />
           : <RoutePlanner
           api={api} travellerId={travellerId} caregiverId={caregiverId} initial={initial}
           viewing={saved.opened} onSaved={() => void saved.refresh()}

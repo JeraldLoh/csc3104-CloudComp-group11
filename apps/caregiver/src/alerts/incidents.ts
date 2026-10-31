@@ -46,6 +46,15 @@ export function problemTitle(problemType: string): string {
   return PROBLEM_TITLES[problemType] ?? PROBLEM_TITLES.unknown;
 }
 
+/** The time today, or the day and time for an older alert. */
+export function formatTime(iso: string): string {
+  const d = new Date(iso);
+  const sameDay = d.toDateString() === new Date().toDateString();
+  return sameDay
+    ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    : d.toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+
 /** Incidents loaded with GET /api/incidents. */
 export function mergeIncidents(current: IncidentMap, loaded: Incident[]): IncidentMap {
   const next = { ...current };

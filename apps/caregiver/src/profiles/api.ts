@@ -38,6 +38,11 @@ export function addCaregiver(caregiverId: string, travellerId: string, otherCare
   });
 }
 
+/** Every caregiver linked to a traveller, the caller included. */
+export function listCaregivers(caregiverId: string, travellerId: string): Promise<string[]> {
+  return call(`/api/travellers/${encodeURIComponent(travellerId)}/caregivers`, caregiverId);
+}
+
 const locationsPath = (travellerId: string) => `/api/travellers/${encodeURIComponent(travellerId)}/safe-locations`;
 
 export function listSafeLocations(caregiverId: string, travellerId: string): Promise<SafeLocation[]> {
