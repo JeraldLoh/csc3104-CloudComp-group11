@@ -21,7 +21,8 @@ class Settings:
     ollama_tool_rounds: int = field(default_factory=lambda: int(os.getenv("OLLAMA_TOOL_ROUNDS", "4")))
     # How long Ollama keeps the model in memory after a request, so the next one doesn't wait for it to load.
     ollama_keep_alive: str = field(default_factory=lambda: os.getenv("OLLAMA_KEEP_ALIVE", "30m"))
-    # Longest wording for one step; the caregiver app's text box allows the same.
+    # Longest wording for one step when a request doesn't say: journey-service sends its own (EASYREAD_MAX_CHARS, the
+    # one setting for it) with every request.
     max_chars: int = field(default_factory=lambda: int(os.getenv("EASYREAD_MAX_CHARS", "300")))
 
 

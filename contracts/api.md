@@ -91,12 +91,14 @@ Scenarios: `normal`, `missed_stop`, `wrong_direction`, `long_dwell`, `silence`, 
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
-| POST | `/internal/easyread` | `{"steps": [{"stepIndex": 0, "mode": "bus", "text": "<template wording>", "keep": ["45", "Opposite Fengshan Primary School", "5"]}]}` | `{"steps": [{"stepIndex": 0, "easyRead": "...", "fallback": false}], "provider": "ollama", "model": "qwen2.5:1.5b"}` |
+| POST | `/internal/easyread` | `{"steps": [{"stepIndex": 0, "mode": "bus", "text": "<template wording>", "keep": ["45", "Opposite Fengshan Primary School", "5"]}], "maxChars": 300}` | `{"steps": [{"stepIndex": 0, "easyRead": "...", "fallback": false}], "provider": "ollama", "model": "qwen2.5:1.5b"}` |
 
 Only route steps are sent. Never names, addresses or labels like "Home": a place without a stop code is sent as
 `[place 1]`, `[place 2]`, ... and the Journey Service puts the name back.
 
 - `text` is the Journey Service's own template wording for the step; it is also the fallback.
+- `maxChars` (optional) is the longest wording a step may have: the Journey Service's `EASYREAD_MAX_CHARS`, the one
+  setting for it. The caregiver app reads the same value from `GET /api/easy-read/limits` -> `{"maxChars": 300}`.
 - `keep` lists what the AI must not lose (bus/line number, stop names, stop count, `[place N]` tokens).
 - `fallback: true` means the AI's text failed the checks (dropped a `keep` item, added a number, too long) and `easyRead` is `text`.
 - `provider: "template"` means Ollama was unavailable and every step is `text`. The endpoint still answers `200`.

@@ -1,4 +1,4 @@
-// What a host app imports.
+// Planner components and hooks, and the API types they use
 export { RoutePlanner, type RoutePlannerProps } from "./RoutePlanner";
 export { SavedRoutes } from "./SavedRoutes";
 export { useSavedRoutes, type SavedRoutesState } from "./useSavedRoutes";

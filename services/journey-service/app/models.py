@@ -28,7 +28,7 @@ class PlanRequest(BaseModel):
     sortBy: Literal["walking", "crowding", "time"] = "walking"
 
 
-# --- saved routes (contracts/examples/route.json) -------------------------------------
+# Saved routes
 # Unknown top-level fields are ignored (so a plan option can be posted as-is); unknown step
 # fields are kept (contracts/README.md: adding an optional field is safe, e.g. a train step's `stops`).
 

@@ -31,6 +31,7 @@ import httpx
 
 log = logging.getLogger("easyread")
 
+# Context for the model: the rules for Easy Read English, and an example of a step's input and output. 
 SYSTEM_PROMPT = """You rewrite public transport instructions in Easy Read English for adults with \
 intellectual disabilities who travel alone in Singapore.
 
@@ -104,18 +105,23 @@ def _on(side: str | None) -> str:
 
 
 BELL_CUE = re.compile(r"^After (.+), press the bell\.$")        # journey-service's bus wording
+RIDE = re.compile(r"^The ride takes about \d+ minutes\.$")
+EVERY = re.compile(r"^It comes every [\d to]+ minutes\.$")
 # To stay within the limit, this goes first, then the next...: journey-service's spare bus sentences (the ride's
 # length, how often it comes), the stop named in the bell cue once a landmark is the cue ("Look out for City Plaza.
 # Press the bell."), and landmark spots, the least useful first. The landmark before the stop is worth more than
 # all of the sentences.
-RIDE = re.compile(r"^The ride takes about \d+ minutes\.$")
-EVERY = re.compile(r"^It comes every [\d to]+ minutes\.$")
-SHORT_CUE = "short cue"
-LEAST_NEEDED = (RIDE, "end", SHORT_CUE, EVERY, "start", "middle", "before_stop")
+LEAST_NEEDED = (("sentence", RIDE), ("spot", "end"), ("short cue", None), ("sentence", EVERY), ("spot", "start"),
+                ("spot", "middle"), ("spot", "before_stop"))
 
 
-def _without(text: str, pattern: re.Pattern) -> str:
-    return " ".join(s for s in re.split(r"(?<=[.!?])\s+", text.strip()) if not pattern.match(s))
+def _sentences(text: str) -> list[str]:
+    return [s for s in re.split(r"(?<=[.!?])\s+", text.strip()) if s]
+
+
+def _get_off(sentences: list[str]) -> int:
+    """Where the "Get off at ..." sentence is, or the end if there is none."""
+    return next((i for i, s in enumerate(sentences) if s.lower().startswith("get off")), len(sentences))
 
 
 def place(step: dict, picks: list[tuple[str, dict]], max_chars: int | None = None) -> dict:
@@ -127,15 +133,15 @@ def place(step: dict, picks: list[tuple[str, dict]], max_chars: int | None = Non
         return {**step, "landmarks": []}
     short = False
     text = _with_sentences(step, picks)
-    for least in LEAST_NEEDED:
+    for kind, least in LEAST_NEEDED:
         if max_chars is None or len(text) <= max_chars:
             break
-        if least == SHORT_CUE:
-            short = True
-        elif isinstance(least, str):
+        if kind == "sentence":
+            step = {**step, "text": " ".join(s for s in _sentences(step["text"]) if not least.match(s))}
+        elif kind == "spot":
             picks = [p for p in picks if p[0] != least]
         else:
-            step = {**step, "text": _without(step["text"], least)}
+            short = True
         text = _with_sentences(step, picks, short)
     if not picks:
         return {**step, "landmarks": []}
@@ -145,19 +151,21 @@ def place(step: dict, picks: list[tuple[str, dict]], max_chars: int | None = Non
 
 def _with_sentences(step: dict, picks: list[tuple[str, dict]], short: bool = False) -> str:
     """`short`: the landmark replaces the stop in the bell cue instead of joining it."""
-    sentences = [s for s in re.split(r"(?<=[.!?])\s+", step["text"].strip()) if s]
+    sentences = _sentences(step["text"])
     first, middle, end = [], [], []
     for spot, b in picks:
         name, on = b["name"], _on(b.get("side"))
         if spot == "before_stop":
+            look = f"Look out for {name}{on}."
             cue = next((i for i, s in enumerate(sentences) if BELL_CUE.match(s)), None)
-            if cue is not None:
-                look = f"look out for {name}{on}."
-                sentences[cue:cue + 1] = [f"Look out for {name}{on}." if short
-                                          else f"After {BELL_CUE.match(sentences[cue]).group(1)}, {look}", "Press the bell."]
+            if cue is None:
+                at = _get_off(sentences)
+                sentences[at:at] = [look, "Press the bell."]
+            elif short:
+                sentences[cue:cue + 1] = [look, "Press the bell."]
             else:
-                at = next((i for i, s in enumerate(sentences) if s.lower().startswith("get off")), len(sentences))
-                sentences[at:at] = [f"Look out for {name}{on}.", "Press the bell."]
+                after = BELL_CUE.match(sentences[cue]).group(1)
+                sentences[cue:cue + 1] = [f"After {after}, look out for {name}{on}.", "Press the bell."]
         elif spot == "start":
             first.append(f"Look for {name}{on}.")
         elif spot == "middle":
@@ -165,7 +173,7 @@ def _with_sentences(step: dict, picks: list[tuple[str, dict]], short: bool = Fal
         else:                                                        # end: where the bus stops or the walk ends
             end.append(f"Look for {name}{on}.")
     if step.get("mode") == "bus":
-        at = next((i + 1 for i, s in enumerate(sentences) if s.lower().startswith("get off")), len(sentences))
+        at = min(_get_off(sentences) + 1, len(sentences))            # just after getting off
         sentences[at:at] = end
         return " ".join(sentences)
     arrived = len(sentences) - 1 if sentences and sentences[-1] == "You have arrived." else len(sentences)
@@ -187,11 +195,13 @@ class OllamaClient:
         self._http = http or httpx.Client()
         self._clock = clock
 
-    def rewrite(self, steps: list[dict]) -> Answer:
+    def rewrite(self, steps: list[dict], max_chars: int | None = None) -> Answer:
+        """`max_chars`: the longest wording one step may have (the request's, else the setting's)."""
+        max_chars = max_chars or self._s.max_chars
         deadline = self._clock() + self._s.ollama_timeout_s
         try:
             if self._s.landmarks != "off" and any(step.get("spots") for step in steps):
-                steps = self._with_landmarks(steps, deadline)
+                steps = self._with_landmarks(steps, deadline, max_chars)
             question = {"steps": [{k: step.get(k) for k in ("stepIndex", "mode", "text", "keep")} for step in steps]}
             reply = self._chat([{"role": "system", "content": SYSTEM_PROMPT},
                                 {"role": "user", "content": json.dumps(question)}], deadline, format=ANSWER_SCHEMA)
@@ -208,14 +218,14 @@ class OllamaClient:
             return Answer({i: text for i, (_, text) in zip(wanted, got)}, steps)
         return Answer(dict(got), steps)
 
-    def _with_landmarks(self, steps: list[dict], deadline: float) -> list[dict]:
+    def _with_landmarks(self, steps: list[dict], deadline: float, max_chars: int) -> list[dict]:
         """Jobs 1-3. Best-effort: if the model fails at them, the steps are rewritten without landmarks."""
         try:
             picks = self._choose(self._look_up(steps, deadline), deadline)
         except (httpx.HTTPError, ValueError, KeyError, TypeError) as e:
             log.warning("landmarks not chosen (%s): rewording without them", type(e).__name__)
             picks = {}
-        return [place(step, picks.get(step["stepIndex"], []), self._s.max_chars) for step in steps]
+        return [place(step, picks.get(step["stepIndex"], []), max_chars) for step in steps]
 
     def _look_up(self, steps: list[dict], deadline: float) -> dict[int, dict[str, list[dict]]]:
         """Job 1: the model's own lookups, then every spot it skipped: what it was shown, {stepIndex: {spot: [...]}}.

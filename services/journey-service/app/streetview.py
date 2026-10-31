@@ -34,6 +34,7 @@ from typing import NamedTuple
 
 import httpx
 
+from .easy_read import changes_line, is_station
 from .geo import distance_m
 
 log = logging.getLogger("journey")
@@ -50,16 +51,8 @@ MAX_AGE_YEARS = 5                        # default for STREETVIEW_MAX_AGE_YEARS
 AT_STOP_M = 5                            # a panorama this close is at the stop: no heading towards it
 
 
-def _is_station(point: dict) -> bool:
-    """It has a station code (NE16, CC13); bus stop codes are all digits."""
-    code = str(point.get("code") or "")
-    return bool(code) and not code.isdigit()
-
-
-def changes_line(step: dict) -> bool:
-    """A walk from one station platform to another (Dhoby Ghaut NE6 -> NS24): it stays inside the station, so a
-    street photo would send the traveller outside. Like a train step, it gets none (the app asks for one)."""
-    return step.get("mode") == "walk" and _is_station(step.get("from") or {}) and _is_station(step.get("to") or {})
+# changes_line(step): a walk from one station platform to another (Dhoby Ghaut NE6 -> NS24) stays inside the
+# station, so a street photo would send the traveller outside. Like a train step, it gets none (the app asks for one).
 
 
 def target(step: dict) -> tuple[float, float] | None:
@@ -72,7 +65,7 @@ def target(step: dict) -> tuple[float, float] | None:
 def walks_to_station(step: dict) -> dict | None:
     """The station a walk step ends at from outside it (not a change of line inside one)."""
     end = step.get("to") or {}
-    if step.get("mode") == "walk" and end.get("name") and _is_station(end) and not changes_line(step):
+    if step.get("mode") == "walk" and end.get("name") and is_station(end) and not changes_line(step):
         return end
     return None
 

@@ -19,6 +19,9 @@ export interface RouteChanges {
   landmarks?: (Landmark[] | undefined)[];
 }
 
+/** The editor's limit for one step's wording until the service says (GET /api/easy-read/limits). */
+const FALLBACK_MAX_EASY_READ = 300;
+
 /** AI wording for the open route, waiting in the editor for the caregiver to check. */
 export interface PendingSuggestion extends EasyReadSuggestion {
   routeId: string;
@@ -74,6 +77,12 @@ export function useSavedRoutes(api: SavedRoutesApi, travellerId: string, reloadK
     }
   }
 
+  // The longest wording a step may have, as the service says (until it answers, or if it can't, its usual 300).
+  const [maxEasyRead, setMaxEasyRead] = useState(FALLBACK_MAX_EASY_READ);
+  useEffect(() => {
+    latestApi.current.getEasyReadLimits?.().then((l) => setMaxEasyRead(l.maxChars), () => undefined);
+  }, [reloadKey]);
+
   // A different traveller (or a different login, via reloadKey) is a different list.
   useEffect(() => {
     openSeq.current++;
@@ -110,7 +119,8 @@ export function useSavedRoutes(api: SavedRoutesApi, travellerId: string, reloadK
 
   /**
    * Opens the route and asks the AI for simpler wording. The answer waits in `suggestion` for the editor; nothing
-   * is saved until the caregiver saves it there.
+   * is saved until the caregiver saves it there. If the AI isn't available (the service answers with its standard
+   * wording, provider "template"), the editor doesn't open: the caregiver is told to try again instead.
    */
   async function suggest(routeId: string) {
     setSuggestingId(routeId);
@@ -120,10 +130,12 @@ export function useSavedRoutes(api: SavedRoutesApi, travellerId: string, reloadK
       const mine = openSeq.current;     // another route opened meanwhile: drop this answer
       const answer = await latestApi.current.suggestEasyRead(routeId);
       if (openSeq.current !== mine) return;
+      if (answer.provider === "template") {
+        setStatus(failure("Simplify with AI didn't work: the AI isn't available right now. Nothing has changed. Try again in a minute."));
+        return;
+      }
       setSuggestion({ ...answer, routeId });
-      setStatus(answer.provider === "template"
-        ? failure("The AI isn't available right now, so the editor shows the standard wording.")
-        : info("Check the AI's wording for each step, change anything you like, then save."));
+      setStatus(info("Check the AI's wording for each step, change anything you like, then save."));
     } catch (e) {
       setStatus(failure(message(e)));
     } finally {
@@ -216,6 +228,7 @@ export function useSavedRoutes(api: SavedRoutesApi, travellerId: string, reloadK
 
   return {
     traveller, routes, loaded, loading, status, opened, approvingId, deletingId, saving, outOfDate, suggestingId, suggestion,
+    maxEasyRead,
     refresh, open, close, approve, update, remove, suggest, uploadPhoto,
   };
 }

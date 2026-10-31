@@ -16,7 +16,8 @@ is saved.
 - It never sees names or addresses: the Journey Service sends `[place N]` tokens instead.
 - Every step arrives with its template wording (`text`) and the facts the wording must keep (`keep`).
 - `app/hallucination_check.py` checks each AI step. If the AI dropped a bus number, stop name, stop count or landmark,
-  added a number or a name that isn't in the step, or wrote more than 300 characters, the step gets `text` back with
+  added a number or a name that isn't in the step, or wrote more than the limit (`maxChars` in the request: journey-service's `EASYREAD_MAX_CHARS`, 300; this
+  service's own `EASYREAD_MAX_CHARS` only when a request doesn't say), the step gets `text` back with
   `fallback: true`.
 - If Ollama is down, slow or answers with something that isn't JSON, every step gets `text` and `provider: "template"`.
   The endpoint always answers `200` with usable wording.
@@ -50,7 +51,7 @@ tool calls.
 | `app/main.py` | the endpoints |
 | `app/ollama_client.py` | the prompts and the `/api/chat` calls (one per route, four with landmarks; JSON schema answers, temperature 0, fixed seed) |
 | `app/hallucination_check.py` | the checks above |
-| `app/config.py` | `OLLAMA_URL` (`http://ollama:11434`), `OLLAMA_MODEL` (`qwen2.5:1.5b`), `OLLAMA_TIMEOUT_S` (75, all calls for one route), `OLLAMA_KEEP_ALIVE` (`30m`), `EASYREAD_MAX_CHARS` (300), `EASYREAD_LANDMARKS` (`tools`), `OLLAMA_TOOL_ROUNDS` (4) |
+| `app/config.py` | `OLLAMA_URL` (`http://ollama:11434`), `OLLAMA_MODEL` (`qwen2.5:1.5b`), `OLLAMA_TIMEOUT_S` (75, all calls for one route), `OLLAMA_KEEP_ALIVE` (`30m`), `EASYREAD_MAX_CHARS` (300, when a request has no `maxChars`), `EASYREAD_LANDMARKS` (`tools`), `OLLAMA_TOOL_ROUNDS` (4) |
 
 The model is small because the cluster has no GPU: about 1 GB, a few seconds per route on 2 vCPUs. A larger model
 (`OLLAMA_MODEL=llama3.2:3b`) writes better text locally if your machine has the memory.

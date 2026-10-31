@@ -5,13 +5,11 @@ import { landmarkSeenIn } from "./format";
 interface Props {
   url: string | null | undefined;
   alt: string;
-  /** Shown instead of the photo when there is none or its link doesn't load (expired, or the file is gone). */
   fallback: React.ReactNode;
-  /** Shown under the photo when it does load (e.g. "only an old photo was found: check it"). */
   note?: React.ReactNode;
 }
 
-/** A step's photo, with an optional note under it, or `fallback`. */
+// A photo the traveller sees for a step, or a placeholder if there is none or it fails to load.
 export function StepPhoto({ url, alt, fallback, note }: Props) {
   const [failed, setFailed] = useState<string | null>(null);         // the url that failed, so a new one is tried
   if (!url || failed === url) return <>{fallback}</>;
@@ -23,10 +21,7 @@ export function StepPhoto({ url, alt, fallback, note }: Props) {
   );
 }
 
-/**
- * The landmarks a step's wording names, each with its photo, so the caregiver sees what the traveller looks for.
- * One whose photo would repeat another (`sameView`) is only named, with where it can be seen.
- */
+// A traveller's landmarks: show the ones with their own photo, and for the others say where they are seen.
 export function LandmarkPhotos({ landmarks }: { landmarks: Landmark[] }) {
   if (landmarks.length === 0) return null;
   const own = landmarks.filter((m) => !m.sameView);

@@ -273,3 +273,13 @@ def test_with_a_long_stop_name_the_landmark_becomes_the_bell_cue():
     bus = place(long, [("before_stop", PLAZA)], 300)
     assert "Look out for City Plaza on your left. Press the bell. Get off at Block 302." in bus["text"]
     assert "Block 14" not in bus["text"] and len(bus["text"]) <= 300 and bus["landmarks"] == ["L7"]
+
+
+@respx.mock
+def test_the_limit_sent_with_the_request_is_used():
+    long_walk = "Walk to [place 1]. It takes about 4 minutes. " + "Keep going straight on. " * 3
+    respx.post(f"{OLLAMA}/api/chat").mock(return_value=answer((2, long_walk.strip())))
+    with TestClient(create_app(s=SETTINGS)) as c:
+        tight = c.post("/internal/easyread", json={"steps": [WALK], "maxChars": 60}).json()["steps"][0]
+        roomy = c.post("/internal/easyread", json={"steps": [WALK]}).json()["steps"][0]
+    assert tight["fallback"] is True and roomy["fallback"] is False        # 60 from the request; 300 by default

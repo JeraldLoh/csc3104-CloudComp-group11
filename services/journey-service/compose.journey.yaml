@@ -35,6 +35,7 @@ services:
       DEMO_UI: "true"                  # dev extras: the live/saved switch (/api/dev/data-mode) and app/demo_tools.py
       AUTH_MODE: ${AUTH_MODE:-off}     # off (default) | dev (trust an X-Dev-User header, local only) | cognito
       EASYREAD_URL: http://easyread-service:8000          # AI wording; unreachable = the standard wording
+      EASYREAD_MAX_CHARS: ${EASYREAD_MAX_CHARS:-300}      # one step's wording: sent to the Easy-read Service and the app
       GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY:-}      # Street View photos of each step; empty = none
       STREETVIEW_MAX_AGE_YEARS: ${STREETVIEW_MAX_AGE_YEARS:-5}   # older photos are only a last resort ("check it")
     volumes:

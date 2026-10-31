@@ -83,7 +83,8 @@ stay mounted, so a half-finished edit is still there when you come back.
   (`suggestEasyRead`, `POST /api/routes/{id}/easy-read`; it runs on CPU, so allow up to a minute). The editor then
   opens with that wording: the caregiver checks and edits each step and saves as usual (nothing is saved before).
   A step marked "standard wording" is one where the AI's text didn't keep every stop and number; if the AI is
-  unavailable, every step shows the standard wording and the status line says so.
+  unavailable, the editor doesn't open: the status line says "Simplify with AI didn't work ... Try again in a
+  minute", and nothing changes. Only a step being edited has to fit the 300-character limit to save.
 - Point form: the wording is one short action per sentence, and the saved route shows each sentence as a bullet
   point (`EasyReadPoints`, `easyReadPoints` in `format.ts`). The editor's box has one "• point" per line (Enter
   starts a new one); saving joins the lines back into sentences (`toBulletLines` / `fromBulletLines`).

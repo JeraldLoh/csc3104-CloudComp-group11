@@ -23,7 +23,7 @@ import re
 from typing import Callable, NamedTuple
 
 from .geo import distance_m, distance_to_path_m
-from .streetview import changes_line
+from .easy_read import changes_line
 
 MIDDLE_FROM_M = 250                 # a walk this long also gets a spot halfway
 BEFORE_STOP_M = 300                 # a bus ride's spot this far before the stop to get off at

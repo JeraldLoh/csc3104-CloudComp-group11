@@ -22,7 +22,7 @@ import re
 
 import httpx
 
-from .easy_read import LINE_NAMES, ordinal, plain, route_wording, stop_count
+from .easy_read import LINE_NAMES, MAX_CHARS, ordinal, plain, route_wording, stop_count
 
 log = logging.getLogger("journey")
 
@@ -55,16 +55,16 @@ def ai_request(steps: list[dict], landmarks: Landmarks | None = None,
         frm, to = safe["from"], safe["to"]
         candidates = [frm.get("code") if mode == "bus" else None, line if mode == "bus" else None,
                       LINE_NAMES.get(line) if mode == "train" else None, plain(frm.get("name")),
-                      plain(to.get("name")), plain(step.get("towards")), place if mode == "walk" else None,
-                      str(count) if count is not None and mode == "bus" else None]
-        if mode == "train" and count is not None:
-            candidates.append(ordinal(count))
+                      plain(to.get("name")), plain(step.get("towards")),
+                      place if mode == "walk" else None, ordinal(count) if count is not None else None]
         keep = [k for k in candidates if k and k.lower() in text.lower()]
         out = {"stepIndex": step["stepIndex"], "mode": mode, "text": text, "keep": list(dict.fromkeys(keep))}
         if spots := (landmarks or {}).get(step["stepIndex"]):
             out["spots"] = {spot: [{k: b[k] for k in SPOT_FIELDS} for b in found] for spot, found in spots.items()}
         sent.append(out)
-    return {"steps": sent}, {token: name for name, token in tokens.items()}
+    # The longest wording allowed: the service checks the AI's text against it (it has no setting of its own to keep
+    # in step).
+    return {"steps": sent, "maxChars": MAX_CHARS}, {token: name for name, token in tokens.items()}
 
 
 def _restore(text: str, names: dict[str, str]) -> str:

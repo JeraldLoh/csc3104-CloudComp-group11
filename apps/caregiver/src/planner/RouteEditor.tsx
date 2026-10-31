@@ -1,3 +1,4 @@
+// Edit a saved route's name, the easy-read wording and photo for each step, and the landmarks it mentions.
 import { type KeyboardEvent, useId, useLayoutEffect, useRef, useState } from "react";
 import type { EasyReadSuggestion, SavedRoute, UploadedPhoto } from "../journey/types";
 import { BULLET, fromBulletLines, isRoughPhoto, namedLandmarks, photoHint, roughPhotoHint, toBulletLines } from "./format";
@@ -7,33 +8,26 @@ import type { RouteChanges } from "./useSavedRoutes";
 
 interface Props {
   route: SavedRoute;
-  /** Planned or active trips made on this route. Saving stops them working. */
   affectedTrips: number;
   saving: boolean;
-  /** AI wording to start from instead of the saved wording ("Simplify with AI"). */
+  // The longest wording a step may have, from the service (GET /api/easy-read/limits, set by JourneyService)
+  maxChars: number;
   suggested?: EasyReadSuggestion | null;
-  /** Stores a photo and gives back its key, or null if it was refused (the reason is shown by the caller). */
   onUploadPhoto: (photo: File) => Promise<UploadedPhoto | null>;
   onSave: (changes: RouteChanges) => void;
   onCancel: () => void;
 }
 
-/** Longest wording a step may have once saved (as sentences), as before. */
-const MAX_EASY_READ = 300;
-
 const MODE_NAME = { walk: "Walk", bus: "Bus", train: "Train" } as const;
 
-/** A step's photo in the editor: `key` is what will be saved, `url` what is shown (null: none yet). */
+// Photo the traveller sees for a step
 interface Photo {
   key: string | null;
   url: string | null;
 }
 
-/**
- * Change a saved route's name, and the easy-read wording and photo the traveller sees for each step.
- * The steps themselves (where to walk, which bus) come from planning, so they are shown, not edited.
- */
-export function RouteEditor({ route, affectedTrips, saving, suggested, onUploadPhoto, onSave, onCancel }: Props) {
+// The caregiver edits a route's name, the easy-read wording and photo for each step, and the landmarks it mentions.
+export function RouteEditor({ route, affectedTrips, saving, maxChars, suggested, onUploadPhoto, onSave, onCancel }: Props) {
   const nameId = useId();
   const [name, setName] = useState(route.name);
   const aiFor = (stepIndex: number) => suggested?.steps.find((s) => s.stepIndex === stepIndex);
@@ -54,7 +48,9 @@ export function RouteEditor({ route, affectedTrips, saving, suggested, onUploadP
   const photoChanged = (i: number) => photos[i].key !== (route.steps[i].photoKey ?? null);
   // Compared as sentences, so opening a route saved as one paragraph doesn't count as a change.
   const wordingChanged = (i: number) => fromBulletLines(easyRead[i]) !== fromBulletLines(toBulletLines(route.steps[i].easyRead));
-  const tooLong = easyRead.map((lines) => fromBulletLines(lines).length > MAX_EASY_READ);
+  // Only wording being changed has to fit: a step that is already long (very long stop names) mustn't stop the
+  // caregiver saving other changes to the route.
+  const tooLong = easyRead.map((lines, i) => wordingChanged(i) && fromBulletLines(lines).length > maxChars);
   const names = (list: { name: string }[]) => list.map((m) => m.name).join("\n");
   const landmarksChanged = (i: number) =>
     names(shownLandmarks[i]) !== names(namedLandmarks(route.steps[i].landmarks, route.steps[i].easyRead));
@@ -71,7 +67,7 @@ export function RouteEditor({ route, affectedTrips, saving, suggested, onUploadP
     box.setSelectionRange(at, at);
   });
 
-  /** Enter starts a new bullet, as in a list. */
+  // Enter starts a new bullet, as in a list.
   function newBullet(i: number, e: KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key !== "Enter" || e.shiftKey) return;
     e.preventDefault();
@@ -80,6 +76,7 @@ export function RouteEditor({ route, affectedTrips, saving, suggested, onUploadP
     setStepText(i, `${value.slice(0, start)}\n${BULLET}${value.slice(end)}`);
   }
 
+  // Replace a step's photo with a new one, or remove it (the service adds a Street View photo again when saving).
   async function replacePhoto(i: number, file: File | undefined) {
     if (!file) return;
     setUploading(i);
@@ -113,11 +110,7 @@ export function RouteEditor({ route, affectedTrips, saving, suggested, onUploadP
         {affectedTrips > 0 && ` ${affectedTrips} planned or active trip${affectedTrips > 1 ? "s" : ""} on this route will stop working.`}
       </div>
       {suggested && (
-        <div className={suggested.provider === "template" ? "rp__warning" : "rp__meta"}>
-          {suggested.provider === "template"
-            ? "The AI wasn't available, so each step shows the standard wording."
-            : "Suggested by AI. Check each step before saving: the traveller will read exactly this."}
-        </div>
+        <div className="rp__meta">Suggested by AI. Check each step before saving: the traveller will read exactly this.</div>
       )}
 
       <label htmlFor={nameId}>Route name</label>
@@ -171,8 +164,8 @@ export function RouteEditor({ route, affectedTrips, saving, suggested, onUploadP
               onKeyDown={(e) => newBullet(i, e)}
               onChange={(e) => setStepText(i, e.target.value)}
             />
-            {tooLong[i] && <div className="rp__warning">{`Too long: keep this step under ${MAX_EASY_READ} characters.`}</div>}
-            {suggested && suggested.provider !== "template" && aiFor(step.stepIndex)?.fallback && (
+            {tooLong[i] && <div className="rp__warning">{`Too long: keep this step under ${maxChars} characters.`}</div>}
+            {suggested && aiFor(step.stepIndex)?.fallback && (
               <div className="rp__meta">The AI's version didn't keep every stop and number, so this is the standard wording.</div>
             )}
 

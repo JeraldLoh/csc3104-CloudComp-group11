@@ -1,5 +1,5 @@
-// Talking to the Journey Service. The planner only depends on the PlannerApi interface, so a
-// host app can pass its own client (its own login, base URL or caching) or a fake in tests.
+// For talking to the Journey Planner service (the backend). The service is in apps/journey-service. 
+// It is a REST API, and the types here match the JSON it sends and receives. 
 import type {
   DataModeInfo, DataSource, DisruptionCheck, EasyReadSuggestion, PackLink, PlaceResult, PlanOption, PlanRequest,
   RouteDraft, RouteStep, RouteUpdate, SavedRoute, Trip, UploadedPhoto,
@@ -34,6 +34,8 @@ export interface SavedRoutesApi {
    * CPU); when the AI is unavailable the answer has the standard wording and `provider: "template"`.
    */
   suggestEasyRead(routeId: string): Promise<EasyReadSuggestion>;
+  /** The longest wording one step may have: the service's own setting (EASYREAD_MAX_CHARS), so the editor matches it. */
+  getEasyReadLimits?(): Promise<{ maxChars: number }>;
   /** Stores a photo for a step (JPEG, PNG or WebP, up to 5 MB). The route only changes when it is saved with the key. */
   uploadStepPhoto(routeId: string, photo: File): Promise<UploadedPhoto>;
 }
@@ -131,6 +133,10 @@ export class JourneyApi implements PlannerApi, SavedRoutesApi, TripsApi, Disrupt
 
   suggestEasyRead(routeId: string): Promise<EasyReadSuggestion> {
     return this.request<EasyReadSuggestion>(`/api/routes/${encodeURIComponent(routeId)}/easy-read`, { method: "POST" });
+  }
+
+  getEasyReadLimits(): Promise<{ maxChars: number }> {
+    return this.request<{ maxChars: number }>("/api/easy-read/limits");
   }
 
   uploadStepPhoto(routeId: string, photo: File): Promise<UploadedPhoto> {

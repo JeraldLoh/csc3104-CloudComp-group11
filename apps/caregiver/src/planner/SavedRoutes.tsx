@@ -168,6 +168,7 @@ export function SavedRoutes({ saved, trips, disruptions }: Props) {
               route={opened}
               affectedTrips={affectedTrips}
               saving={saved.saving}
+              maxChars={saved.maxEasyRead}
               suggested={suggestion}
               onUploadPhoto={saved.uploadPhoto}
               onSave={(changes) => void saved.update(changes)}

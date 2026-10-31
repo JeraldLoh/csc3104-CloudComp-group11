@@ -1,6 +1,7 @@
+// Draws the easy-read points as a list, or nothing if there are none
+
 import { easyReadPoints } from "./format";
 
-/** A step's easy-read wording as the traveller reads it: one bullet point per sentence. */
 export function EasyReadPoints({ text, label }: { text: string | null | undefined; label?: string }) {
   const points = easyReadPoints(text);
   if (!points.length) return null;

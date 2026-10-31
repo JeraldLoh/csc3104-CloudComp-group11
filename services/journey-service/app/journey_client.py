@@ -42,10 +42,10 @@ from .trip_store import RedisTripStore, TripConflict, TripExists, TripNotFound
 log = logging.getLogger("journey")
 
 
-ONEMAP_MODES = {"any": "TRANSIT", "bus": "BUS", "train": "RAIL"}   # plan() `mode` -> OneMap `mode`
-CROWD_RANK = {None: 0, "low": 0, "moderate": 1, "high": 2}       # unknown counts as low when comparing options
-REALTIME_WITHIN = timedelta(minutes=20)           # a train leg starting later than this uses the crowd forecast
-SORTS = {                                        # plan(sort_by=...) -> sort key over an option
+ONEMAP_MODES = {"any": "TRANSIT", "bus": "BUS", "train": "RAIL"}   # Different modes for OneMap search and plan calls, from the API's `mode` query param.
+CROWD_RANK = {None: 0, "low": 0, "moderate": 1, "high": 2}       # Crowding levels, for sorting and for the API's `crowd` field: None/low < moderate < high.
+REALTIME_WITHIN = timedelta(minutes=20)           # How recent a bus arrival must be to be considered "realtime" (for the API's `realtime` field).
+SORTS = {                                        # Sorting keys for the API's `sort` query param: a tuple of values for each plan, in order of priority.
     "time": lambda o: 0,
     "walking": lambda o: o["summary"]["walkDistanceM"],
     "crowding": lambda o: (CROWD_RANK[o["summary"]["crowd"]], sum(e.get("crowd") == "high" for e in o["live"]),
@@ -53,7 +53,7 @@ SORTS = {                                        # plan(sort_by=...) -> sort key
 }
 SERIOUS_INCIDENTS = {"Accident", "Road Block", "Fire", "Diversion", "Reverse Flow"}
 
-# Standard texts for the traveller's phone (contracts/examples/route-pack.json).
+# Standard texts for the traveller's phone
 PACK_MESSAGES = {
     "somethingChanged": "Something has changed. Stay where you are. Your caregiver has been told.",
     "offRoute": "You may be going the wrong way. Stop and look at the next picture.",
@@ -61,8 +61,7 @@ PACK_MESSAGES = {
 }
 
 
-# --- errors ----------------------------------------------------------------------------
-
+# Exceptions ---------------------------------------------------------------------------
 class StorageNotReady(Exception):
     """A store the service needs can't be used. `label` says which one, `code` is the AWS error code
     (e.g. ResourceNotFoundException, AccessDeniedException) and nothing more, so /ready can show it safely."""
@@ -88,8 +87,7 @@ class OneMapAuthError(OneMapError):
     """The token is missing, expired or rejected."""
 
 
-# --- helpers ---------------------------------------------------------------------------
-
+# Helpers ---------------------------------------------------------------------------
 def titlecase(name: str | None) -> str | None:
     """'PUNGGOL MRT STATION' -> 'Punggol MRT Station'."""
     if not name:
@@ -245,7 +243,7 @@ class _LiveData:
         return self._crowd[(line, when)]
 
 
-# --- the client ------------------------------------------------------------------------
+# Client ------------------------------------------------------------------------
 
 class JourneyClient:
     def __init__(
@@ -289,7 +287,7 @@ class JourneyClient:
         self._easyread_http = easyread_http or httpx.Client()
         self._photo_http = photo_http or httpx.Client()
 
-    # ===== OneMap transport =====
+    # OneMap transport =====
 
     @property
     def _recorded(self) -> bool:
@@ -348,7 +346,7 @@ class JourneyClient:
         log.warning("OneMap %s failed after %d attempts: %s", path, self._s.onemap_retries + 1, type(last).__name__)
         raise OneMapUnavailable("OneMap is not responding") from last
 
-    # ===== LTA DataMall (the work is done by self.lta, see lta.py) =====
+    # LTA DataMall (the work is done by self.lta, see lta.py) =====
 
     def bus_stops(self) -> list[dict]:
         return self.lta.bus_stops()
@@ -365,7 +363,7 @@ class JourneyClient:
     def traffic_incidents(self) -> list[dict]:
         return self.lta.traffic_incidents()
 
-    # ===== OneMap =====
+    # OneMap ---------------
 
     def search_places(self, query: str, limit: int = 10) -> list[dict]:
         """Place/address search: [{name, address, postalCode, lat, lng}]. Needs no token."""
@@ -389,8 +387,8 @@ class JourneyClient:
             })
         return places[:limit]
 
-    STATION_EXITS_TTL_S = 7 * 24 * 3600               # exits don't move
-    NO_EXITS_TTL_S = 3600                             # none found: maybe a blip in OneMap's search, so ask again soon
+    STATION_EXITS_TTL_S = 7 * 24 * 3600               # exits don't move, so cache them for a week. Cached to ensure the API can still return them when OneMap is down.
+    NO_EXITS_TTL_S = 3600                             # if a station has no exits, cache that for an hour (OneMap may be wrong or incomplete)
 
     def station_exits(self, station_name: str) -> list[tuple[float, float]]:
         """Where an MRT/LRT station's exits are, from OneMap's search ("SENGKANG MRT STATION EXIT A"); [] if unknown.
@@ -417,6 +415,8 @@ class JourneyClient:
         except (httpx.HTTPError, ValueError, KeyError, TypeError) as e:
             log.warning("couldn't look up the exits of %s (%s)", name, type(e).__name__)
             return []
+
+    # Buildings ---------------------------------------------------------------------------
 
     BUILDINGS_TTL_S = 30 * 24 * 3600                  # buildings don't move
     BUILDINGS_RADIUS_M = 100
@@ -471,7 +471,7 @@ class JourneyClient:
             "numItineraries": str(num_itineraries or self._s.plan_options),
         })
 
-    # ===== planning: OneMap itineraries -> contract steps, checked against LTA =====
+    # Planning
     #
     # Per itinerary: each leg becomes one step (WALK -> walk, BUS -> bus, SUBWAY -> train), matching
     # contracts/examples/route.json. `live` lists the next buses for every bus leg. `warnings` flags MRT
@@ -563,17 +563,15 @@ class JourneyClient:
             "from": frm, "to": to, "line": line, "expectedDurationS": leg.get("duration"),
             "underground": underground, "photoKey": None, "audioKey": None, "backup": None,
         }
-        # Extras (not in contracts/examples/route.json): how many stops to ride, which easy-read wording uses.
+        # Extra: info on how many stops to ride, which easy-read wording uses, and
+        # every stop on the leg: for a train, so check_disruptions() can tell whether an MRT fault falls between
+        # the two ends and easy_read() which way it goes; for a bus, the stop before getting off ("After
+        # Block 301, press the bell").
         if step_mode in ("bus", "train"):
             step["stopCount"] = stops
-        if step_mode in ("bus", "train"):
-            # Every stop on the leg: for a train, so check_disruptions() can tell whether an MRT fault falls between
-            # the two ends and easy_read() which way it goes; for a bus, the stop before getting off ("After
-            # Block 301, press the bell").
             every = [leg["from"], *(leg.get("intermediateStops") or []), leg["to"]]
             step["stops"] = [{"code": s.get("stopCode"), "name": pretty(s.get("name"))} for s in every]
-        step["easyRead"] = easy_read(step)
-        return step
+        return step                     # easyRead: _option() writes it for the whole route (route_wording)
 
     def _with_bus_service(self, step: dict) -> dict:
         """A bus step with where the bus is going (`towards`, its front sign) and how often it comes (`every`, in
@@ -741,7 +739,7 @@ class JourneyClient:
             "steps": steps, "path": path, "stepPaths": step_paths, "live": live_entries, "warnings": warnings,
         }
 
-    # ===== saved routes (contracts/api.md: /api/routes) =====
+    # Saved routes and trips
     #
     # A route is route.json: the caregiver's chosen plan option plus names. `version` goes up by one on
     # every edit and an edit clears `approved`, so a caregiver must re-approve what they changed. Approving
@@ -863,7 +861,7 @@ class JourneyClient:
             routes = [r for r in routes if self._participates(caller, r)]
         return sorted(routes, key=lambda r: r["updatedAt"], reverse=True)
 
-    # ----- step photos and AI wording -----
+    # Step photos and landmarks and their Street View photos
     #
     # A step's `photoKey` is an S3 key in the pack bucket: a Street View photo (media/streetview/..., filled in on
     # save for steps without one) or the caregiver's upload (media/uploads/..., kept like caregiver-written
@@ -1074,7 +1072,7 @@ class JourneyClient:
                 "origin", "destination", "steps", "path", "updatedAt"]
         return {**{k: route[k] for k in head if k in route}, **{k: v for k, v in route.items() if k not in head}}
 
-    # ===== trips (contracts/api.md: /api/trips) =====
+    # Trips 
     #
     # A trip is one journey on one day along an approved route. It pins the route's version, because a
     # disruption or an edit must never change a journey that is already under way. Statuses:

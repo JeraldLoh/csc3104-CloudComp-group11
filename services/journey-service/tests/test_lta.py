@@ -107,14 +107,27 @@ def test_bus_service_finds_the_direction_that_stops_at_both_in_order():
 def test_bus_service_loop_has_no_destination():
     bus_lists([{"ServiceNo": "88", "Direction": 1, "StopSequence": i, "BusStopCode": c}
                for i, c in enumerate(["65009", "65259"])])
+    # A loop: every bus 88 at that pole goes the right way, so no destination is named.
     assert make().lta.bus_service("88", "65009", "65259") == {"towards": None, "every": [10, 10]}
 
 
 @respx.mock
-def test_bus_service_unknown_when_lta_is_down():
-    respx.get(f"{LTA}/BusRoutes").mock(return_value=httpx.Response(503))
+def test_bus_service_unknown_when_lta_is_down_and_not_asked_again_at_once():
+    down = respx.get(f"{LTA}/BusRoutes").mock(return_value=httpx.Response(503))
     respx.get(f"{LTA}/BusServices").mock(return_value=httpx.Response(503))
-    assert make().lta.bus_service("136", "65009", "65221") is None
+    lta = make().lta
+    assert lta.bus_service("136", "65009", "65221") is None
+    assert lta.bus_service("136", "65009", "65221") is None
+    assert down.call_count == 1                              # the failure is remembered for BUS_RETRY_S
+
+
+def test_bus_service_does_not_wait_for_a_load_in_progress():
+    lta = make().lta
+    lta._bus_lock.acquire()                                  # the startup prefetch is loading the lists
+    try:
+        assert lta.bus_service("136", "65009", "65221") is None
+    finally:
+        lta._bus_lock.release()
 
 
 def test_every():

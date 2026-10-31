@@ -291,14 +291,20 @@ uses only the route's own facts, so nothing can be invented, and says what heads
   still the planner's own with the name ("Walk to your destination." -> "Walk to ION Orchard."). Text a caregiver
   wrote is kept.
 - Which way a train goes is worked out from the first and last station codes and `TRAIN_SIGNS`, each line's two
-  ends as of 2026 (update it when a line is extended). LRT loops get no direction.
+  ends as of 2026 (update it when a line is extended). Where there are no two simple ends (the Circle Line, LRT
+  loops) the wording names the station the train stops at next instead, from the route's own stops.
 - A bus step keeps every stop of the ride (`stops`, as train steps do) for the stop before getting off, and gets
   `towards` (where the bus is going, its front sign; none for a loop service) and `every` ([low, high] minutes
   between buses in the daytime) from LTA's BusRoutes and BusServices lists (`lta.bus_service()`: fetched live, also
-  with saved data, cached a week and prefetched at startup, as they take ~9 s; best-effort).
-- Bus wording stays within 300 characters (`MAX_CHARS`, the caregiver app's and the Easy-read Service's limit), so
-  the traveller app's main button stays on screen: how often the bus comes is left out first, then the ride's
-  length. LTA's short forms are spelled out (Blk, Opp, Int, Stn, Bef, Aft, Mkt/Fc, Ave, Rd, ...).
+  with saved data, cached a week and prefetched at startup, as they take ~9 s; best-effort). One thread loads them
+  at a time: a plan made meanwhile goes without, and a failed load is retried after 10 minutes, not on every bus
+  step. A loop service names no destination: it passes each stop pole once a loop, the same way round, so at the
+  right pole every bus of that number is the right one.
+- Bus wording stays within 300 characters (`MAX_CHARS`, set by `EASYREAD_MAX_CHARS`: the one setting for it, sent
+  to the Easy-read Service with each request and to the caregiver app's editor by `GET /api/easy-read/limits`), so
+  the traveller app's main button stays on screen: how
+  often the bus comes is left out first, then the ride's length. A step whose essential sentences alone are longer
+  (very long stop names) stays longer; the editor only asks to shorten wording the caregiver is changing. LTA's short forms are spelled out (Blk, Opp, Int, Stn, Bef, Aft, Mkt/Fc, Ave, Rd, ...).
 
 ### Simpler wording with AI
 

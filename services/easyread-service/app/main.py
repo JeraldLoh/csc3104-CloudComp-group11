@@ -47,6 +47,9 @@ class StepIn(BaseModel):
 
 class EasyReadIn(BaseModel):
     steps: list[StepIn] = Field(min_length=1, max_length=50)
+    # The longest wording one step may have, from journey-service (its EASYREAD_MAX_CHARS, the one setting for it);
+    # without it, this service's own default.
+    maxChars: int | None = Field(default=None, ge=50, le=2000)
 
 
 def error(status: int, code: str, message: str, details=None) -> JSONResponse:
@@ -79,13 +82,14 @@ def create_app(ollama: OllamaClient | None = None, s: Settings = default_setting
     @app.post("/internal/easyread")
     def easyread(body: EasyReadIn, request: Request):
         steps = [step.model_dump() for step in body.steps]
+        max_chars = body.maxChars or s.max_chars
         start = time.perf_counter()
         try:
-            ai, provider = request.app.state.ollama.rewrite(steps), "ollama"
+            ai, provider = request.app.state.ollama.rewrite(steps, max_chars), "ollama"
         except OllamaUnavailable as e:
             log.warning("Ollama unavailable (%s): answering with the template wording", e)
             ai, provider = None, "template"
-        results = checked(steps, ai, s.max_chars)
+        results = checked(steps, ai, max_chars)
         for r in results:
             if provider == "ollama" and r["problems"]:
                 log.info("step %d: AI text not used: %s", r["stepIndex"], "; ".join(r["problems"]))

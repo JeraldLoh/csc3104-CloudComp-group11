@@ -1,19 +1,14 @@
-// What the traveller will see for one step, drawn like the traveller app's step screen (apps/traveller,
-// StepCard.tsx): a sign coloured by how they travel, with the photo, the wording in large type, and the buttons.
-// The editor shows it over the map (through PreviewSlot), so the caregiver checks each step as the traveller
-// reads it while they edit.
+// Preview of a step as it appears on the traveller's phone, with the mode pictogram, photo, and text.
 import { createContext, useContext, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { StepMode } from "../journey/types";
 
-/** Where the planner wants the preview drawn (a spot over the map); null: in place, where the editor is. */
 export const PreviewSlot = createContext<HTMLElement | null>(null);
 
 const MODE_NAME: Record<StepMode, string> = { walk: "Walk", bus: "Bus", train: "Train" };
 
 interface Props {
   mode: StepMode;
-  /** The wording as the traveller app shows it: one paragraph. Empty: the automatic wording is used on save. */
   text: string;
   photoUrl: string | null;
   backup?: string | null;
@@ -66,7 +61,6 @@ export function PhonePreview({ mode, text, photoUrl, backup, index, total, onPre
   return slot ? createPortal(preview, slot) : preview;
 }
 
-/** The traveller app's travel pictograms (apps/traveller, Pictogram.tsx), smaller. */
 function Pictogram({ mode }: { mode: StepMode }) {
   const common = { width: 30, height: 30, viewBox: "0 0 48 48", "aria-hidden": true, fill: "currentColor" } as const;
   if (mode === "bus") {

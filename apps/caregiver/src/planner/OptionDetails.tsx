@@ -1,3 +1,4 @@
+// List of planned options, and the details of the selected one, with live info and notices.
 import type { PlanOption } from "../journey/types";
 import { DisruptedStep, splitDisruptions, warningClass } from "./DisruptionWarnings";
 import { liveText, minutes, optionLabel } from "./format";
@@ -26,7 +27,6 @@ export function OptionList({ options, activeIndex, onSelect }: ListProps) {
   );
 }
 
-/** The steps of the selected option, with what is known live about each, and the notices. */
 export function OptionDetails({ option }: { option: PlanOption }) {
   const liveByStep = new Map(option.live.map((l) => [l.stepIndex, l]));
   // Disruptions sit over the step they affect; the other notices (long walks, crowding...) stay below.

@@ -1,5 +1,4 @@
-// Shapes from the Journey Service (services/journey-service/app/models.py and the plan
-// output in journey_client.py) and contracts/examples/route.json. Keep in step with those.
+// Typing for the Journey Planner service (the backend). The service is in apps/journey-service.
 
 export type StepMode = "walk" | "bus" | "train";
 export type TravelMode = "any" | "bus" | "train";

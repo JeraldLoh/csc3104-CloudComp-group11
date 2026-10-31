@@ -27,6 +27,11 @@ def test_request_hides_names_without_a_stop_code():
     assert last["text"] == "Walk to [place 2]. You have arrived." and last["keep"] == ["[place 2]"]
 
 
+def test_request_tells_the_service_the_limit():
+    from app.easy_read import MAX_CHARS
+    assert ai_request(STEPS)[0]["maxChars"] == MAX_CHARS
+
+
 def test_request_names_the_destination_by_its_token():
     last = {**LAST, "to": {"name": None, "code": None}}            # how a planned route's last step ends
     body, names = ai_request([WALK, BUS, last], destination="Clinic")
@@ -37,7 +42,8 @@ def test_request_names_the_destination_by_its_token():
 def test_request_keeps_the_facts_the_text_names():
     bus = ai_request(STEPS)[0]["steps"][1]
     # Short forms are spelled out, as in the text; the stop count comes from the instruction for older routes.
-    assert bus["keep"] == ["65009", "190", "Opposite Block 123", "Punggol Interchange", "6"]
+    # The count as the text says it ("6th"): a bare "6" would also be found inside the stop code 65009.
+    assert bus["keep"] == ["65009", "190", "Opposite Block 123", "Punggol Interchange", "6th"]
     assert all(k in bus["text"] for k in bus["keep"])
 
 

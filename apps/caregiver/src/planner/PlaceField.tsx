@@ -1,3 +1,4 @@
+// A search box for a place, with the pinned result in the box and other results in a list.
 import { useId } from "react";
 import type { PlaceResult } from "../journey/types";
 import type { Point } from "./usePlanner";
@@ -12,7 +13,6 @@ interface Props {
   onPick: (place: PlaceResult) => void;
 }
 
-/** A search box: Enter pins the first result, and the other results can be picked from a list. */
 export function PlaceField({ label, value, point, candidates, onChange, onSearch, onPick }: Props) {
   const id = useId();
   // The pinned result is already in the box, so the list only offers the others. It is only

@@ -7,6 +7,7 @@ GET  /api/routes?travellerId=            a traveller's saved routes (not in the 
 GET/PUT /api/routes/{routeId}            load / edit a route (edit: version + 1, approval cleared)
 POST /api/routes/{routeId}/approve       approve a route
 POST /api/routes/{routeId}/easy-read     AI wording for every step, for the caregiver to review (nothing saved)
+GET  /api/easy-read/limits               the longest wording a step may have -> {maxChars} (for the editor)
 POST /api/routes/{routeId}/photos        upload the caregiver's own photo for a step -> {photoKey, photoUrl}
 POST /api/trips                          a trip on an approved route, on a date (planned)
 POST /api/trips/{tripId}/start           planned -> active; writes the Redis keys the detectors and checker read
@@ -47,6 +48,7 @@ from . import aws_resources
 from .auth import AuthUnavailable, Authenticator, Caller, Forbidden, Unauthorized
 from .config import Settings, settings as default_settings
 from .data_mode import DataMode
+from .easy_read import MAX_CHARS as EASY_READ_MAX_CHARS
 from .journey_client import (JourneyClient, OneMapAuthError, OneMapError, OneMapUnavailable, PhotoInvalid,
                              StorageNotReady)
 from .lta import LtaAuthError, LtaUnavailable
@@ -289,6 +291,12 @@ def create_app(
         """contracts/api.md, Easy-read Service: {"steps": [{stepIndex, easyRead, fallback}], "provider": "ollama" |
         "template"}. Slow (the AI runs on CPU); always answers with usable wording."""
         return request.app.state.journey.suggest_easy_read(route_id_or_404(route_id), caller)
+
+    @app.get("/api/easy-read/limits", dependencies=[Depends(current_caller)])    # any logged-in user
+    def easy_read_limits():
+        """The longest easy-read wording one step may have (EASYREAD_MAX_CHARS). The one setting: the caregiver
+        app's editor and the Easy-read Service (sent it with each request) both use it."""
+        return {"maxChars": EASY_READ_MAX_CHARS}
 
     @app.post("/api/routes/{route_id}/photos", status_code=201)
     def upload_photo(route_id: str, request: Request, photo: UploadFile = File(),

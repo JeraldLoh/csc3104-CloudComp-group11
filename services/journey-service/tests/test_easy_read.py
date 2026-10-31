@@ -49,8 +49,13 @@ def test_train_step_says_which_way_and_which_signs():
                                 "It is the 11th stop.")
     up = {**TRAIN, "stops": [{"code": "NE6"}, {"code": "NE17"}]}
     assert "Take the train going to Punggol Coast." in easy_read(up)
+    # No two simple ends (the Circle Line, LRT loops): the station it stops at next tells the platform.
+    circle = {**TRAIN, "line": "CC", "from": {"name": "Serangoon MRT Station", "code": "CC13"},
+              "stops": [{"code": "CC13", "name": "Serangoon"}, {"code": "CC14", "name": "Lorong Chuan"},
+                        {"code": "CC15", "name": "Bishan"}]}
+    assert "Follow the yellow signs for the Circle Line. Take the train that stops next at Lorong Chuan." in easy_read(circle)
     lrt = {**TRAIN, "line": "SW", "stops": [{"code": "SW1"}, {"code": "SW4"}]}
-    assert "Get on the train." in easy_read(lrt) and "going to" not in easy_read(lrt)          # a loop: no direction
+    assert "Get on the train." in easy_read(lrt) and "going to" not in easy_read(lrt)     # one stop, no names: plain
 
 
 def test_route_wording_knows_the_steps_around():
