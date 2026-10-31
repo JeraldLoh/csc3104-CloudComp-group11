@@ -1,0 +1,136 @@
+# Check-in analysis running locally with the real detectors and the real Alert Service (Member 5).
+#
+#   docker compose -f services/analysis-dev/compose.yaml up --build -d
+#   docker compose -f services/analysis-dev/compose.yaml run --rm send --seq 1
+#
+# Fault demos with fake detectors instead (see compose.fakes.yaml):
+#   docker compose -f services/analysis-dev/compose.yaml -f services/analysis-dev/compose.fakes.yaml up --build -d
+#
+# See README.md in this folder.
+name: careroute-analysis
+
+x-aws: &aws
+  AWS_ENDPOINT_URL: http://elasticmq:9324   # local SQS; unset on AWS
+  AWS_DEFAULT_REGION: ap-southeast-1
+  AWS_ACCESS_KEY_ID: local                   # ElasticMQ ignores these
+  AWS_SECRET_ACCESS_KEY: local
+
+x-detector: &detector
+  build: ../detectors
+  image: careroute-detectors:dev
+  depends_on:
+    redis: { condition: service_healthy }
+
+services:
+  redis:
+    image: redis:7.4-alpine
+    ports: ["127.0.0.1:6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      retries: 15
+
+  elasticmq:
+    image: softwaremill/elasticmq-native:1.6.11
+    volumes:
+      - ./elasticmq.conf:/opt/elasticmq.conf:ro
+    ports: ["127.0.0.1:9324:9324", "127.0.0.1:9325:9325"]   # 9325: ElasticMQ's web UI
+
+  coordinator:
+    build: ../coordinator
+    image: careroute-coordinator:dev
+    environment:
+      <<: *aws
+      REDIS_URL: redis://redis:6379/0
+      CHECKINS_QUEUE: careroute-checkins
+      REDUNDANCY_MODE: ${REDUNDANCY_MODE:-fixed4}   # adaptive | fixed2 for the experiment
+      # Detector and Aggregator URLs: the defaults match the service names below.
+    ports: ["127.0.0.1:8000:8000"]
+    depends_on:
+      redis: { condition: service_healthy }
+      elasticmq: { condition: service_started }
+      aggregator: { condition: service_started }
+
+  aggregator:
+    build: ../aggregator
+    image: careroute-aggregator:dev
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      ALERT_SERVICE_URL: http://alert-service:8000
+    ports: ["127.0.0.1:8001:8000"]
+    depends_on:
+      redis: { condition: service_healthy }
+
+  # --- The detectors (Member 4): one image, DETECTOR_ID picks the detector ---------------
+  # Service names match contracts/api.md, so the Coordinator finds them without extra config.
+  # For fault demos (slow / wrong / failing detectors on demand), swap in the fakes:
+  #   docker compose -f compose.yaml -f compose.fakes.yaml up -d
+
+  detector-route:
+    <<: *detector
+    environment: { DETECTOR_ID: route-corridor, REDIS_URL: "redis://redis:6379/0" }
+    ports: ["127.0.0.1:9001:8000"]
+
+  detector-dwell:
+    <<: *detector
+    environment: { DETECTOR_ID: dwell-time, REDIS_URL: "redis://redis:6379/0" }
+    ports: ["127.0.0.1:9002:8000"]
+
+  detector-heading:
+    <<: *detector
+    environment: { DETECTOR_ID: heading-speed, REDIS_URL: "redis://redis:6379/0" }
+    ports: ["127.0.0.1:9003:8000"]
+
+  detector-progress:
+    <<: *detector
+    environment: { DETECTOR_ID: route-progress, REDIS_URL: "redis://redis:6379/0" }
+    ports: ["127.0.0.1:9004:8000"]
+
+  # --- Alert Service (Member 5), with a local DynamoDB for its incidents -------------------
+  # Incidents: http://localhost:8004/api/incidents?travellerId=U-042
+  alert-service:
+    build: ../alert-service
+    image: careroute-alert-service:dev
+    environment:
+      AWS_DEFAULT_REGION: ap-southeast-1
+      AWS_ACCESS_KEY_ID: local
+      AWS_SECRET_ACCESS_KEY: local
+      # One endpoint per AWS service (boto3 reads these when the code passes no endpoint_url)
+      AWS_ENDPOINT_URL_DYNAMODB: http://dynamodb:8000
+      AWS_ENDPOINT_URL_SQS: http://elasticmq:9324
+      REDIS_URL: redis://redis:6379/0
+      CREATE_RESOURCES: "true"         # its tables and the careroute-disruptions queue, on startup
+    ports: ["127.0.0.1:8004:8000"]
+    restart: on-failure                # DynamoDB may still be starting the first time
+    depends_on:
+      redis: { condition: service_healthy }
+      dynamodb: { condition: service_started }
+      elasticmq: { condition: service_started }
+
+  dynamodb:
+    image: amazon/dynamodb-local:2.5.4
+    command: ["-jar", "DynamoDBLocal.jar", "-inMemory", "-sharedDb"]   # empty on every restart
+
+  # The detectors read the trip from Redis. This writes the route and context for T-001, standing in
+  # for the Journey Service at trip start.
+  seed:
+    build: ../coordinator
+    image: careroute-coordinator:dev
+    environment: { REDIS_URL: "redis://redis:6379/0" }
+    volumes:
+      - ./seed_trip.py:/tools/seed_trip.py:ro
+      - ../../contracts/examples/route.json:/tools/route.json:ro
+    entrypoint: ["python", "/tools/seed_trip.py"]
+    depends_on:
+      redis: { condition: service_healthy }
+
+  # --- tool: put a check-in on the queue ---------------------------------------------------
+  send:
+    image: careroute-coordinator:dev        # reuses its Python + boto3
+    profiles: ["tools"]
+    # REDIS_URL makes it also write the Check-in Service's keys (trip:{id}:recent, :context)
+    environment: { <<: *aws, REDIS_URL: "redis://redis:6379/0" }
+    volumes:
+      - ./send_checkin.py:/tools/send_checkin.py:ro
+    entrypoint: ["python", "/tools/send_checkin.py"]
+    depends_on: [elasticmq, redis]

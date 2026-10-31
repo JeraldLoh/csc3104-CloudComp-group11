@@ -1,0 +1,53 @@
+# Coordinator (Member 3): consumes careroute-checkins and analyses each check-in.
+# Deploy: bash scripts/macos/deploy.sh --service coordinator   (fills the __PLACEHOLDERS__)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: coordinator
+  namespace: __NAMESPACE__
+  labels: { app: coordinator }
+spec:
+  replicas: 2                       # two, so killing one mid-analysis shows SQS redelivery
+  selector:
+    matchLabels: { app: coordinator }
+  template:
+    metadata:
+      labels: { app: coordinator }
+    spec:
+      serviceAccountName: cloud-fastapi   # shared IRSA role: SQS on careroute-* queues
+      topologySpreadConstraints:          # one replica per Availability Zone where possible
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: { app: coordinator }
+      containers:
+        - name: coordinator
+          image: __IMAGE__
+          ports: [{ containerPort: 8000 }]
+          env:
+            - { name: REDIS_URL, value: "redis://__REDIS_ENDPOINT__:6379/0" }
+            - { name: CHECKINS_QUEUE_URL, value: "__CHECKINS_QUEUE_URL__" }
+            - { name: AWS_DEFAULT_REGION, value: "__REGION__" }
+            - { name: REDUNDANCY_MODE, value: "fixed4" }     # fixed4 | adaptive | fixed2
+            # Detector and Aggregator URLs default to the in-cluster service names.
+          resources:                      # Fargate sizes the pod from these
+            requests: { cpu: 250m, memory: 512Mi }
+            limits: { cpu: 250m, memory: 512Mi }
+          readinessProbe:
+            httpGet: { path: /ready, port: 8000 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health, port: 8000 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: coordinator
+  namespace: __NAMESPACE__
+spec:
+  selector: { app: coordinator }
+  ports: [{ port: 8000, targetPort: 8000 }]

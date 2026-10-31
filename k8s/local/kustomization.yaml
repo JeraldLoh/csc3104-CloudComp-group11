@@ -4,5 +4,6 @@ resources:
   - redis.yaml
   - localstack.yaml
   - fastapi.yaml
+  - checkin-service.yaml
   - journey-service.yaml
   - easyread-service.yaml

@@ -59,6 +59,8 @@ def client_for(detector_id, server=None):
         ("heading-speed", [{**checkin(i, 1.405 - i * 13 * M), "headingDeg": 180.0} for i in range(6)], "problem", "wrong_direction"),
         # standing still for 360 s
         ("dwell-time", [checkin(i, 1.405, every=40) for i in range(10)], "problem", "long_dwell"),
+        # standing 300 m east of the path, not getting closer to the end
+        ("route-progress", [{**checkin(i, 1.405), "lng": 103.9027} for i in range(6)], "problem", "off_route"),
     ],
 )
 def test_detect_happy_path(detector_id, recent, verdict, problem):
@@ -134,3 +136,12 @@ def test_logs_one_json_line_per_request(caplog):
 
 def test_module_app_exists():
     assert app_module.app.title
+
+
+def test_web_checkin_with_nulls_is_not_rejected():
+    client, r, _ = client_for("route-corridor")
+    seed(r, [])
+    nulls = {**checkin(1, 1.405), "stepIndex": None, "routeVersion": None, "speedMps": None, "headingDeg": None, "batteryPct": None}
+    with client:
+        resp = client.post("/internal/detect", json=body(nulls))
+    assert resp.status_code == 200 and resp.json()["verdict"] in {"normal", "problem", "abstain"}

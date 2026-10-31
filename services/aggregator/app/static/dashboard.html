@@ -1,0 +1,507 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CareRoute Detection</title>
+<style>
+  /* Light card grid. Status colours always come with an icon or a text label, never colour alone. */
+  :root {
+    --bg: #f3f5f9;
+    --card: #ffffff;
+    --ink: #101828;
+    --muted: #667085;
+    --faint: #98a2b3;
+    --line: #eaecf0;
+    --line-strong: #d0d5dd;
+    --accent: #3b5bdb;
+    --accent-soft: #edf1ff;
+    --ok: #12a594;   --ok-soft: #e3f6f3;   --ok-ink: #0b6e64;
+    --warn: #e0a32e; --warn-soft: #fdf3df; --warn-ink: #8a5a00;
+    --bad: #e5484d;  --bad-soft: #fdeaea;  --bad-ink: #b42323;
+    --none-soft: #eef1f6; --none-ink: #475467;
+    --radius: 24px;
+    --shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 8px 24px rgba(16, 24, 40, .06);
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .num, .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  svg.i { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 2;
+          stroke-linecap: round; stroke-linejoin: round; }
+  svg.i.sm { width: 14px; height: 14px; }
+
+  /* Header */
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; padding: 20px 24px 4px; }
+  .logo { width: 44px; height: 44px; border-radius: 14px; background: var(--accent); color: #fff;
+          display: grid; place-items: center; box-shadow: 0 6px 16px rgba(59, 91, 219, .3); }
+  .logo svg.i { width: 22px; height: 22px; }
+  header h1 { margin: 0; font-size: 18px; font-weight: 700; letter-spacing: -.01em; }
+  header .sub { color: var(--muted); font-size: 13px; }
+  .spacer { flex: 1; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 3px 10px;
+          font-size: 12px; font-weight: 600; white-space: nowrap; background: var(--none-soft); color: var(--none-ink); }
+  .pill.ok { background: var(--ok-soft); color: var(--ok-ink); }
+  .pill.warn { background: var(--warn-soft); color: var(--warn-ink); }
+  .pill.bad { background: var(--bad-soft); color: var(--bad-ink); }
+  .pill.accent { background: var(--accent-soft); color: var(--accent); }
+  .pill.outline { background: transparent; border: 1px dashed var(--line-strong); color: var(--muted); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--faint); }
+  .dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); } .dot.bad { background: var(--bad); }
+  .dot.none { background: transparent; border: 1.5px dashed var(--faint); }
+  .live { background: var(--card); box-shadow: var(--shadow); padding: 6px 14px; color: var(--ink); font-weight: 500; }
+  .live .num { color: var(--muted); font-weight: 400; }
+  button { font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; border: 0; border-radius: 999px;
+           padding: 8px 16px; background: var(--ink); color: #fff; display: inline-flex; align-items: center; gap: 6px; }
+  button:hover { background: #344054; }
+  button.ghost { background: var(--none-soft); color: var(--none-ink); padding: 3px 10px; font-size: 12px; }
+  button.ghost:hover { background: var(--line-strong); }
+
+  /* Card grid */
+  main { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px; padding: 20px 24px 32px; }
+  main > * { min-width: 0; }
+  .card { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); padding: 20px; }
+  .card > h2 { margin: 0 0 14px; font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .card > h2 .note { color: var(--muted); font-size: 12px; font-weight: 400; }
+  .chip { width: 40px; height: 40px; border-radius: 14px; display: grid; place-items: center; flex: none;
+          background: var(--none-soft); color: var(--none-ink); }
+  .chip.ok { background: var(--ok-soft); color: var(--ok-ink); }
+  .chip.warn { background: var(--warn-soft); color: var(--warn-ink); }
+  .chip.bad { background: var(--bad-soft); color: var(--bad-ink); }
+  .chip.accent { background: var(--accent-soft); color: var(--accent); }
+  .span2 { grid-column: span 2; }
+  .span4 { grid-column: 1 / -1; }
+
+  /* Stat cards */
+  .stat { display: flex; flex-direction: column; gap: 10px; }
+  .stat .head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .stat .label { color: var(--muted); font-size: 13px; font-weight: 500; }
+  .stat .value { font-family: var(--mono); font-size: 32px; font-weight: 700; letter-spacing: -.02em; line-height: 1.1; }
+  .stat .hint { color: var(--muted); font-size: 12px; }
+
+  /* Travellers */
+  .list { display: flex; flex-direction: column; gap: 8px; max-height: 260px; overflow: auto; margin: 0 -6px; padding: 0 6px; }
+  .trav { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 18px; cursor: pointer;
+          border: 1px solid var(--line); }
+  .trav:hover { background: var(--bg); }
+  .trav.selected { border-color: var(--accent); background: var(--accent-soft); }
+  .avatar { width: 36px; height: 36px; border-radius: 50%; background: var(--accent-soft); color: var(--accent);
+            display: grid; place-items: center; flex: none; }
+  .trav .who { flex: 1; min-width: 0; }
+  .trav .id { font-family: var(--mono); font-weight: 600; }
+  .trav .meta { color: var(--muted); font-size: 12px; font-family: var(--mono); }
+  .trav .tags { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+
+  /* Risk chart */
+  .chart { position: relative; }
+  .chart svg { display: block; width: 100%; height: 220px; }
+  .tip { position: absolute; pointer-events: none; background: var(--card); border-radius: 12px; box-shadow: var(--shadow);
+         border: 1px solid var(--line); padding: 8px 10px; font-family: var(--mono); font-size: 11px; white-space: nowrap;
+         display: none; z-index: 2; }
+  .tip div { display: flex; align-items: center; gap: 6px; }
+  .empty { padding: 24px 8px; color: var(--muted); font-size: 13px; display: flex; align-items: center; gap: 8px; }
+
+  /* Activity list */
+  .activity { display: flex; flex-direction: column; max-height: 560px; overflow: auto; margin: 0 -8px; padding: 0 8px; }
+  .item { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; gap: 4px 14px; padding: 14px 8px;
+          border-bottom: 1px solid var(--line); border-radius: 16px; }
+  .item:last-child { border-bottom: 0; }
+  .item.fresh { animation: fresh 2s ease-out; }
+  @keyframes fresh { from { background: var(--accent-soft); } to { background: transparent; } }
+  .item .chip { grid-row: span 3; width: 44px; height: 44px; border-radius: 16px; }
+  .item .title { font-weight: 600; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .item .sub { color: var(--muted); font-size: 12px; font-family: var(--mono); }
+  .item .right { text-align: right; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+  .item .time { color: var(--muted); font-size: 12px; font-family: var(--mono); }
+  .item .score { font-family: var(--mono); font-weight: 700; font-size: 16px; }
+  .item .row { grid-column: 2 / -1; display: flex; flex-wrap: wrap; gap: 6px; }
+  .vote { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 3px 10px 3px 8px;
+          font-size: 12px; font-family: var(--mono); border: 1px solid var(--line); background: var(--card); }
+  .vote .det { font-weight: 600; color: var(--ink); }
+  .vote .meta { color: var(--muted); }
+  .filter { display: none; }
+  .filter.on { display: inline-flex; align-items: center; gap: 6px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 14px; margin-top: 4px; border-top: 1px solid var(--line); }
+  .legend .pill { font-weight: 500; }
+
+  @media (max-width: 1100px) {
+    main { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .span2 { grid-column: 1 / -1; }
+  }
+  @media (max-width: 640px) {
+    header { padding: 16px 16px 0; }
+    main { grid-template-columns: minmax(0, 1fr); padding: 16px; gap: 16px; }
+    .span2 { grid-column: auto; }
+    .item { grid-template-columns: 44px minmax(0, 1fr); }
+    .item .right { grid-column: 2; align-items: flex-start; text-align: left; flex-direction: row; gap: 10px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo"><svg class="i" data-icon="route"></svg></div>
+  <div>
+    <h1>CareRoute · Check-in analysis</h1>
+    <div class="sub">Coordinator + Aggregator · all 4 detectors by default (REDUNDANCY_MODE=fixed4); adaptive asks 2 at normal risk</div>
+  </div>
+  <div class="spacer"></div>
+  <span class="pill live"><span id="dot" class="dot none"></span><span id="conn">CONNECTING</span>
+    <span class="num" id="updated">--:--:--.---</span></span>
+  <button id="pause" type="button"><svg class="i sm" data-icon="pause"></svg><span>Pause</span></button>
+</header>
+
+<main>
+  <section class="card stat">
+    <div class="head"><span class="label">Decisions</span><div class="chip accent"><svg class="i" data-icon="activity"></svg></div></div>
+    <div class="value" id="m-n">–</div><div class="hint" id="m-n-hint">&nbsp;</div>
+  </section>
+  <section class="card stat">
+    <div class="head"><span class="label">Normal</span><div class="chip ok"><svg class="i" data-icon="check"></svg></div></div>
+    <div class="value" id="m-normal">–</div><div class="hint" id="m-normal-hint">&nbsp;</div>
+  </section>
+  <section class="card stat">
+    <div class="head"><span class="label">Inconclusive</span><div class="chip"><svg class="i" data-icon="help"></svg></div></div>
+    <div class="value" id="m-inc">–</div><div class="hint">too few answers to call it normal</div>
+  </section>
+  <section class="card stat">
+    <div class="head"><span class="label">Problems</span><div class="chip bad"><svg class="i" data-icon="alert"></svg></div></div>
+    <div class="value" id="m-prob">–</div><div class="hint" id="m-prob-hint">&nbsp;</div>
+  </section>
+  <section class="card stat">
+    <div class="head"><span class="label">Escalations</span><div class="chip warn"><svg class="i" data-icon="trend"></svg></div></div>
+    <div class="value" id="m-esc">–</div><div class="hint">too few answers / asked the rest</div>
+  </section>
+  <section class="card stat">
+    <div class="head"><span class="label">Abstains</span><div class="chip"><svg class="i" data-icon="slash"></svg></div></div>
+    <div class="value" id="m-abs">–</div><div class="hint" id="m-abs-hint">&nbsp;</div>
+  </section>
+  <section class="card stat">
+    <div class="head"><span class="label">Travellers elevated</span><div class="chip warn"><svg class="i" data-icon="users"></svg></div></div>
+    <div class="value" id="m-elev">–</div><div class="hint" id="m-elev-hint">&nbsp;</div>
+  </section>
+  <section class="card stat">
+    <div class="head"><span class="label">Slowest answer</span><div class="chip accent"><svg class="i" data-icon="zap"></svg></div></div>
+    <div class="value" id="m-lat">–</div><div class="hint">latest decision · timeout at 500 ms</div>
+  </section>
+
+  <section class="card span2">
+    <h2><span class="chip accent"><svg class="i" data-icon="users"></svg></span>Travellers <span class="note">click to filter</span></h2>
+    <div class="list" id="travellers"></div>
+    <div id="travellers-empty" class="empty"><svg class="i" data-icon="user"></svg>No travellers yet. Send a check-in.</div>
+  </section>
+
+  <section class="card span2">
+    <h2><span class="chip accent"><svg class="i" data-icon="activity"></svg></span>Risk score <span class="pill mono" id="risk-who">–</span></h2>
+    <div class="chart" id="c-risk"></div>
+  </section>
+
+  <section class="card span4">
+    <h2><span class="chip accent"><svg class="i" data-icon="list"></svg></span>Recent decisions <span class="note">newest first</span>
+      <span id="filter" class="filter"><span class="pill accent mono" id="filter-name"></span>
+        <button id="clear" class="ghost" type="button"><svg class="i sm" data-icon="x"></svg>Show all</button></span>
+    </h2>
+    <div class="activity" id="decisions"></div>
+    <div id="decisions-empty" class="empty"><svg class="i" data-icon="clock"></svg>No decisions yet.</div>
+    <div class="legend">
+      <span class="pill ok"><span class="dot ok"></span>normal</span>
+      <span class="pill bad"><span class="dot bad"></span>problem</span>
+      <span class="pill outline"><span class="dot none"></span>abstain (no answer in time, error, or can't judge yet)</span>
+      <span class="pill warn"><svg class="i sm" data-icon="trend"></svg>elevated risk / escalated (asked the remaining detectors)</span>
+      <span class="pill"><svg class="i sm" data-icon="pin"></svg>step: pair chosen for walking / waiting / riding (adaptive)</span>
+    </div>
+  </section>
+</main>
+
+<script>
+"use strict";
+const POLL_MS = 2000, WINDOW = 200, STALE_MS = 6000;
+const SHORT = { "route-corridor": "route", "heading-speed": "heading", "dwell-time": "dwell", "route-progress": "progress" };
+const SVG = "http://www.w3.org/2000/svg";
+let paused = false, traveller = null, seen = new Set(), firstLoad = true, lastOk = 0;
+
+const $ = (id) => document.getElementById(id);
+
+// --- icons: 24x24 stroke paths, built with createElementNS (no HTML parsing) ---------------
+const circle = (cx, cy, r) => `M${cx - r} ${cy}a${r} ${r} 0 1 0 ${2 * r} 0a${r} ${r} 0 1 0 ${-2 * r} 0`;
+const ICONS = {
+  route: [circle(6, 19, 3), "M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15", circle(18, 5, 3)],
+  layers: ["M12 2 2 7l10 5 10-5-10-5z", "M2 17l10 5 10-5", "M2 12l10 5 10-5"],
+  alert: ["M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z", "M12 9v4", "M12 17h.01"],
+  trend: ["M22 7l-8.5 8.5-5-5L2 17", "M16 7h6v6"],
+  slash: [circle(12, 12, 10), "M4.93 4.93l14.14 14.14"],
+  users: ["M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2", circle(9, 7, 4), "M23 21v-2a4 4 0 0 0-3-3.87", "M16 3.13a4 4 0 0 1 0 7.75"],
+  user: [circle(12, 8, 4), "M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"],
+  check: [circle(12, 12, 10), "M8 12l3 3 5-6"],
+  problem: [circle(12, 12, 10), "M12 8v4", "M12 16h.01"],
+  help: [circle(12, 12, 10), "M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3", "M12 17h.01"],
+  clock: [circle(12, 12, 10), "M12 7v5l3 2"],
+  bell: ["M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9", "M13.73 21a2 2 0 0 1-3.46 0"],
+  repeat: ["M17 1l4 4-4 4", "M3 11V9a4 4 0 0 1 4-4h14", "M7 23l-4-4 4-4", "M21 13v2a4 4 0 0 1-4 4H3"],
+  activity: ["M22 12h-4l-3 9L9 3l-3 9H2"],
+  zap: ["M13 2 3 14h9l-1 8 10-12h-9l1-8z"],
+  pin: ["M12 22s7-6.2 7-12a7 7 0 0 0-14 0c0 5.8 7 12 7 12z", circle(12, 10, 2.5)],
+  list: ["M8 6h13", "M8 12h13", "M8 18h13", "M3 6h.01", "M3 12h.01", "M3 18h.01"],
+  pause: ["M6 4h4v16H6z", "M14 4h4v16h-4z"],
+  play: ["M6 4l14 8-14 8z"],
+  x: ["M18 6 6 18", "M6 6l12 12"],
+};
+function drawIcon(node, name) {
+  node.setAttribute("viewBox", "0 0 24 24");
+  node.setAttribute("aria-hidden", "true");
+  node.replaceChildren(...(ICONS[name] || []).map((d) => svg("path", { d })));
+  return node;
+}
+const icon = (name, cls) => drawIcon(svg("svg", { class: "i" + (cls ? " " + cls : "") }), name);
+document.querySelectorAll("svg[data-icon]").forEach((n) => drawIcon(n, n.dataset.icon));
+
+// Every value from the API is inserted as text nodes, never parsed as HTML.
+function el(tag, attrs, ...children) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === "class") node.className = v; else if (k === "title") node.title = v; else node.setAttribute(k, v);
+  }
+  for (const c of children) {
+    if (c === null || c === undefined) continue;
+    node.append(c instanceof Node ? c : document.createTextNode(String(c)));
+  }
+  return node;
+}
+function svg(tag, attrs) {
+  const n = document.createElementNS(SVG, tag);
+  for (const [k, v] of Object.entries(attrs || {})) n.setAttribute(k, v);
+  return n;
+}
+function svgText(x, y, text, attrs) {
+  const t = svg("text", { x, y, fill: "var(--muted)", "font-size": "11", "font-family": "var(--mono)", ...attrs });
+  t.textContent = text;
+  return t;
+}
+const dot = (kind) => el("span", { class: "dot " + kind });
+const pill = (kind, ...children) => el("span", { class: "pill " + (kind || "") }, ...children);
+const statusOf = (verdict) => verdict === "problem" ? "bad" : verdict === "normal" ? "ok" : "none";
+const DECISION_ICON = { problem: "problem", normal: "check", inconclusive: "help" };
+
+function hms(iso, ms) {
+  if (!iso) return "–";
+  const d = iso instanceof Date ? iso : new Date(iso);
+  if (isNaN(d)) return String(iso);
+  const p = (n, w = 2) => String(n).padStart(w, "0");
+  return p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds()) + (ms ? "." + p(d.getMilliseconds(), 3) : "");
+}
+
+// --- risk chart: one series, real axes, crosshair + tooltip ---------------------------------
+function lineChart(host, pts, opt) {
+  host.replaceChildren();
+  if (pts.length < 2) { host.append(el("div", { class: "empty" }, icon("activity"), opt.empty)); return; }
+  const W = host.clientWidth || 400, H = 220, m = { l: 38, r: 10, t: 10, b: 24 };
+  const pw = W - m.l - m.r, ph = H - m.t - m.b;
+  const x = (i) => m.l + (i / (pts.length - 1)) * pw;
+  const y = (v) => m.t + ph - ((v - opt.yMin) / (opt.yMax - opt.yMin)) * ph;
+  const s = svg("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": opt.aria });
+  for (const t of opt.yTicks) {
+    s.append(svg("line", { x1: m.l, x2: W - m.r, y1: y(t), y2: y(t), stroke: "var(--line)", "stroke-width": 1 }));
+    s.append(svgText(m.l - 8, y(t) + 4, opt.yFmt(t), { "text-anchor": "end" }));
+  }
+  const nTicks = Math.min(5, pts.length);
+  for (let j = 0; j < nTicks; j++) {
+    const i = Math.round((j / (nTicks - 1)) * (pts.length - 1));
+    s.append(svgText(x(i), H - 6, opt.xFmt(pts[i]), { "text-anchor": j === 0 ? "start" : j === nTicks - 1 ? "end" : "middle" }));
+  }
+  const refLabels = [];
+  for (const r of opt.refs || []) {
+    s.append(svg("line", { x1: m.l, x2: W - m.r, y1: y(r.y), y2: y(r.y), stroke: "var(--line-strong)",
+                           "stroke-width": 1, "stroke-dasharray": "4 4" }));
+    // Drawn after the series, with a background halo, so a line passing under it can't hide it.
+    refLabels.push(svgText(m.l + 6, y(r.y) - 4, r.label, { "text-anchor": "start", stroke: "var(--card)", "stroke-width": 3,
+                                                           "paint-order": "stroke", "stroke-linejoin": "round" }));
+  }
+  const d = pts.map((p, i) => `${i ? "L" : "M"}${x(i)},${y(p.v)}`).join("");
+  s.append(svg("path", { d: `${d}L${x(pts.length - 1)},${m.t + ph}L${x(0)},${m.t + ph}Z`, fill: "var(--accent-soft)" }));
+  s.append(svg("path", { d, fill: "none", stroke: "var(--accent)", "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }));
+  pts.forEach((p, i) => {
+    const kind = opt.marker && opt.marker(p);
+    if (kind) s.append(svg("circle", { cx: x(i), cy: y(p.v), r: 4.5, fill: `var(--${kind})`, stroke: "var(--card)", "stroke-width": 2 }));
+  });
+  s.append(...refLabels);
+  const cross = svg("line", { y1: m.t, y2: m.t + ph, stroke: "var(--line-strong)", "stroke-width": 1, visibility: "hidden" });
+  const hit = svg("rect", { x: m.l, y: m.t, width: pw, height: ph, fill: "transparent" });
+  s.append(cross, hit);
+  host.append(s);
+  const tip = el("div", { class: "tip" });
+  host.append(tip);
+  const move = (ev) => {
+    const r = s.getBoundingClientRect();
+    const px = ((ev.clientX - r.left) / r.width) * W;
+    const i = Math.max(0, Math.min(pts.length - 1, Math.round(((px - m.l) / pw) * (pts.length - 1))));
+    cross.setAttribute("x1", x(i)); cross.setAttribute("x2", x(i)); cross.setAttribute("visibility", "visible");
+    tip.replaceChildren(...opt.tip(pts[i]));
+    tip.style.display = "block";
+    const left = (x(i) / W) * r.width;
+    tip.style.left = Math.min(Math.max(4, left + 10), r.width - tip.offsetWidth - 4) + "px";
+    tip.style.top = "8px";
+  };
+  hit.addEventListener("pointermove", move);
+  hit.addEventListener("pointerleave", () => { cross.setAttribute("visibility", "hidden"); tip.style.display = "none"; });
+}
+
+// --- stats, chart, lists -----------------------------------------------------------
+function renderMetrics(rows) {          // rows: oldest -> newest
+  const n = rows.length;
+  $("m-n").textContent = n || "–";
+  $("m-n-hint").textContent = n ? `the last ${n} shown` : "no decisions yet";
+  const normal = rows.filter((d) => d.decision === "normal").length;
+  $("m-normal").textContent = n ? normal : "–";
+  $("m-normal-hint").textContent = n ? `${Math.round((normal / n) * 100)}% of decisions` : " ";
+  $("m-inc").textContent = n ? rows.filter((d) => d.decision === "inconclusive").length : "–";
+  const last = rows[n - 1];
+  $("m-lat").textContent = last ? Math.round(Math.max(0, ...(last.votes || []).map((v) => Number(v.latencyMs) || 0))) + " ms" : "–";
+
+  const problems = rows.filter((d) => d.decision === "problem");
+  const fresh = problems.filter((d) => d.alertCreated).length;
+  $("m-prob").textContent = n ? problems.length : "–";
+  $("m-prob-hint").textContent = n ? `${fresh} new alert${fresh === 1 ? "" : "s"} · ${problems.length - fresh} repeat` : " ";
+
+  $("m-esc").textContent = n ? rows.filter((d) => d.escalated).length : "–";
+
+  const votes = rows.flatMap((d) => d.votes || []);
+  const abstains = votes.filter((v) => v.verdict === "abstain").length;
+  const timeouts = votes.filter((v) => v.verdict === "abstain" && v.reason === "timeout").length;
+  $("m-abs").textContent = n ? abstains : "–";
+  $("m-abs-hint").textContent = n ? `of ${votes.length} votes · ${timeouts} timeout${timeouts === 1 ? "" : "s"}` : " ";
+
+  const levels = new Map();
+  for (const d of rows) if (d.riskAfter && d.travellerId) levels.set(d.travellerId, d.riskAfter.level);
+  $("m-elev").textContent = n ? [...levels.values()].filter((l) => l === "elevated").length : "–";
+  $("m-elev-hint").textContent = n ? `of ${levels.size} traveller${levels.size === 1 ? "" : "s"}` : " ";
+}
+
+function renderChart(rows) {
+  const who = traveller || (rows.length ? rows[rows.length - 1].travellerId : null);
+  $("risk-who").textContent = who ? who + (traveller ? "" : " (latest)") : "–";
+  const mine = rows.filter((d) => d.travellerId === who && d.riskAfter);
+  lineChart($("c-risk"), mine.map((d) => ({ v: Number(d.riskAfter.score) || 0, d })), {
+    yMin: 0, yMax: 1, yTicks: [0, 0.25, 0.5, 0.75, 1], yFmt: (v) => v.toFixed(2),
+    refs: [{ y: 0.4, label: "escalate ≥ 0.40" }, { y: 0.15, label: "de-escalate < 0.15" }],
+    aria: "Risk score over this traveller's decisions", xFmt: (p) => hms(p.d.decidedAt),
+    empty: "Needs at least 2 decisions for this traveller.",
+    marker: (p) => p.d.decision === "problem" ? "bad" : null,
+    tip: (p) => [el("div", {}, `${p.d.requestId}  ${hms(p.d.decidedAt)}`),
+                 el("div", {}, `score ${Number(p.d.riskAfter.score).toFixed(2)} · ${p.d.riskAfter.level}`),
+                 el("div", {}, dot(statusOf(p.d.decision)), p.d.decision)],
+  });
+}
+
+const riskPill = (level) => pill(level === "elevated" ? "warn" : "ok", dot(level === "elevated" ? "warn" : "ok"), level || "–");
+
+function renderTravellers(rows) {
+  $("travellers").replaceChildren(...rows.map((r) => {
+    const item = el("div", { class: "trav" + (r.travellerId === traveller ? " selected" : ""), role: "button", tabindex: "0" },
+      el("div", { class: "avatar" }, icon("user")),
+      el("div", { class: "who" },
+        el("div", { class: "id" }, r.travellerId),
+        el("div", { class: "meta" }, `score ${(Number(r.riskScore) || 0).toFixed(2)} · calm ${r.calmStreak ?? "–"}`
+          + (r.lastDecision ? ` · last #${r.lastSeq} ${r.lastDecision}` : ""))),
+      el("div", { class: "tags" }, riskPill(r.riskLevel),
+        pill("accent", icon("layers", "sm"), `next k ${r.nextDetectors ?? "–"}`)));
+    const toggle = () => setFilter(r.travellerId === traveller ? null : r.travellerId);
+    item.addEventListener("click", toggle);
+    item.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } });
+    return item;
+  }));
+  $("travellers-empty").style.display = rows.length ? "none" : "flex";
+}
+
+function voteTag(v) {
+  const verdict = ["problem", "normal", "abstain"].includes(v.verdict) ? v.verdict : "abstain";
+  const meta = verdict === "abstain" ? String(v.reason || "abstain") : Number(v.confidence).toFixed(2);
+  const lat = v.latencyMs !== null && v.latencyMs !== undefined ? Math.round(v.latencyMs) + "ms" : "";
+  return el("span", { class: "vote", title: `${v.detectorId}: ${verdict}${v.reason ? " (" + v.reason + ")" : ""}` },
+    dot(statusOf(verdict)), el("span", { class: "det" }, SHORT[v.detectorId] || v.detectorId || "?"),
+    el("span", { class: "meta" }, meta.length > 28 ? meta.slice(0, 27) + "…" : meta), lat ? el("span", { class: "meta" }, lat) : null);
+}
+
+function renderActivity(newestFirst) {
+  $("decisions").replaceChildren(...newestFirst.map((d) => {
+    const fresh = !firstLoad && !seen.has(d.requestId);
+    const kind = statusOf(d.decision);
+    const before = (d.riskBefore || {}).level, after = (d.riskAfter || {}).level;
+    const risk = before && after && before !== after
+      ? pill("warn", icon("trend", "sm"), `${before} → ${after}`) : after ? riskPill(after) : null;
+    const alert = !d.incidentId ? null : el("span", { class: "pill " + (d.alertCreated ? "bad" : ""), title: d.incidentId },
+      icon(d.alertCreated ? "bell" : "repeat", "sm"), d.alertCreated ? "new alert" : "repeat");
+    const where = [d.requestId || "–", d.travellerId, d.stepIndex != null ? `step ${d.stepIndex}${d.situation ? " " + d.situation : ""}` : null];
+    return el("div", { class: "item" + (fresh ? " fresh" : "") },
+      el("div", { class: "chip " + (kind === "none" ? "" : kind) }, icon(DECISION_ICON[d.decision] || "help")),
+      el("div", { class: "title" }, d.decision ? d.decision[0].toUpperCase() + d.decision.slice(1) : "–",
+        d.problemType ? pill("bad", d.problemType.replace(/_/g, " ")) : null),
+      el("div", { class: "right" }, el("span", { class: "time" }, hms(d.decidedAt)),
+        el("span", { class: "score", title: "problem score" },
+          d.problemScore === null || d.problemScore === undefined ? "–" : Number(d.problemScore).toFixed(2))),
+      el("div", { class: "sub" }, where.filter(Boolean).join(" · ")),
+      el("div", { class: "row" }, ...(d.votes || []).map(voteTag)),
+      el("div", { class: "row" },
+        pill("accent", icon("layers", "sm"), `k = ${d.k ?? "–"}`),
+        d.escalated ? pill("warn", icon("trend", "sm"), "escalated") : null, risk, alert));
+  }));
+  $("decisions-empty").style.display = newestFirst.length ? "none" : "flex";
+  newestFirst.forEach((d) => seen.add(d.requestId));
+  firstLoad = false;
+}
+
+function setFilter(id) {
+  traveller = id;
+  $("filter").classList.toggle("on", !!id);
+  $("filter-name").textContent = id || "";
+  seen = new Set(); firstLoad = true;
+  refresh();
+}
+
+function setLive(kind, text) {
+  $("dot").className = "dot " + kind;
+  $("conn").textContent = text;
+}
+
+async function getJSON(url) {
+  const r = await fetch(url, { cache: "no-store" });
+  if (!r.ok) throw new Error(url + " → HTTP " + r.status);
+  return r.json();
+}
+
+async function refresh() {
+  try {
+    const q = (traveller ? "?travellerId=" + encodeURIComponent(traveller) + "&" : "?") + "limit=" + WINDOW;
+    const [travellers, decisions] = await Promise.all([getJSON("api/status/travellers"), getJSON("api/decisions" + q)]);
+    const chronological = decisions.slice().reverse();
+    renderTravellers(travellers);
+    renderMetrics(chronological);
+    renderChart(chronological);
+    renderActivity(decisions);
+    lastOk = Date.now();
+    $("updated").textContent = hms(new Date(lastOk), true);
+    setLive(paused ? "warn" : "ok", paused ? "PAUSED" : "LIVE");
+  } catch (e) {
+    setLive("bad", "OFFLINE");
+    $("conn").title = e.message;
+  }
+}
+
+setInterval(() => {
+  if (lastOk && !paused && Date.now() - lastOk > STALE_MS) setLive("warn", "STALE");
+}, 1000);
+
+$("pause").addEventListener("click", () => {
+  paused = !paused;
+  drawIcon($("pause").querySelector("svg"), paused ? "play" : "pause");
+  $("pause").lastChild.textContent = paused ? "Resume" : "Pause";
+  setLive(paused ? "warn" : "ok", paused ? "PAUSED" : "LIVE");
+  if (!paused) refresh();
+});
+$("clear").addEventListener("click", () => setFilter(null));
+window.addEventListener("resize", () => refresh());
+
+refresh();
+setInterval(() => { if (!paused && !document.hidden) refresh(); }, POLL_MS);
+</script>
+</body>
+</html>

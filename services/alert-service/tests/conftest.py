@@ -4,6 +4,7 @@ Needs both port-forwards running (Redis for the live-alert tests):
     kubectl port-forward svc/cloud-localstack 4566:4566 -n csc3104
     kubectl port-forward svc/cloud-redis 6379:6379 -n csc3104
 Each test uses its own random traveller ID, so tests don't see each other's incidents.
+Logins use AUTH_MODE=dev: an `X-Dev-User: G-...` header says which caregiver is calling.
 """
 import json
 import os
@@ -15,6 +16,7 @@ os.environ.setdefault("AWS_ENDPOINT_URL", "http://localhost:4566")
 os.environ.setdefault("AWS_ACCESS_KEY_ID", "csc3104")
 os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "csc3104")
 os.environ.setdefault("AWS_DEFAULT_REGION", "ap-southeast-1")
+os.environ.setdefault("AUTH_MODE", "dev")
 
 import boto3  # noqa: E402
 import pytest  # noqa: E402
@@ -90,3 +92,22 @@ def no_response_report() -> dict:
 @pytest.fixture
 def disruption() -> dict:
     return load_example("disruption.json")
+
+
+def new_caregiver() -> str:
+    return f"G-{uuid.uuid4().hex[:10]}"
+
+
+def link(dynamodb, caregiver_id: str, traveller_id: str) -> None:
+    """Link a caregiver to a traveller directly in the table (the API only lets linked caregivers do it)."""
+    dynamodb.put_item(TableName=settings.caregiver_links_table, Item={
+        "caregiverId": {"S": caregiver_id}, "travellerId": {"S": traveller_id},
+        "linkedBy": {"S": caregiver_id}, "linkedAt": {"S": "2026-10-27T00:00:00Z"}})
+
+
+@pytest.fixture
+def caregiver(dynamodb, report) -> dict:
+    """Login headers of a caregiver linked to the `report` fixture's traveller."""
+    caregiver_id = new_caregiver()
+    link(dynamodb, caregiver_id, report["travellerId"])
+    return {"X-Dev-User": caregiver_id}

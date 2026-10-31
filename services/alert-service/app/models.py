@@ -1,8 +1,11 @@
 """Request bodies, matching contracts/examples/."""
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+TRAVELLER_ID = r"^U-[A-Za-z0-9]{1,40}$"  # contracts/README.md: U- traveller, G- caregiver
+CAREGIVER_ID = r"^G-[A-Za-z0-9]{1,40}$"
 
 # contracts/README.md: problem types used everywhere, plus "unknown": the Aggregator sends it when
 # detectors agree something is wrong but none says what. Rejecting it would lose the alert.
@@ -70,3 +73,27 @@ class Disruption(BaseModel):
             "affectedStations": self.affectedStations,
             "message": self.message,
         }
+
+
+# ---------------------------------------------------------------------------- profiles (issue 5.1)
+class NewTraveller(BaseModel):
+    """POST /api/travellers. The calling caregiver is linked to the new traveller automatically."""
+
+    name: str = Field(min_length=1, max_length=80)
+    preferences: dict[str, Any] = {}
+
+
+class NewLink(BaseModel):
+    """POST /api/links: add another caregiver to a traveller. Only a caregiver already linked to the
+    traveller may do this, so nobody can link themselves to a stranger and see their alerts."""
+
+    travellerId: str = Field(pattern=TRAVELLER_ID)
+    caregiverId: str = Field(pattern=CAREGIVER_ID)
+
+
+class NewSafeLocation(BaseModel):
+    """POST /api/travellers/{travellerId}/safe-locations, e.g. Home or School."""
+
+    name: str = Field(min_length=1, max_length=60)
+    lat: float = Field(ge=-90, le=90)
+    lng: float = Field(ge=-180, le=180)

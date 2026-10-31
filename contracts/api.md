@@ -17,10 +17,17 @@ No endpoints apart from `/health`. It runs on a timer and sends `problem-report-
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
-| POST | `/api/checkins` | `checkin.json` | `202 {"accepted": 1, "duplicates": 0}` |
-| POST | `/api/checkins/batch` | `checkin-batch.json` | `202 {"accepted": 2, "duplicates": 0}` |
+| POST | `/api/checkins` | `checkin.json` | `202 {"accepted": 1, "duplicates": 0, "processed": 1}` |
+| POST | `/api/checkins/batch` | `checkin-batch.json` | `202 {"accepted": 2, "duplicates": 0, "processed": 2}` |
+| GET | `/metrics` | — | Prometheus metrics |
 
 Duplicates (same `tripId` + `seq`) are accepted but ignored, so the app can safely retry.
+
+`processed` (added, optional): how many of the request's check-ins, oldest first, were handled. A
+busy server stops a batch after about 1 s; the sender removes those and sends the rest next.
+
+`503` with `{"error": {"code": "overloaded"}}` and a `Retry-After` header (seconds): the replica is at
+capacity and did nothing; retry after that long (plus random extra).
 
 ## Coordinator and Aggregator (Member 3)
 
@@ -33,7 +40,8 @@ The Coordinator has no public endpoint; it reads from the `careroute-checkins` q
 
 ## Detectors (Member 4)
 
-Each detector is its own service: `detector-route`, `detector-heading`, `detector-dwell`, `detector-ml`.
+Each detector is its own service: `detector-route`, `detector-heading`, `detector-dwell`, `detector-progress`.
+(`detector-ml` / `ml-anomaly` is not planned; see `problem-definitions.md`.)
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
@@ -70,9 +78,20 @@ Scenarios: `normal`, `missed_stop`, `wrong_direction`, `long_dwell`, `silence`, 
 | Method | Path | Body | Returns |
 |---|---|---|---|
 | GET | `/api/travellers` | — | caregiver's linked travellers |
-| POST | `/api/travellers` | `{"name": "Alex", "preferences": {...}}` | traveller |
-| GET / POST | `/api/travellers/{travellerId}/safe-locations` | `{"name": "Home", "lat": ..., "lng": ...}` | safe locations |
-| POST | `/api/links` | `{"travellerId": "U-042"}` | link caregiver to traveller |
+| POST | `/api/travellers` | `{"name": "Alex", "preferences": {...}}` | `201` traveller (new `U-` id); the caller is linked to them |
+| DELETE | `/api/travellers/{travellerId}` | — | `{"travellerId", "removed": true, "profileDeleted": bool}`: off the caller's list; profile and safe locations deleted if no caregiver is left |
+| GET / POST | `/api/travellers/{travellerId}/safe-locations` | `{"name": "Home", "lat": ..., "lng": ...}` | safe locations / `201` the new one |
+| POST | `/api/links` | `{"travellerId": "U-042", "caregiverId": "G-007"}` | `201` link: adds another caregiver to the traveller |
+| GET | `/internal/links?caregiverId=G-003&travellerId=U-042` | — | `{"linked": true}`, for other services' access checks |
+
+**Who sees what:** a caregiver only reaches travellers they're linked to (`caregiver-links`): profiles, safe
+locations, incidents, ack/resolve, and the events on `/api/stream`. Anyone else gets `404 not_found`, so they
+can't tell the traveller exists. A link is made when a caregiver adds a traveller, or by a caregiver already
+linked to them (`POST /api/links`), so nobody can attach themselves to a stranger. A traveller can read their
+own safe locations.
+
+**Login:** as for the Journey Service (`AUTH_MODE`): `X-Dev-User: G-003` locally, Cognito later. A browser's
+`EventSource` can't send headers, so `/api/stream` also takes `?devUser=G-003` or `?token=<JWT>`.
 
 ## Journey Service (Member 6)
 

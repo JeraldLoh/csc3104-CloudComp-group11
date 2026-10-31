@@ -1,0 +1,171 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  CareRoute Check-in Service (Member 2, issue 2.3): the AWS resources this service owns,
+  following contracts/ ("each table and queue is created by its owner").
+  DynamoDB table careroute-checkins (7-day TTL), SQS queue careroute-checkins with its
+  dead-letter queue, an ECR repository for the image, and a least-privilege IAM role
+  that only the checkin-service pods can assume (IRSA).
+  Deploy AFTER the platform stack (cloudformation/careroute-vpc-eks-standard.yaml):
+  it needs that stack's OidcProviderArn output. Requires CAPABILITY_IAM.
+
+Parameters:
+  OidcProviderArn:
+    Type: String
+    Description: OidcProviderArn output of the platform stack (arn:aws:iam::<account>:oidc-provider/oidc.eks...).
+    AllowedPattern: "arn:aws[a-z-]*:iam::[0-9]{12}:oidc-provider/.+"
+  Namespace:
+    Type: String
+    Default: csc3104
+    Description: Kubernetes namespace the service runs in.
+  ServiceAccountName:
+    Type: String
+    Default: checkin-service
+    Description: Kubernetes service account allowed to assume this service's role.
+  TableName:
+    Type: String
+    Default: careroute-checkins
+    Description: Name from contracts/dynamo-db-tables.md.
+  QueueName:
+    Type: String
+    Default: careroute-checkins
+    Description: Name from contracts/queues.md. The dead-letter queue is <QueueName>-dlq.
+
+Resources:
+  # ------------------------------ DynamoDB ------------------------------
+  # Partition key tripId, sort key seq: one item per check-in, read in order per trip.
+  # TTL on expiresAt: the service sets it to arrival time + 7 days (CHECKIN_TTL_DAYS).
+  # The service writes with a condition (attribute_not_exists), which is what makes
+  # retries and duplicate deliveries safe.
+  CheckinsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete            # coursework: tear down cleanly. Use Retain for real data.
+    UpdateReplacePolicy: Delete
+    Properties:
+      TableName: !Ref TableName
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: tripId
+          AttributeType: S
+        - AttributeName: seq
+          AttributeType: "N"
+        - AttributeName: pending
+          AttributeType: S
+        - AttributeName: receivedAt
+          AttributeType: S
+      KeySchema:
+        - AttributeName: tripId
+          KeyType: HASH
+        - AttributeName: seq
+          KeyType: RANGE
+      # Sparse index: only check-ins not yet on the queue have `pending`, so this index
+      # stays tiny and the clean-up task finds stuck ones with a single cheap query.
+      GlobalSecondaryIndexes:
+        - IndexName: pending-index
+          KeySchema:
+            - AttributeName: pending
+              KeyType: HASH
+            - AttributeName: receivedAt
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: expiresAt
+        Enabled: true
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+        - Key: owner
+          Value: checkin-service
+
+  # -------------------------------- SQS --------------------------------
+  # contracts/queues.md: standard queue, visibility 30 s, long polling 20 s,
+  # after 5 failed receives a message moves to the dead-letter queue.
+  CheckinsDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub ${QueueName}-dlq
+      MessageRetentionPeriod: 1209600  # 14 days, time to investigate
+      SqsManagedSseEnabled: true
+
+  CheckinsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Ref QueueName
+      VisibilityTimeout: 30
+      ReceiveMessageWaitTimeSeconds: 20
+      MessageRetentionPeriod: 345600   # 4 days
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt CheckinsDeadLetterQueue.Arn
+        maxReceiveCount: 5
+
+  # -------------------------------- ECR --------------------------------
+  Repository:
+    Type: AWS::ECR::Repository
+    DeletionPolicy: Delete
+    Properties:
+      RepositoryName: checkin-service
+      EmptyOnDelete: true
+      ImageScanningConfiguration:
+        ScanOnPush: true
+
+  # -------------------------------- IAM --------------------------------
+  # IRSA: only pods using service account <Namespace>/<ServiceAccountName> can assume
+  # this role, and it can only do what this service needs on its own table and queue.
+  # (Reading the queue is the Coordinator's job, so this role can't.)
+  CheckinServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: Check-in Service pods (IRSA)
+      AssumeRolePolicyDocument: !Sub
+        - |
+          {
+            "Version": "2012-10-17",
+            "Statement": [{
+              "Effect": "Allow",
+              "Principal": {"Federated": "${OidcProviderArn}"},
+              "Action": "sts:AssumeRoleWithWebIdentity",
+              "Condition": {"StringEquals": {
+                "${Issuer}:sub": "system:serviceaccount:${Namespace}:${ServiceAccountName}",
+                "${Issuer}:aud": "sts.amazonaws.com"
+              }}
+            }]
+          }
+        - Issuer: !Select [1, !Split ["oidc-provider/", !Ref OidcProviderArn]]
+      Policies:
+        - PolicyName: checkin-service-access
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: CheckinsTable
+                Effect: Allow
+                # PutItem: store (conditional). GetItem: duplicate check. UpdateItem: mark enqueued.
+                # DescribeTable: the /ready check.
+                Action: [dynamodb:PutItem, dynamodb:GetItem, dynamodb:UpdateItem, dynamodb:DescribeTable]
+                Resource: !GetAtt CheckinsTable.Arn
+              - Sid: PendingIndex
+                Effect: Allow
+                # The clean-up task lists stuck check-ins. Query on this index only.
+                Action: [dynamodb:Query]
+                Resource: !Sub "${CheckinsTable.Arn}/index/pending-index"
+              - Sid: CheckinsQueue
+                Effect: Allow
+                Action: [sqs:SendMessage, sqs:GetQueueUrl, sqs:GetQueueAttributes]
+                Resource: !GetAtt CheckinsQueue.Arn
+
+Outputs:
+  CheckinServiceRoleArn:
+    Description: Put in k8s/eks/checkin-service.yaml (ServiceAccount annotation).
+    Value: !GetAtt CheckinServiceRole.Arn
+  RepositoryUri:
+    Description: Put in k8s/eks/kustomization.yaml (images, checkin-service).
+    Value: !GetAtt Repository.RepositoryUri
+  TableName:
+    Value: !Ref CheckinsTable
+  QueueUrl:
+    Value: !Ref CheckinsQueue
+  QueueArn:
+    Description: The Coordinator's role needs sqs:ReceiveMessage and sqs:DeleteMessage on this.
+    Value: !GetAtt CheckinsQueue.Arn
+  DeadLetterQueueUrl:
+    Value: !Ref CheckinsDeadLetterQueue

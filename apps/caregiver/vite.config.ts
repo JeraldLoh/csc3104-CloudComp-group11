@@ -13,6 +13,8 @@ const alerts = process.env.ALERT_URL ?? "http://127.0.0.1:8005";
 const proxy = {
   "/api/incidents": { target: alerts, changeOrigin: true },
   "/api/stream": { target: alerts, changeOrigin: true },
+  "/api/travellers": { target: alerts, changeOrigin: true }, // profiles (issue 5.1) live in the Alert Service
+  "/api/links": { target: alerts, changeOrigin: true },
   "/api": { target: journey, changeOrigin: true },
 };
 
