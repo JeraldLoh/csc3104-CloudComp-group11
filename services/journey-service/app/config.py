@@ -75,6 +75,9 @@ class Settings:
     # "Simplify with AI" button calls it. Unset = always the template wording. CPU inference is slow, hence the timeout.
     easyread_url: str = field(default_factory=lambda: os.getenv("EASYREAD_URL", ""))
     easyread_timeout_s: float = field(default_factory=lambda: float(os.getenv("EASYREAD_TIMEOUT_S", "90")))
+    # Landmarks along the route (landmarks.py, from OneMap) for the AI to mention, so the traveller can tell they
+    # are going the right way. Off = the AI only rewords the steps.
+    easyread_landmarks: bool = field(default_factory=lambda: _bool("EASYREAD_LANDMARKS", True))
 
     # Landmark photos (streetview.py), stored in PACKS_BUCKET under media/. Unset key = no Street View photos;
     # caregivers can still upload their own. Like the LTA key: never log it or send it to the browser.

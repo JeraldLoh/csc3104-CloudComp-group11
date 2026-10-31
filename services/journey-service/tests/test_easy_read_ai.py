@@ -44,7 +44,8 @@ def test_suggest_puts_the_real_names_back():
     respx.post(f"{EASYREAD}/internal/easyread").mock(side_effect=answer)
     out = suggest(STEPS, httpx.Client(), EASYREAD, 5)
     assert out["provider"] == "ollama"
-    assert out["steps"][2] == {"stepIndex": 2, "easyRead": "WALK TO Grandma's flat.", "fallback": False}
+    assert out["steps"][2] == {"stepIndex": 2, "easyRead": "WALK TO Grandma's flat.", "fallback": False,
+                                "landmarks": []}
     assert out["steps"][1]["fallback"] is True
 
 
@@ -64,4 +65,4 @@ def test_suggest_keeps_template_for_a_step_the_service_left_out():
         "provider": "ollama", "steps": [{"stepIndex": 0, "easyRead": "Walk to Opposite Block 123.", "fallback": False}]}))
     out = suggest(STEPS, httpx.Client(), EASYREAD, 5)
     assert out["steps"][0]["fallback"] is False
-    assert out["steps"][1] == {"stepIndex": 1, "easyRead": easy_read(BUS), "fallback": True}
+    assert out["steps"][1] == {"stepIndex": 1, "easyRead": easy_read(BUS), "fallback": True, "landmarks": []}

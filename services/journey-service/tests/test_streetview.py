@@ -12,7 +12,7 @@ from pydantic import ValidationError
 from app.journey_client import JourneyClient, PhotoInvalid
 from app.models import Step
 from app.route_store import RouteNotFound
-from app.streetview import (IMAGE_URL, METADATA_URL, bearing, distance_m, fetch, field_of_view, nearest, photo_key,
+from app.streetview import (IMAGE_URL, METADATA_URL, View, bearing, distance_m, fetch, field_of_view, nearest, photo_key, same_view,
                             target, walks_to_station)
 from helpers import SETTINGS, route_data
 
@@ -224,6 +224,35 @@ def test_walk_to_a_station_photographs_the_exit_on_the_travellers_side():
     assert search.call_count == 1                                                    # exits are cached
 
 
+def arriving(destination: dict) -> dict:
+    """A route whose last step walks from Opp Block 221 to `destination`, ending ~50 m short of it (as OneMap's
+    legs in the saved demo data do: recorded with rounded endpoints)."""
+    data = route_data(destination=destination)
+    last = {**data["steps"][0], "stepIndex": 2, "from": data["steps"][1]["to"],
+            "to": {"name": None, "code": None, "lat": round(destination["lat"], 3), "lng": round(destination["lng"], 3)}}
+    return {**data, "steps": [*data["steps"], last]}
+
+
+@respx.mock
+def test_last_walk_photographs_the_destination_itself():
+    street_view_ok()
+    clinic = {"name": "Clinic", "lat": 1.39237, "lng": 103.89541}
+    route = client(bucket=FakeBucket()).create_route(arriving(clinic))
+    assert route["steps"][2]["photoKey"] == photo_key(1.39237, 103.89541)         # not the leg's end, 1.392/103.895
+    assert route["steps"][0]["photoKey"] == photo_key(1.4052, 103.9024)           # other steps: where they end
+
+
+@respx.mock
+def test_last_walk_to_a_station_photographs_its_exit_on_the_travellers_side():
+    respx.get(ONEMAP_SEARCH).mock(return_value=httpx.Response(200, json={
+        "found": 4, "totalNumPages": 1,
+        "results": [{"SEARCHVAL": n, "LATITUDE": str(lat), "LONGITUDE": str(lng)} for n, lat, lng in EXITS]}))
+    street_view_ok()
+    station = {"name": "Sengkang MRT Station (NE16)", "lat": SENGKANG["lat"], "lng": SENGKANG["lng"]}
+    route = client(bucket=FakeBucket()).create_route(arriving(station))
+    assert route["steps"][2]["photoKey"] == photo_key(1.39244, 103.89574)       # exit D: Opp Block 221 is north
+
+
 @respx.mock
 def test_exits_unknown_falls_back_to_the_station_point():
     respx.get(ONEMAP_SEARCH).mock(side_effect=httpx.ConnectError("down"))
@@ -338,3 +367,100 @@ def test_upload_is_not_read_before_the_route_is_checked():
     j = client(key="", bucket=FakeBucket())
     rid = j.create_route(route_data())["routeId"]
     assert j.upload_photo(rid, io.BytesIO(JPEG))["photoKey"].endswith(".jpg")
+
+
+# ----- landmark photos: the buildings the AI wording tells the traveller to look out for -----
+
+EASYREAD = "http://easyread.test:8000"
+MALL = {"id": "L1", "name": "Waterway Point", "kind": "mall", "metres": 40, "side": "left", "lat": 1.4064, "lng": 103.9022,
+        "seenFrom": [1.4058, 103.9025]}                  # the walk's end, where the traveller sees it from
+
+
+@respx.mock
+def test_simplify_adds_a_photo_of_each_landmark_the_wording_names():
+    street_view_ok()
+    respx.post(f"{EASYREAD}/internal/easyread").mock(return_value=httpx.Response(200, json={
+        "provider": "ollama", "steps": [
+            {"stepIndex": 0, "easyRead": "Walk to Punggol Interchange. Look for Waterway Point on your left.",
+             "fallback": False, "landmarks": ["L1"]},
+            {"stepIndex": 1, "easyRead": "Take bus 190.", "fallback": False, "landmarks": []}]}))
+    bucket = FakeBucket()
+    j = JourneyClient(dataclasses.replace(SETTINGS, google_maps_api_key="g-key", easyread_url=EASYREAD),
+                      redis_client=fakeredis.FakeRedis(), pack_store=bucket, photo_http=httpx.Client(),
+                      easyread_http=httpx.Client())
+    rid = j.create_route(route_data())["routeId"]
+    j.route_landmarks = lambda route: {0: {"end": [MALL]}}
+    meta = respx.routes[0]
+    asked = len(meta.calls)
+    walk, bus = j.suggest_easy_read(rid)["steps"]
+    key = photo_key(MALL["lat"], MALL["lng"], near=(1.4058, 103.9025))
+    assert key.endswith("1.40640_103.90220_from_1.40580_103.90250.jpg")
+    assert walk["landmarks"] == [{"name": "Waterway Point", "kind": "mall", "lat": 1.4064, "lng": 103.9022,
+                                  "seenFrom": [1.4058, 103.9025], "photoKey": key, "sameView": None,
+                                  "photoUrl": f"https://bucket.test/{key}?ttl={SETTINGS.photo_url_ttl_s}"}]
+    assert key in bucket.objects and bus["landmarks"] == []
+    # Looked for from the traveller's spot, turned to face the mall.
+    assert (1.4058, 103.9025) in [asked_at(c) for c in meta.calls[asked:]]
+    image = respx.routes[1].calls[-1].request.url.params
+    assert image["heading"] == f"{bearing((1.4058, 103.9025), (1.4064, 103.9022)):.0f}"
+
+
+@respx.mock
+def test_saved_landmarks_keep_their_photos_while_the_wording_names_them():
+    street_view_ok()
+    j = client(bucket=FakeBucket())
+    data = route_data()
+    mark = {"name": "Waterway Point", "kind": "mall", "lat": 1.4064, "lng": 103.9022, "photoUrl": "https://old"}
+    gone = {"name": "Punggol Plaza", "kind": "mall", "lat": 1.4030, "lng": 103.9020}
+    data["steps"][0] = {**data["steps"][0], "easyRead": "Walk to Punggol Interchange. Look for Waterway Point.",
+                        "landmarks": [mark, gone]}                       # Punggol Plaza was edited out of the text
+    route = j.create_route(data)
+    saved = j.get_route(route["routeId"])["steps"][0]["landmarks"]
+    assert saved == [{"name": "Waterway Point", "kind": "mall", "lat": 1.4064, "lng": 103.9022,
+                      "photoKey": photo_key(1.4064, 103.9022)}]          # no link stored; a missing photo is fetched
+    shown = j.with_photo_urls(route)["steps"][0]["landmarks"][0]
+    assert shown["photoUrl"].startswith("https://bucket.test/media/streetview/")
+    assert route["steps"][1].get("landmarks") is None                    # a step without any
+
+
+def test_landmark_photo_key_must_be_media():
+    step = {"stepIndex": 0, "mode": "walk", "instruction": "Walk", "from": {}, "to": {}}
+    Step(**{**step, "landmarks": [{"name": "X", "lat": 1.3, "lng": 103.8, "photoKey": "media/streetview/v2/a.jpg"}]})
+    with pytest.raises(ValidationError):
+        Step(**{**step, "landmarks": [{"name": "X", "lat": 1.3, "lng": 103.8, "photoKey": "packs/R-1.json"}]})
+
+
+def test_same_view():
+    here = View("P1", (1.3, 103.8), 90.0, 60, False)
+    assert same_view(here, here._replace(heading=120.0))                  # 30 degrees apart: mostly the same
+    assert same_view(here, here._replace(heading=38.0, fov=45))           # Opp Punggol Coast Station: the shelter again
+    assert not same_view(here, here._replace(heading=200.0))              # looking across the road
+    assert same_view(here, here._replace(pano="P2", at=(1.30005, 103.8)))   # the next panorama, 6 m on
+    assert not same_view(here, here._replace(pano="P2", at=(1.3005, 103.8)))  # 55 m on
+    assert same_view(here, here._replace(heading=None))                   # at the point: Google's default view
+
+
+@respx.mock
+def test_landmark_seen_from_the_stop_shares_the_step_photo():
+    street_view_ok()
+    stop = (1.4052, 103.9024)                                                # where step 0 ends: its photo is here
+    at_stop = {**MALL, "name": "Punggol Coast Mall", "seenFrom": list(stop)}
+    respx.post(f"{EASYREAD}/internal/easyread").mock(return_value=httpx.Response(200, json={
+        "provider": "ollama", "steps": [
+            {"stepIndex": 0, "easyRead": "Walk to Punggol Interchange. Look for Punggol Coast Mall. "
+                                         "Look for Waterway Point.", "fallback": False, "landmarks": ["L1", "L2"]},
+            {"stepIndex": 1, "easyRead": "Take bus 190.", "fallback": False, "landmarks": []}]}))
+    bucket = FakeBucket()
+    j = JourneyClient(dataclasses.replace(SETTINGS, google_maps_api_key="g-key", easyread_url=EASYREAD),
+                      redis_client=fakeredis.FakeRedis(), pack_store=bucket, photo_http=httpx.Client(),
+                      easyread_http=httpx.Client())
+    rid = j.create_route(route_data())["routeId"]
+    j.route_landmarks = lambda route: {0: {"end": [{**at_stop, "id": "L1"}, {**MALL, "id": "L2"}]}}
+    coast, waterway = j.suggest_easy_read(rid)["steps"][0]["landmarks"]
+    assert (coast["sameView"], coast["photoKey"], coast["photoUrl"]) == ("step", None, None)   # no paid photo
+    assert waterway["sameView"] is None and waterway["photoKey"] in bucket.objects
+    # Saved as it is, it stays without a photo of its own.
+    data = route_data()
+    data["steps"][0] = {**data["steps"][0], "easyRead": "Walk. Look for Punggol Coast Mall.", "landmarks": [coast]}
+    saved = j.create_route(data)["steps"][0]["landmarks"][0]
+    assert saved["photoKey"] is None and saved["sameView"] == "step"

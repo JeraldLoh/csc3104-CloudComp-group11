@@ -1,6 +1,7 @@
 import { type KeyboardEvent, useId, useLayoutEffect, useRef, useState } from "react";
 import type { EasyReadSuggestion, SavedRoute, UploadedPhoto } from "../journey/types";
 import { BULLET, fromBulletLines, isRoughPhoto, namedLandmarks, photoHint, roughPhotoHint, toBulletLines } from "./format";
+import { PhonePreview } from "./PhonePreview";
 import { LandmarkPhotos, StepPhoto } from "./StepPhoto";
 import type { RouteChanges } from "./useSavedRoutes";
 
@@ -20,6 +21,8 @@ interface Props {
 /** Longest wording a step may have once saved (as sentences), as before. */
 const MAX_EASY_READ = 300;
 
+const MODE_NAME = { walk: "Walk", bus: "Bus", train: "Train" } as const;
+
 /** A step's photo in the editor: `key` is what will be saved, `url` what is shown (null: none yet). */
 interface Photo {
   key: string | null;
@@ -38,6 +41,10 @@ export function RouteEditor({ route, affectedTrips, saving, suggested, onUploadP
   const [easyRead, setEasyRead] = useState(route.steps.map((s) => toBulletLines(aiFor(s.stepIndex)?.easyRead ?? s.easyRead)));
   const [photos, setPhotos] = useState<Photo[]>(route.steps.map((s) => ({ key: s.photoKey ?? null, url: s.photoUrl ?? null })));
   const [uploading, setUploading] = useState<number | null>(null);
+  // The step shown on the phone preview: the one the caregiver last clicked or typed in.
+  const [previewAt, setPreviewAt] = useState(0);
+  const [showPreview, setShowPreview] = useState(true);
+  const stepIds = route.steps.map((s) => `${nameId}-step-${s.stepIndex}`);
   // The landmarks each step may mention: the AI's (with photos) when it suggested wording, else the saved ones.
   // Only those the wording names are shown and saved, so editing a landmark out of the text removes it.
   const landmarks = route.steps.map((s) => (suggested ? aiFor(s.stepIndex)?.landmarks : s.landmarks) ?? []);
@@ -117,16 +124,45 @@ export function RouteEditor({ route, affectedTrips, saving, suggested, onUploadP
       <input id={nameId} value={name} maxLength={100} onChange={(e) => setName(e.target.value)} />
 
       <div className="rp__meta">
-        The wording the traveller reads, one action per bullet point (Enter starts a new one). Leave a step empty to
-        use the automatic wording.
+        Under each step, the wording the traveller reads, one action per bullet point (Enter starts a new one). Leave
+        it empty to use the automatic wording. Click a step to see it on the phone.
       </div>
+      {showPreview ? (
+        <PhonePreview
+          mode={route.steps[previewAt].mode}
+          text={fromBulletLines(easyRead[previewAt])}
+          photoUrl={photos[previewAt].url}
+          backup={route.steps[previewAt].backup?.instruction}
+          index={previewAt}
+          total={route.steps.length}
+          onPrev={() => setPreviewAt((i) => Math.max(0, i - 1))}
+          onNext={() => setPreviewAt((i) => Math.min(route.steps.length - 1, i + 1))}
+          onHide={() => setShowPreview(false)}
+        />
+      ) : (
+        <button type="button" className="rp__btn rp__btn--secondary rp__btn--small rp__spaced" onClick={() => setShowPreview(true)}>
+          Show phone preview
+        </button>
+      )}
       {route.steps.map((step, i) => {
         const photo = photos[i];
         const uploaded = photo.key?.startsWith("media/uploads/") ?? false;
         return (
-          <div key={step.stepIndex} className={`rp__step rp__step--${step.mode}`}>
-            <div className="rp__meta">{`${i + 1}. ${step.instruction}`}</div>
+          <div
+            key={step.stepIndex}
+            className={`rp__step-card rp__step-card--${step.mode}`}
+            aria-current={showPreview && previewAt === i ? "step" : undefined}
+            onFocusCapture={() => setPreviewAt(i)}
+            onClick={() => setPreviewAt(i)}
+          >
+            <div className="rp__step-head">
+              <span className="rp__step-no">{i + 1}</span>
+              <span className={`rp__chip rp__chip--${step.mode}`}>{MODE_NAME[step.mode]}</span>
+              <span className="rp__step-title">{step.instruction}</span>
+            </div>
+            <label className="rp__step-label" htmlFor={stepIds[i]}>What the traveller reads</label>
             <textarea
+              id={stepIds[i]}
               className="rp__points-edit"
               aria-label={`Easy-read wording for step ${i + 1}, one point per line`}
               rows={Math.max(2, easyRead[i].split("\n").length)}
@@ -140,7 +176,7 @@ export function RouteEditor({ route, affectedTrips, saving, suggested, onUploadP
               <div className="rp__meta">The AI's version didn't keep every stop and number, so this is the standard wording.</div>
             )}
 
-            <div className="rp__photo-edit">
+            <div className="rp__photo-edit rp__photo-frame">
               <StepPhoto
                 url={photo.url}
                 alt={`Where step ${i + 1} ends`}
@@ -149,8 +185,7 @@ export function RouteEditor({ route, affectedTrips, saving, suggested, onUploadP
                   : <div className="rp__photo-hint">{photoHint(step)}</div>}
                 note={isRoughPhoto(photo.key) && <div className="rp__photo-hint">{roughPhotoHint(step)}</div>}
               />
-              <LandmarkPhotos landmarks={shownLandmarks[i]} />
-              <div className="rp__row">
+              <div className="rp__photo-actions">
                 <label className="rp__btn rp__btn--secondary rp__btn--small rp__file">
                   {uploading === i ? "Uploading..." : "Replace photo"}
                   <input
@@ -172,6 +207,7 @@ export function RouteEditor({ route, affectedTrips, saving, suggested, onUploadP
                 )}
               </div>
             </div>
+            <LandmarkPhotos landmarks={shownLandmarks[i]} />
           </div>
         );
       })}

@@ -3,8 +3,11 @@
     target(step)                   -> (lat, lng) to photograph, or None (train steps, changes of line, no coordinates)
     walks_to_station(step)         -> the MRT/LRT station a walk step ends at, or None
     nearest(points, to)            -> the point closest to `to` (e.g. the station exit on the traveller's side)
-    photo_key(lat, lng, rough)     -> "media/streetview/v2/[rough/]<lat>_<lng>.jpg", the S3 key (same place = same photo)
-    fetch(lat, lng, http, key, t)  -> Photo(image, rough), or None (no panorama nearby, or any error)
+    photo_key(lat, lng, rough, near) -> "media/streetview/v2/[rough/]<lat>_<lng>[_from_<lat>_<lng>].jpg", the S3 key
+                                        (same place, seen from the same spot = same photo)
+    fetch(lat, lng, http, key, t)    -> Photo(image, rough), or None (no panorama nearby, or any error)
+    view(lat, lng, http, key, t)     -> View: the panorama and direction fetch() would use (metadata only: free)
+    same_view(a, b)                  -> whether two views would give (nearly) the same photo
 
 A step ends where the traveller must recognise something: the bus stop to wait at, the stop to get off at, the
 destination. That is also the point the route pack gives for the step (`lat`/`lng`). Train steps are skipped: a
@@ -78,11 +81,12 @@ def nearest(points: list[tuple[float, float]], to: tuple[float, float]) -> tuple
     return min(points, key=lambda p: distance_m(p, to), default=None)
 
 
-def photo_key(lat: float, lng: float, rough: bool = False) -> str:
+def photo_key(lat: float, lng: float, rough: bool = False, near: tuple[float, float] | None = None) -> str:
     # v2: recent panoramas, Google's first. Photos stored before (which may be old uploads) aren't reused for new
     # saves; routes that already point at one keep it. A rough photo (only an old panorama there) is kept under
     # rough/, which is how the app knows to ask the caregiver to check it (isRoughPhoto in apps/caregiver).
-    return f"media/streetview/v2/{'rough/' if rough else ''}{lat:.5f}_{lng:.5f}.jpg"
+    seen_from = f"_from_{near[0]:.5f}_{near[1]:.5f}" if near else ""
+    return f"media/streetview/v2/{'rough/' if rough else ''}{lat:.5f}_{lng:.5f}{seen_from}.jpg"
 
 
 def is_rough(key: str) -> bool:
@@ -194,12 +198,57 @@ class Photo(NamedTuple):
     rough: bool                                       # nothing recent there: an older one, for the caregiver to check
 
 
-def fetch(lat: float, lng: float, http: httpx.Client, api_key: str, timeout: float,
-          max_age_years: int = MAX_AGE_YEARS, have_rough: bool = False) -> Photo | None:
-    """`have_rough`: a rough photo of this spot is already stored. The search (free) still runs, in case a recent
-    panorama has turned up since, but another rough image (a paid request) isn't downloaded."""
+class View(NamedTuple):
+    """What a photo of (lat, lng) would show: which panorama, and where it looks."""
+    pano: str
+    at: tuple[float, float]                           # where the panorama is
+    heading: float | None                             # None: it is at the point, so Google's default view is used
+    fov: int
+    rough: bool
+
+
+SAME_VIEW_M = 15                                      # panoramas this close show the same scene
+SAME_VIEW_DEG = 90                                    # from there, facing less than this apart: the same place
+                                                      # (next to a bus shelter, 50 degrees apart still shows the shelter)
+
+
+def _view(m: dict, rough: bool, lat: float, lng: float) -> View:
+    at = (m["location"]["lat"], m["location"]["lng"])
+    away = distance_m(at, (lat, lng))
+    heading = bearing(at, (lat, lng)) if away > AT_STOP_M else None
+    return View(m["pano_id"], at, heading, field_of_view(away), rough)
+
+
+def view(lat: float, lng: float, http: httpx.Client, api_key: str, timeout: float,
+         max_age_years: int = MAX_AGE_YEARS, near: tuple[float, float] | None = None) -> View | None:
+    """The view fetch() would take, from metadata only (free). None: no panorama, or any error."""
     try:
-        found = panorama(lat, lng, http, api_key, timeout, max_age_years)
+        found = panorama(*(near or (lat, lng)), http, api_key, timeout, max_age_years)
+        return _view(*found, lat, lng) if found else None
+    except (_Refused, httpx.HTTPError, ValueError, KeyError, TypeError):
+        return None
+
+
+def same_view(a: View, b: View) -> bool:
+    """Two photos that would look the same: from (nearly) the same panorama, facing (nearly) the same way. E.g. a
+    landmark next to the bus stop, photographed from the stop: the step's own photo already shows it."""
+    if a.pano != b.pano and distance_m(a.at, b.at) > SAME_VIEW_M:
+        return False
+    if a.heading is None or b.heading is None:       # Google's default view: can't tell, so count it as the same
+        return True
+    return abs((a.heading - b.heading + 180) % 360 - 180) < SAME_VIEW_DEG
+
+
+def fetch(lat: float, lng: float, http: httpx.Client, api_key: str, timeout: float,
+          max_age_years: int = MAX_AGE_YEARS, have_rough: bool = False,
+          near: tuple[float, float] | None = None) -> Photo | None:
+    """`have_rough`: a rough photo of this spot is already stored. The search (free) still runs, in case a recent
+    panorama has turned up since, but another rough image (a paid request) isn't downloaded.
+    `near`: look for the panorama around this point instead, still facing (lat, lng): a landmark is photographed
+    from the traveller's spot on the route (the building's own point is its middle, and the panorama closest to
+    it can be on its far side or against a wall)."""
+    try:
+        found = panorama(*(near or (lat, lng)), http, api_key, timeout, max_age_years)
         if found is None:                             # no panorama at all near this stop
             log.info("no street view near %.5f,%.5f", lat, lng)
             return None
@@ -208,11 +257,10 @@ def fetch(lat: float, lng: float, http: httpx.Client, api_key: str, timeout: flo
             return Photo(None, True)
         if rough:
             log.info("only an old street view near %.5f,%.5f (%s)", lat, lng, m.get("date"))
-        away = _away(m, (lat, lng))
-        params = {"pano": m["pano_id"], "size": "640x400", "fov": field_of_view(away), "pitch": 0, "key": api_key}
-        if away > AT_STOP_M:                          # at the stop itself there's no direction to it: Google's
-            pano = m["location"]                      # default view of the panorama (the uploader's) is used
-            params["heading"] = f"{bearing((pano['lat'], pano['lng']), (lat, lng)):.0f}"
+        v = _view(m, rough, lat, lng)
+        params = {"pano": v.pano, "size": "640x400", "fov": v.fov, "pitch": 0, "key": api_key}
+        if v.heading is not None:                     # at the stop itself there's no direction to it: Google's
+            params["heading"] = f"{v.heading:.0f}"    # default view of the panorama (the uploader's) is used
         image = http.get(IMAGE_URL, timeout=timeout, params=params)
         image.raise_for_status()
         if not image.headers.get("content-type", "").startswith("image/"):

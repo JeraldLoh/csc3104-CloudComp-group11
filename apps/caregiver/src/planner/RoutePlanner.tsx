@@ -11,6 +11,7 @@ import type { DisruptionsApi, PlannerApi } from "../journey/api";
 import type { RouteStep, SavedRoute } from "../journey/types";
 import { MapView } from "./MapView";
 import { OptionDetails, OptionList } from "./OptionDetails";
+import { PreviewSlot } from "./PhonePreview";
 import { PlaceField } from "./PlaceField";
 import { useDisruptions, withLatest } from "./useDisruptions";
 import { usePlanner, type PlannerOptions } from "./usePlanner";
@@ -57,6 +58,8 @@ export function RoutePlanner({ api, travellerId, caregiverId, initial, onSaved, 
     },
   });
   const ids = { sort: useId(), mode: useId(), name: useId(), tabs: useId() };
+  // Over the map: where the route editor shows its phone preview.
+  const [previewSlot, setPreviewSlot] = useState<HTMLDivElement | null>(null);
 
   // A plan's disruption warnings are from the moment it was made: keep the selected option re-checked.
   const selected = p.activeOption;
@@ -85,6 +88,7 @@ export function RoutePlanner({ api, travellerId, caregiverId, initial, onSaved, 
   }
 
   return (
+    <PreviewSlot.Provider value={previewSlot}>
     <div className={"rp" + (className ? " " + className : "")}>
       <div className="rp__panel">
         <div className="rp__tabs" role="tablist" aria-label="Caregiver tools" onKeyDown={onTabKey}>
@@ -187,10 +191,14 @@ export function RoutePlanner({ api, travellerId, caregiverId, initial, onSaved, 
         ))}
       </div>
 
-      <MapView
-        from={p.points.from} to={p.points.to} focus={p.focus} onMapClick={p.clickMap}
-        option={showSaved ? null : shownOption} saved={showSaved ? viewing : null}
-      />
+      <div className="rp__stage">
+        <MapView
+          from={p.points.from} to={p.points.to} focus={p.focus} onMapClick={p.clickMap}
+          option={showSaved ? null : shownOption} saved={showSaved ? viewing : null}
+        />
+        <div className="rp__preview-slot" ref={setPreviewSlot} />
+      </div>
     </div>
+    </PreviewSlot.Provider>
   );
 }

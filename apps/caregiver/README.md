@@ -96,6 +96,13 @@ stay mounted, so a half-finished edit is still there when you come back.
   Where only an old Street View photo was found (its key is under `media/streetview/v2/rough/`, `isRoughPhoto`), the
   photo is shown with a hint under it to check it or add a better one (`roughPhotoHint`).
   Like the wording, a photo change only counts once the route is saved.
+- Editor layout: each step is a card titled with the planned instruction (step number, a WALK / BUS / TRAIN chip),
+  with "What the traveller reads" above its wording box and the photo's buttons on the photo's corner.
+- Phone preview: while editing, a phone over the map shows the step the caregiver last clicked or typed in, drawn
+  like the traveller app's step screen (`PhonePreview.tsx`, copying `apps/traveller`'s StepCard look: the coloured
+  sign, "Step 2 of 4", photo, wording in large type, "I've done this step" and Help). It updates as they type; the
+  arrows step through the route and **Hide** closes it. The planner offers the spot over the map through
+  `PreviewSlot`; in a narrow slot the phone goes under the map instead.
 - Landmarks: after **Simplify with AI**, a step whose wording mentions a landmark ("Look out for City Plaza on your
   left") shows a smaller photo of it under the step photo, captioned "Look for City Plaza" (`LandmarkPhotos` in
   `StepPhoto.tsx`). Only the landmarks the wording still names are shown and saved (`namedLandmarks` in `format.ts`),

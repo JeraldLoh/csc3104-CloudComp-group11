@@ -15,19 +15,39 @@ is saved.
 
 - It never sees names or addresses: the Journey Service sends `[place N]` tokens instead.
 - Every step arrives with its template wording (`text`) and the facts the wording must keep (`keep`).
-- `app/hallucination_check.py` checks each AI step. If the AI dropped a bus number, stop name or stop count, added a
-  number that isn't in the step, or wrote more than 300 characters, the step gets `text` back with `fallback: true`.
+- `app/hallucination_check.py` checks each AI step. If the AI dropped a bus number, stop name, stop count or landmark,
+  added a number or a name that isn't in the step, or wrote more than 300 characters, the step gets `text` back with
+  `fallback: true`.
 - If Ollama is down, slow or answers with something that isn't JSON, every step gets `text` and `provider: "template"`.
   The endpoint always answers `200` with usable wording.
+
+## Landmarks
+
+Steps may carry `spots`: the buildings the traveller will see along them, found by the Journey Service (OneMap), with
+their kind, distance and side, never coordinates. The model gets four small jobs, because one big one (choose, place
+and reword at once) made a 1.5B model mix up steps and make landmarks up:
+
+1. **Look up:** it gets a `nearby` tool and asks which buildings are at each step's spots (up to `OLLAMA_TOOL_ROUNDS`
+   rounds). Answers come only from the step's own `spots`. A spot it didn't ask about is still offered in job 2.
+2. **Choose:** one answer per spot, the building the traveller can't miss. The JSON schema allows only that spot's own
+   names ("none" only where all are plain buildings), so it can't make one up or take one from another step.
+3. **Place:** code adds a sentence for each choice where it is seen ("Look out for City Plaza on your left. Press the
+   bell." just before getting off; "Look for Tampines Mall." where a walk ends) and adds the names to `keep`.
+4. **Reword:** the usual rewrite, then the checks above. A step that fails gets the template text *with* the landmark
+   sentences, so its landmarks are kept either way. The ids of the ones used come back in `landmarks`.
+
+`EASYREAD_LANDMARKS=given` skips job 1 (one call fewer, the same choices); `off` ignores `spots`. On a laptop CPU a
+three-step route with landmarks takes about 6 s with `qwen2.5:1.5b` (four calls). `qwen2.5:3b` was no better at the
+tool calls.
 
 ## Files
 
 | File | |
 |---|---|
 | `app/main.py` | the endpoints |
-| `app/ollama_client.py` | the prompt and the one `/api/chat` call per route (JSON schema answer, temperature 0) |
+| `app/ollama_client.py` | the prompts and the `/api/chat` calls (one per route, four with landmarks; JSON schema answers, temperature 0, fixed seed) |
 | `app/hallucination_check.py` | the checks above |
-| `app/config.py` | `OLLAMA_URL` (`http://ollama:11434`), `OLLAMA_MODEL` (`qwen2.5:1.5b`), `OLLAMA_TIMEOUT_S` (60), `OLLAMA_KEEP_ALIVE` (`30m`), `EASYREAD_MAX_CHARS` (300) |
+| `app/config.py` | `OLLAMA_URL` (`http://ollama:11434`), `OLLAMA_MODEL` (`qwen2.5:1.5b`), `OLLAMA_TIMEOUT_S` (75, all calls for one route), `OLLAMA_KEEP_ALIVE` (`30m`), `EASYREAD_MAX_CHARS` (300), `EASYREAD_LANDMARKS` (`tools`), `OLLAMA_TOOL_ROUNDS` (4) |
 
 The model is small because the cluster has no GPU: about 1 GB, a few seconds per route on 2 vCPUs. A larger model
 (`OLLAMA_MODEL=llama3.2:3b`) writes better text locally if your machine has the memory.

@@ -21,6 +21,7 @@ The service has two deployable parts that share a little code, so the files are 
 | `journey_client.py` (the API's logic in one class: OneMap, planning, routes, trips, packs) | yes | no |
 | `easy_read.py` (plain-language wording for route steps, no imports from the rest of `app/`) | yes | no |
 | `easy_read_ai.py` (asks the Easy-read Service for simpler wording), `streetview.py` (step photos) | yes | no |
+| `landmarks.py` (buildings along a route for the AI wording to mention), `geo.py` (distances between points and to a path) | yes | no |
 | `route_store.py`, `trip_store.py`, `pack_store.py` (DynamoDB / Redis / S3 storage) | yes | no |
 | `lta.py` (LTA DataMall client), `cache.py` (Redis JSON cache), `config.py` (settings), `data_mode.py` (live/saved switch) | yes | **yes** (shared) |
 | `disruption.py` (`DisruptionChecker`), `lambda_handler.py` (entry point) | not used | **yes** |
@@ -287,13 +288,45 @@ On the **Saved routes** tab, **Simplify with AI** sends the route's steps to the
 (`services/easyread-service`, which runs a small model on Ollama) and opens the editor with its wording. The caregiver
 checks and edits each step, then saves (a new version that needs approving again). Nothing is saved before that.
 
-- `POST /api/routes/{routeId}/easy-read` (route owner only) -> `{"steps": [{stepIndex, easyRead, fallback}], "provider"}`.
+- `POST /api/routes/{routeId}/easy-read` (route owner only) -> `{"steps": [{stepIndex, easyRead, fallback, landmarks}],
+  "provider"}`. `landmarks` lists the ones the wording mentions, each with a photo: `[{name, kind, lat, lng, seenFrom,
+  photoKey, sameView, photoUrl}]`.
 - The AI rewrites the template text above, not text a caregiver wrote. Names that aren't public stops ("Home", an
   address) are sent as `[place 1]` and put back afterwards (`easy_read_ai.py`), as `contracts/api.md` asks.
 - The Easy-read Service checks each step (`hallucination_check.py` there): the bus number, stop names and stop count must
   still be there, and every number must come from the step. A step that fails keeps the template text (`fallback: true`).
 - `EASYREAD_URL` unset, the service down or slower than `EASYREAD_TIMEOUT_S` (90 s): every step gets the template text
   and `provider: "template"`. Planning, saving and trips never call it, and `/ready` doesn't check it.
+
+### Landmarks along the route
+
+So the traveller can tell they are going the right way, the AI wording also mentions buildings they can't miss:
+"Look out for City Plaza on your left. Press the bell. Get off at Paya Lebar Station Exit D." (`EASYREAD_LANDMARKS`,
+on by default).
+
+- `app/landmarks.py` picks the spots to look at: the start, middle (walks over 250 m) and end of a walk, and the end of a
+  bus ride plus a spot 300 m before it (to press the bell). Train steps and changes of line get none.
+- `nearby_buildings()` asks OneMap's reverse geocode for the named buildings within 100 m of each spot (live OneMap, also
+  in saved-data mode, like station exits; cached 30 days). A building is kept only within 100 m of the step's own path,
+  with its kind (mall, station, hawker centre, ...; condominiums are left out) and which side of the road it is on.
+- The Easy-read Service lets the model look them up with a tool, choose one per spot, and checks every name it writes
+  (its README says how). It never gets coordinates.
+- **Privacy:** nothing is looked up within 200 m of a place without a stop code (home, an address someone typed, or a
+  station typed as the start or end), so the names can't give away where the traveller lives. A route that starts and
+  ends at typed places and only takes trains may get no landmarks at all.
+- **A photo of each landmark** the wording names is taken when the caregiver presses Simplify with AI, so they see it
+  in the editor before saving: Street View from the traveller's spot on the route (`seenFrom`, e.g. the bus stop),
+  turned to face the building, the same way as step photos (`photo_key(..., near=)`: `<lat>_<lng>_from_<lat>_<lng>.jpg`).
+  Not from the building's own point: that is its middle, and the panorama nearest it can be on the far side or
+  against a wall. Each new one is a paid Street View image (at most 2 per step); the same view is fetched once.
+- **No photo that repeats another.** A landmark next to the bus stop, seen from the stop, would come out as the stop
+  again. So first (with free metadata calls) the service works out which panorama and direction each photo would
+  use; a landmark photo from the same panorama as the step's photo or an earlier landmark's (or one within 15 m),
+  facing less than 90 degrees away from it, isn't taken. Its `sameView` says where it is seen instead (`"step"`, or
+  the other landmark's name), and the app says so under the photos ("it is in the step photo above").
+- Saved, a step keeps `landmarks: [{name, kind, lat, lng, seenFrom, photoKey}]`, but only those its `easyRead` still
+  names: a landmark the caregiver edits out of the wording goes with it. Answers add a `photoUrl` to each, and the
+  route pack gives the traveller `landmarks: [{name, photoUrl}]` per step.
 
 ## Step photos
 
@@ -311,6 +344,9 @@ get off at, the destination), turned to face it, so the traveller can check they
   the closest older panorama is still used (Google's first), stored under `media/streetview/v2/rough/`, and the
   caregiver app shows it with a hint to check it or add a better one. No panorama at all: the step saves without a
   photo, for the caregiver to add one (e.g. of the gantry).
+- **The last walk is photographed at the destination itself**, the route's `destination` point, not where OneMap's
+  leg ends: in the saved demo trips that is up to ~50 m off (recorded with rounded endpoints). A destination that is a
+  station ("Orchard MRT Station (NS22)") gets its exit, as below.
 - **A walk to an MRT/LRT station is photographed at its exit**, the one nearest to where the walk starts: the
   station's own point is underground or inside a mall. Exits come from OneMap's search ("SENGKANG MRT STATION EXIT
   A", no token needed; cached 7 days); this lookup is always live, also with saved data. Unknown exits: the station

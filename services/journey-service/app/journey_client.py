@@ -27,11 +27,12 @@ from typing import BinaryIO, Callable
 
 import httpx
 
-from . import easy_read_ai, streetview
+from . import easy_read_ai, landmarks, streetview
 from .auth import Caller, Forbidden
 from .cache import JsonCache
 from .config import Settings
 from .easy_read import LINE_NAMES, easy_read, with_easy_read
+from .geo import EARTH_RADIUS_M, distance_to_path_m
 from .lta import LINE_CODES, SST, LtaClient, LtaError
 from .onemap_token import OneMapToken
 from .pack_store import PackUnavailable
@@ -40,7 +41,6 @@ from .trip_store import RedisTripStore, TripConflict, TripExists, TripNotFound
 
 log = logging.getLogger("journey")
 
-EARTH_RADIUS_M = 6_371_000.0
 
 ONEMAP_MODES = {"any": "TRANSIT", "bus": "BUS", "train": "RAIL"}   # plan() `mode` -> OneMap `mode`
 CROWD_RANK = {None: 0, "low": 0, "moderate": 1, "high": 2}       # unknown counts as low when comparing options
@@ -135,31 +135,6 @@ def decode_polyline(encoded: str, precision: int = 5) -> list[tuple[float, float
         lng += deltas[1]
         coords.append((lat / factor, lng / factor))
     return coords
-
-
-def _to_xy(lat: float, lng: float, ref_lat: float) -> tuple[float, float]:
-    """Local flat-earth projection in metres; accurate enough over a few kilometres."""
-    return (math.radians(lng) * EARTH_RADIUS_M * math.cos(math.radians(ref_lat)),
-            math.radians(lat) * EARTH_RADIUS_M)
-
-
-def distance_to_path_m(lat: float, lng: float, path: list[tuple[float, float]]) -> float:
-    """Shortest distance in metres from a point to a polyline (inf for an empty path)."""
-    if not path:
-        return math.inf
-    px, py = _to_xy(lat, lng, lat)
-    if len(path) == 1:
-        ax, ay = _to_xy(*path[0], lat)
-        return math.hypot(px - ax, py - ay)
-    best = math.inf
-    for (alat, alng), (blat, blng) in zip(path, path[1:]):
-        ax, ay = _to_xy(alat, alng, lat)
-        bx, by = _to_xy(blat, blng, lat)
-        dx, dy = bx - ax, by - ay
-        seg2 = dx * dx + dy * dy
-        t = 0.0 if seg2 == 0 else max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / seg2))
-        best = min(best, math.hypot(px - (ax + t * dx), py - (ay + t * dy)))
-    return best
 
 
 def _near_box(path: list[tuple[float, float]], radius_m: float) -> Callable[[float, float], bool]:
@@ -442,6 +417,45 @@ class JourneyClient:
         except (httpx.HTTPError, ValueError, KeyError, TypeError) as e:
             log.warning("couldn't look up the exits of %s (%s)", name, type(e).__name__)
             return []
+
+    BUILDINGS_TTL_S = 30 * 24 * 3600                  # buildings don't move
+    BUILDINGS_RADIUS_M = 100
+
+    def nearby_buildings(self, lat: float, lng: float) -> list[dict]:
+        """Named buildings within BUILDINGS_RADIUS_M of a point, [{name, lat, lng}], from OneMap's reverse geocode
+        (for landmarks.py). Like station_exits: fixed public data, so always live OneMap, also in saved-data mode,
+        and best-effort: no token or a failure means none. Cached on a ~10 m grid."""
+        def look_up() -> list[dict]:
+            token = self._token.get() or self._s.onemap_api_key
+            if not token:
+                return []
+            r = self._onemap_http.get("/api/public/revgeocode", headers={"Authorization": f"Bearer {token}"}, params={
+                "location": f"{lat},{lng}", "buffer": str(self.BUILDINGS_RADIUS_M), "addressType": "All",
+                "otherFeatures": "N"})
+            r.raise_for_status()
+            out = []
+            for b in r.json().get("GeocodeInfo") or []:
+                name = _clean(re.sub(r"\s*\(.*?\)", "", b.get("BUILDINGNAME") or ""))   # "HAWKER CENTRE (BLK 208B ...)"
+                if name:
+                    out.append({"name": titlecase(name), "lat": float(b["LATITUDE"]), "lng": float(b["LONGITUDE"])})
+            return out
+
+        try:
+            return self._cache.cached(f"buildings:{lat:.4f}_{lng:.4f}", self.BUILDINGS_TTL_S, look_up,
+                                      empty_ttl_s=self.NO_EXITS_TTL_S)
+        except (httpx.HTTPError, ValueError, KeyError, TypeError) as e:
+            log.warning("couldn't look up buildings near %.4f,%.4f (%s)", lat, lng, type(e).__name__)
+            return []
+
+    def route_landmarks(self, route: dict) -> dict[int, dict[str, list[dict]]]:
+        """What the traveller will see at each spot of the route (landmarks.py), the lookups run at once."""
+        found = landmarks.spots(route)
+        points = sorted({(s.lat, s.lng) for by_spot in found.values() for s in by_spot.values()})
+        if not points:
+            return {}
+        with ThreadPoolExecutor(max_workers=min(8, len(points))) as pool:
+            buildings = dict(zip(points, pool.map(lambda p: self.nearby_buildings(*p), points)))
+        return landmarks.offer(route, found, lambda lat, lng: buildings[(lat, lng)])
 
     def route_pt(self, start: tuple[float, float], end: tuple[float, float], when: datetime,
                  mode: str = "TRANSIT", max_walk_m: int | None = None, num_itineraries: int | None = None) -> dict:
@@ -837,64 +851,124 @@ class JourneyClient:
     # A step's `photoKey` is an S3 key in the pack bucket: a Street View photo (media/streetview/..., filled in on
     # save for steps without one) or the caregiver's upload (media/uploads/..., kept like caregiver-written
     # easyRead). Responses carry `photoUrl`, a presigned link made per response and never stored.
+    #
+    # A step's `landmarks` (from "Simplify with AI", landmarks.py) are the buildings its wording tells the traveller
+    # to look out for, each with its own Street View photo, taken from the street facing it. They are kept only
+    # while the wording still names them, so a landmark the caregiver edits out of the text goes with it.
 
     def _with_photos(self, data: dict) -> dict:
         """Street View photos for steps with no photoKey (under rough/ when only an old panorama was there), and a
-        recent one for a step with a rough photo once Google has one. Best-effort: a step stays without one when Street View has no panorama there at all, Google or S3 fails, or
-        photos are off (no API key or no bucket)."""
-        steps = [{k: v for k, v in s.items() if k != "photoUrl"} for s in data["steps"]]
-        if not (self._s.google_maps_api_key and self._packs):
+        recent one for a step with a rough photo once Google has one; and for landmarks without one. Best-effort:
+        a step stays without one when Street View has no panorama there at all, Google or S3 fails, or photos are
+        off (no API key or no bucket)."""
+        steps = [self._stored_step(s) for s in data["steps"]]
+        if not self._photos_on:
             return {**data, "steps": steps}
-        wanted = {}
+        wanted: dict[tuple[int, int | None], tuple] = {}         # (step, landmark or None) -> (point, seen from)
         for i, step in enumerate(steps):
             key = step.get("photoKey")
-            point = self._photo_target(step) if not key or streetview.is_rough(key) else None
+            arrives = data.get("destination") if i == len(steps) - 1 else None
+            point = self._photo_target(step, arrives) if not key or streetview.is_rough(key) else None
             if point:
-                wanted[i] = point
-
-        def one(point: tuple[float, float]) -> str | None:
-            good, rough = streetview.photo_key(*point), streetview.photo_key(*point, rough=True)
-            try:
-                if self._packs.exists(good):          # the same stop in another route: already fetched
-                    return good
-                # A rough photo is looked for again on every save, so a recent one replaces it once Google has one.
-                have_rough = self._packs.exists(rough)
-                photo = streetview.fetch(*point, self._photo_http, self._s.google_maps_api_key,
-                                         self._s.streetview_timeout_s, self._s.streetview_max_age_years, have_rough)
-                if photo is None:                     # Google down or refusing: the rough photo is still better
-                    return rough if have_rough else None
-                key = rough if photo.rough else good
-                if photo.image is not None:
-                    self._packs.put(key, photo.image, "image/jpeg")
-                return key
-            except PackUnavailable as e:
-                log.warning("couldn't store a street view photo: %s", e)
-                return None
-
-        if wanted:
-            with ThreadPoolExecutor(max_workers=min(8, len(wanted))) as pool:
-                for i, key in zip(wanted, pool.map(one, wanted.values())):
-                    if key:
-                        steps[i] = {**steps[i], "photoKey": key}
+                wanted[(i, None)] = (point, None)
+            for n, mark in enumerate(step.get("landmarks") or []):
+                if not mark.get("photoKey") and not mark.get("sameView"):        # sameView: shown in another photo
+                    wanted[(i, n)] = self._landmark_view(mark)
+        for (i, n), key in self._street_photos(wanted).items():
+            if n is None:
+                steps[i] = {**steps[i], "photoKey": key}
+            else:
+                steps[i]["landmarks"][n] = {**steps[i]["landmarks"][n], "photoKey": key}
         return {**data, "steps": steps}
 
-    def _photo_target(self, step: dict) -> tuple[float, float] | None:
+    @staticmethod
+    def _stored_step(step: dict) -> dict:
+        """A step as it is saved: no presigned links, and only the landmarks its wording still names."""
+        step = {k: v for k, v in step.items() if k != "photoUrl"}
+        if "landmarks" in step:
+            text = (step.get("easyRead") or "").lower()
+            kept = [{k: v for k, v in m.items() if k != "photoUrl"} for m in step["landmarks"] or []
+                    if m.get("name") and m["name"].lower() in text]
+            step["landmarks"] = kept or None
+        return step
+
+    @property
+    def _photos_on(self) -> bool:
+        return bool(self._s.google_maps_api_key and self._packs)
+
+    @staticmethod
+    def _landmark_view(mark: dict) -> tuple:
+        """(the building, the traveller's spot it is photographed from, if known)."""
+        seen = mark.get("seenFrom")
+        return (mark["lat"], mark["lng"]), (tuple(seen) if seen else None)
+
+    def _street_photos(self, wanted: dict) -> dict:
+        """{id: S3 key} of a Street View photo looking at each {id: (point, seen from or None)}, fetched at once;
+        ids with none are left out. The same view is fetched once, here and across routes (see photo_key)."""
+        if not wanted:
+            return {}
+        with ThreadPoolExecutor(max_workers=min(8, len(wanted))) as pool:
+            keys = dict(zip(wanted, pool.map(lambda view: self._street_photo(*view), wanted.values())))
+        return {i: key for i, key in keys.items() if key}
+
+    def _street_photo(self, point: tuple[float, float], near: tuple[float, float] | None = None) -> str | None:
+        good, rough = streetview.photo_key(*point, near=near), streetview.photo_key(*point, rough=True, near=near)
+        try:
+            if self._packs.exists(good):          # the same place in another route: already fetched
+                return good
+            # A rough photo is looked for again on every save, so a recent one replaces it once Google has one.
+            have_rough = self._packs.exists(rough)
+            photo = streetview.fetch(*point, self._photo_http, self._s.google_maps_api_key,
+                                     self._s.streetview_timeout_s, self._s.streetview_max_age_years, have_rough,
+                                     near)
+            if photo is None:                     # Google down or refusing: the rough photo is still better
+                return rough if have_rough else None
+            key = rough if photo.rough else good
+            if photo.image is not None:
+                self._packs.put(key, photo.image, "image/jpeg")
+            return key
+        except PackUnavailable as e:
+            log.warning("couldn't store a street view photo: %s", e)
+            return None
+
+    STATION_NAME = re.compile(r"\b(MRT|LRT) Station\b", re.IGNORECASE)
+
+    def _photo_target(self, step: dict, destination: dict | None = None) -> tuple[float, float] | None:
         """Where a step's photo looks: the end of the step, but for a walk to a station the exit nearest to where
-        the walk starts (the station's own point is underground or inside a mall)."""
-        station = streetview.walks_to_station(step)
+        the walk starts (the station's own point is underground or inside a mall).
+
+        `destination`: the route's, given for its last step. A last walk ends there, so the photo is of the
+        destination itself, not of where OneMap's leg ends (up to ~50 m off: the saved demo trips were recorded
+        with rounded endpoints). A destination that is a station ("Orchard MRT Station (NS22)") gets its exit."""
         start = step.get("from") or {}
+        station = streetview.walks_to_station(step)
+        end = step.get("to") or {}
+        if (destination and destination.get("lat") is not None and destination.get("lng") is not None
+                and step.get("mode") == "walk" and not end.get("code")):
+            if not self.STATION_NAME.search(destination.get("name") or ""):
+                return destination["lat"], destination["lng"]
+            station = destination
         if station and start.get("lat") is not None and start.get("lng") is not None:
             exit_point = streetview.nearest(self.station_exits(station["name"]), (start["lat"], start["lng"]))
             if exit_point:
                 return exit_point
+            if station is destination:
+                return destination["lat"], destination["lng"]
         return streetview.target(step)
 
     def _photo_url(self, key: str | None) -> str | None:
         return self._packs.url(key, self._s.photo_url_ttl_s) if key and self._packs else None
 
     def with_photo_urls(self, route: dict) -> dict:
-        """The route as the API returns it: each step with a temporary `photoUrl` for its photo (or null)."""
-        return {**route, "steps": [{**s, "photoUrl": self._photo_url(s.get("photoKey"))} for s in route["steps"]]}
+        """The route as the API returns it: each step, and each of its landmarks, with a temporary `photoUrl` for
+        its photo (or null)."""
+        return {**route, "steps": [self._step_with_urls(s) for s in route["steps"]]}
+
+    def _step_with_urls(self, step: dict) -> dict:
+        out = {**step, "photoUrl": self._photo_url(step.get("photoKey"))}
+        if step.get("landmarks"):
+            out["landmarks"] = [{**m, "photoUrl": self._photo_url(m.get("photoKey"))} for m in step["landmarks"]]
+        return out
 
     # Magic bytes, so the file's own claim about its type isn't trusted. WebP is RIFF....WEBP, checked below.
     PHOTO_TYPES = ((b"\xff\xd8\xff", "jpg", "image/jpeg"), (b"\x89PNG\r\n\x1a\n", "png", "image/png"))
@@ -926,8 +1000,55 @@ class JourneyClient:
         route = self.get_route(route_id, caller)
         if caller is not None and not self._owns(caller, route):
             raise Forbidden("Only the route's caregiver can reword it.")
-        return easy_read_ai.suggest(route["steps"], self._easyread_http, self._s.easyread_url,
-                                    self._s.easyread_timeout_s)
+        found = self.route_landmarks(route) if self._s.easyread_url and self._s.easyread_landmarks else {}
+        answer = easy_read_ai.suggest(route["steps"], self._easyread_http, self._s.easyread_url,
+                                      self._s.easyread_timeout_s, found)
+        # A photo of each landmark the wording names, so the caregiver sees what the traveller will look for
+        # before saving (each new one is a paid Street View image; the same place is fetched only once).
+        if self._photos_on:
+            self._photograph_landmarks(route, answer["steps"])
+        for s in answer["steps"]:
+            s["landmarks"] = [{**m, "photoKey": m.get("photoKey"), "sameView": m.get("sameView"),
+                               "photoUrl": self._photo_url(m.get("photoKey"))} for m in s["landmarks"]]
+        return answer
+
+    def _photograph_landmarks(self, route: dict, steps: list[dict]) -> None:
+        """A photo of each landmark in `steps` (the AI's answer), unless it would look (nearly) the same as the
+        step's own photo or an earlier landmark's, e.g. a mall next to the bus stop, seen from the stop. Such a
+        landmark gets no photo of its own; `sameView` says where it is seen instead ("step", or the other
+        landmark's name). Which panorama and direction each photo would use is free to find out (metadata)."""
+        by_index = {s["stepIndex"]: s for s in route["steps"]}
+        last = route["steps"][-1]["stepIndex"] if route["steps"] else None
+        views: dict[tuple[int, int | None], tuple] = {}            # (step, landmark or None) -> (point, seen from)
+        for i, s in enumerate(steps):
+            step = by_index.get(s["stepIndex"])
+            if not s["landmarks"] or step is None:
+                continue
+            key = step.get("photoKey")
+            target = None if key and not key.startswith("media/streetview/") else self._photo_target(
+                step, route.get("destination") if s["stepIndex"] == last else None)     # an upload can't be compared
+            if target:
+                views[(i, None)] = (target, None)
+            for n, m in enumerate(s["landmarks"]):
+                views[(i, n)] = self._landmark_view(m)
+        with ThreadPoolExecutor(max_workers=min(8, len(views) or 1)) as pool:
+            seen_as = dict(zip(views, pool.map(lambda v: streetview.view(
+                *v[0], self._photo_http, self._s.google_maps_api_key, self._s.streetview_timeout_s,
+                self._s.streetview_max_age_years, near=v[1]), views.values())))
+        wanted = {}
+        for i, s in enumerate(steps):
+            shown = [("step", seen_as[(i, None)])] if seen_as.get((i, None)) else []
+            for n, m in enumerate(s["landmarks"]):
+                mine = seen_as.get((i, n))
+                same = next((label for label, other in shown if mine and streetview.same_view(mine, other)), None)
+                if same:
+                    m["sameView"] = same
+                    continue
+                if mine:
+                    shown.append((m["name"], mine))
+                wanted[(i, n)] = views[(i, n)]
+        for (i, n), key in self._street_photos(wanted).items():
+            steps[i]["landmarks"][n]["photoKey"] = key
 
     @staticmethod
     def _ordered(route: dict) -> dict:
@@ -1080,6 +1201,9 @@ class JourneyClient:
                 "underground": step.get("underground"),
                 "photoUrl": self._photo_url(step.get("photoKey")), "audioUrl": step.get("audioKey"),
                 "backup": (step.get("backup") or {}).get("instruction"),
+                # What the wording tells them to look out for, with a photo of each.
+                "landmarks": [{"name": m["name"], "photoUrl": self._photo_url(m.get("photoKey"))}
+                              for m in step.get("landmarks") or []],
             })
         return {
             "packVersion": f"{route['routeId']}-v{route['version']}", "routeId": route["routeId"],
