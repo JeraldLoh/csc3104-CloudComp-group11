@@ -28,6 +28,7 @@ that problem already has an incident. **Retrying is safe**: send again if a requ
 | POST | `/api/incidents/{incidentId}/resolve` | |
 | GET | `/api/stream` | Live alerts (SSE) for the caller's travellers |
 | GET / POST | `/api/travellers` | The caller's travellers / add one (you're linked to them) |
+| GET | `/api/travellers/{travellerId}/caregivers` | Who looks after them (you must be linked already) |
 | POST | `/api/links` | `{"travellerId", "caregiverId"}`: add another caregiver (you must be linked already) |
 | GET / POST | `/api/travellers/{travellerId}/safe-locations` | Home, School… |
 | GET | `/internal/links?caregiverId=&travellerId=` | `{"linked": true/false}` for other services |
@@ -73,12 +74,20 @@ pytest -v                                  # tests, against LocalStack
 python tools\send_disruption.py U-042      # put the example disruption on the queue
 ```
 
-In the kind cluster (2 replicas):
+In the kind cluster (2 replicas). `k8s/local/alert-service.yaml` is in `kustomization.yaml`, so
+`kubectl apply -k k8s/local` runs it once the image is loaded:
 
 ```powershell
 docker build --provenance=false -t alert-service:local services/alert-service
 kind load docker-image alert-service:local --name csc3104-local
-kubectl apply -f k8s/local/alert-service.yaml
+kubectl apply -k k8s/local
+```
+
+After changing the code, build and load again, then restart. The tag stays the same, so applying doesn't
+replace the pods:
+
+```powershell
+kubectl rollout restart deployment/alert-service -n csc3104
 ```
 
 ## Deploy to AWS

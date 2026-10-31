@@ -239,6 +239,13 @@ def add_link(body: NewLink, who: Caller | None = Depends(caller)):
     return profiles.add_link(me.id, body.travellerId, body.caregiverId)
 
 
+@app.get("/api/travellers/{travellerId}/caregivers")
+def list_caregivers(travellerId: str, who: Caller | None = Depends(caller)):
+    """Who looks after this traveller. Only a caregiver who is linked to them can ask."""
+    check_access(who, travellerId)
+    return sorted(profiles.caregivers_of(travellerId))
+
+
 @app.get("/api/travellers/{travellerId}/safe-locations")
 def list_safe_locations(travellerId: str, who: Caller | None = Depends(caller)):
     check_access(who, travellerId, allow_self=True)

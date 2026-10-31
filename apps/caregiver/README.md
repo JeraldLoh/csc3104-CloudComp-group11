@@ -4,10 +4,11 @@ Where a caregiver plans a route for a traveller. So far: the **route planner** (
 places or click the map, see the options on the OneMap map, save one as a route) and the
 traveller's **saved routes** (list, open one on the map, edit its name, easy-read wording and step
 photos, simplify the wording with AI, approve) and **trips** (make one on an approved route, start, end, prepare the pack, copy the
-traveller's link). The live dashboard comes later.
+traveller's link). The **dashboard** and **travellers** tabs are the caregiver's side of issues 5.1
+and 5.3.
 
-React + TypeScript + Vite, same tooling as `apps/traveller`. Talks to the Journey Service
-(`contracts/api.md`).
+React + TypeScript + Vite, same tooling as `apps/traveller`. Talks to the Journey Service and the
+Alert Service (`contracts/api.md`).
 
 ## Run it
 
@@ -35,6 +36,20 @@ npm run build
 
 > If `npm install` fails with `Cannot read properties of null (reading 'edgesOut')`, that is a
 > bug in older npm 11 releases: `npx npm@latest install` works.
+
+## Dashboard
+
+**Dashboard** (or `/#dashboard`) shows everyone the "Act as" caregiver looks after, those who need attention
+first, with alerts arriving live. It needs the Alert Service on port 8005 with `AUTH_MODE=dev`
+(`services/alert-service/dev.ps1`). Opening a traveller shows their alerts, where they're acknowledged and resolved
+(`src/alerts/AlertList.tsx`); **Edit profile** there leads to the Travellers tab.
+
+- A traveller is only "All clear" once their alerts have loaded. If they can't be loaded the card says "Can't check
+  alerts" and the alert totals show "–", never 0 (`buildRows` and `summarise` in `src/profiles/overview.ts`).
+- If the Journey Service is down only the trip parts go blank (`src/profiles/useTravellerFacts.ts`).
+- The Journey Service only shows a trip to the caregiver who planned its route, so a co-caregiver may not see a
+  traveller's trip. That's why the card says "No trip of yours under way", not "not travelling".
+- Alerts are live. Trips, safe locations and caregivers refresh every 30 seconds.
 
 ## Using the planner in another page
 
@@ -132,7 +147,9 @@ stay mounted, so a half-finished edit is still there when you come back.
 | `src/planner/useTrips.ts`, `Trips.tsx` | trips: list, make, start, end, pack, traveller link, spotting trips whose route changed |
 | `src/planner/RoutePlanner.tsx` | the screen; `PlaceField`, `OptionDetails`, `MapView` are its parts |
 | `src/planner/format.ts` | option / live-data wording |
-| `src/App.tsx` | stand-in host page (dev user, traveller id) until the real dashboard exists |
+| `src/profiles/DashboardPage.tsx`, `overview.ts`, `useTravellerFacts.ts` | the dashboard: the page, what it says about each traveller, and fetching their numbers |
+| `src/alerts/useLiveIncidents.ts`, `AlertList.tsx` | loading alerts and the live stream; a traveller's alerts with Acknowledge and Resolve |
+| `src/App.tsx` | stand-in host page (dev user, traveller id) until real login exists |
 
 `services/journey-service/app/demo_map.html` stays as the service's own dev page; this is the
 version meant to be built on.
