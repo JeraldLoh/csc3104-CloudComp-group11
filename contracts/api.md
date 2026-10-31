@@ -81,11 +81,12 @@ Scenarios: `normal`, `missed_stop`, `wrong_direction`, `long_dwell`, `silence`, 
 | POST | `/api/travellers` | `{"name": "Alex", "preferences": {...}}` | `201` traveller (new `U-` id); the caller is linked to them |
 | DELETE | `/api/travellers/{travellerId}` | — | `{"travellerId", "removed": true, "profileDeleted": bool}`: off the caller's list; profile and safe locations deleted if no caregiver is left |
 | GET / POST | `/api/travellers/{travellerId}/safe-locations` | `{"name": "Home", "lat": ..., "lng": ...}` | safe locations / `201` the new one |
+| GET | `/api/travellers/{travellerId}/caregivers` | — | list of caregiver IDs linked to the traveller, sorted; the caller must be one of them |
 | POST | `/api/links` | `{"travellerId": "U-042", "caregiverId": "G-007"}` | `201` link: adds another caregiver to the traveller |
 | GET | `/internal/links?caregiverId=G-003&travellerId=U-042` | — | `{"linked": true}`, for other services' access checks |
 
 **Who sees what:** a caregiver only reaches travellers they're linked to (`caregiver-links`): profiles, safe
-locations, incidents, ack/resolve, and the events on `/api/stream`. Anyone else gets `404 not_found`, so they
+locations, the caregiver list, incidents, ack/resolve, and the events on `/api/stream`. Anyone else gets `404 not_found`, so they
 can't tell the traveller exists. A link is made when a caregiver adds a traveller, or by a caregiver already
 linked to them (`POST /api/links`), so nobody can attach themselves to a stranger. A traveller can read their
 own safe locations.

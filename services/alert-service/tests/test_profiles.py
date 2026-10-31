@@ -87,6 +87,26 @@ def test_a_stranger_cannot_link_themselves_to_my_traveller(client):
     assert client.get("/api/travellers", headers=as_(stranger)).json() == []
 
 
+def test_a_linked_caregiver_sees_who_else_looks_after_a_traveller(client):
+    me, partner = new_caregiver(), new_caregiver()
+    alex = add_traveller(client, me)
+    client.post("/api/links", json={"travellerId": alex["travellerId"], "caregiverId": partner}, headers=as_(me))
+
+    resp = client.get(f"/api/travellers/{alex['travellerId']}/caregivers", headers=as_(partner))
+
+    assert resp.status_code == 200
+    assert resp.json() == sorted([me, partner])
+
+
+def test_a_stranger_or_the_traveller_cannot_list_caregivers(client):
+    me, stranger = new_caregiver(), new_caregiver()
+    alex = add_traveller(client, me)
+    path = f"/api/travellers/{alex['travellerId']}/caregivers"
+
+    assert client.get(path, headers=as_(stranger)).status_code == 404
+    assert client.get(path, headers=as_(alex["travellerId"])).status_code == 404
+
+
 # ---------------------------------------------------------------------------- removing a traveller
 def test_removing_my_only_traveller_deletes_their_profile(client):
     me = new_caregiver()

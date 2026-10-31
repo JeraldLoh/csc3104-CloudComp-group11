@@ -1,6 +1,6 @@
 /* Everything is under .rp so it can't leak into the page that hosts the planner.
    A host can retheme it by setting the --rp-* variables on .rp or a parent.
-   The look matches the rest of the caregiver app (the Alerts and Travellers pages): slate greys, a blue accent,
+   The look matches the rest of the caregiver app (the Dashboard and Travellers pages): slate greys, a blue accent,
    rounded cards with a soft shadow, segmented tabs and the same buttons, inputs and message boxes. */
 .rp {
   --rp-bg: #fff;

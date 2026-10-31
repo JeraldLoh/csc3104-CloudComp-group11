@@ -627,5 +627,7 @@ laptop and the service has no public address. That needs the Ingress the team ha
 - **A public AWS address:** on AWS the service is reached through a port-forward (section 2b). There is no Ingress or
   HTTPS yet, so the traveller's phone and an Amplify-hosted app can't reach it.
 - **AI wording:** the plain-language steps come from fixed rules, not an AI, so they can't make facts up. The caregiver can rewrite any step by hand (Demo C).
-- **Replacing a route's steps with a new plan**, and a **live dashboard of travellers**: not built yet. Today a different journey is a new route.
+- **Replacing a route's steps with a new plan**: not built yet. Today a different journey is a new route.
+- **The Dashboard and Travellers tabs:** these need the Alert Service, which this demo doesn't start
+  (`services/alert-service/README.md`).
 - **Names in the route pack** (traveller, caregiver) are empty until the Profiles service exists.

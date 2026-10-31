@@ -24,7 +24,8 @@ export async function call<T>(path: string, caregiverId: string, init: RequestIn
 }
 
 export function fetchIncidents(travellerId: string, caregiverId: string): Promise<Incident[]> {
-  return call(`/api/incidents?travellerId=${encodeURIComponent(travellerId)}`, caregiverId);
+  // The most the service gives: the default of 50 newest could push an old unresolved alert off the list.
+  return call(`/api/incidents?travellerId=${encodeURIComponent(travellerId)}&limit=200`, caregiverId);
 }
 
 // Incident IDs contain '#', so they must be URL-encoded in the path.
