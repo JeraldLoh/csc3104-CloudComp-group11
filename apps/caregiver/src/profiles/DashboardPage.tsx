@@ -4,8 +4,10 @@ import { useState } from "react";
 import { AlertList, useLiveIncidents } from "../alerts";
 import { formatTime, problemTitle } from "../alerts/incidents";
 import type { TripsApi } from "../journey/api";
-import { buildRows, summarise, type Health, type TravellerRow } from "./overview";
+import { LiveMap } from "./LiveMap";
+import { buildRows, seenAgo, summarise, type Health, type TravellerRow } from "./overview";
 import { Avatar } from "./TravellersPage";
+import { useLiveTrips } from "./useLiveTrips";
 import { isCaregiverId, type MyTravellers } from "./useMyTravellers";
 import { useTravellerFacts } from "./useTravellerFacts";
 import "./profiles.css";
@@ -22,6 +24,7 @@ interface Props {
 export function DashboardPage({ caregiverId, my, journey, onOpenProfile }: Props) {
   const alerts = useLiveIncidents(caregiverId, my);
   const facts = useTravellerFacts(caregiverId, my, journey);
+  const { live, known: liveKnown } = useLiveTrips(caregiverId, isCaregiverId(caregiverId));
   const [openId, setOpenId] = useState<string | null>(null);
 
   if (!isCaregiverId(caregiverId)) {
@@ -37,10 +40,11 @@ export function DashboardPage({ caregiverId, my, journey, onOpenProfile }: Props
     );
   }
 
-  const rows = buildRows(my.travellers, alerts.mine, alerts.known, facts);
-  const totals = summarise(rows);
+  const rows = buildRows(my.travellers, alerts.mine, alerts.known, facts, live);
+  const totals = summarise(rows, liveKnown);
   const problem = alerts.error ?? my.error;
   const open = rows.find((r) => r.traveller.travellerId === openId) ?? null; // gone if they were just removed
+  const nameOf = (id: string) => my.travellers.find((t) => t.travellerId === id)?.name;
 
   return (
     <div className="pf">
@@ -58,6 +62,13 @@ export function DashboardPage({ caregiverId, my, journey, onOpenProfile }: Props
 
         {problem && <p className="pf__msg pf__msg--error pf__msg--top" role="alert">{problem}</p>}
 
+        {alerts.arrivals.map((a) => (
+          <p key={a.tripId} className="pf__msg pf__msg--ok pf__msg--top pf__arrival" role="status">
+            <span><strong>{nameOf(a.travellerId) ?? a.travellerName}</strong> has arrived. <time dateTime={a.arrivedAt}>{formatTime(a.arrivedAt)}</time></span>
+            <button type="button" className="pf__chip-btn" onClick={() => alerts.dismissArrival(a.tripId)}>Dismiss</button>
+          </p>
+        ))}
+
         {open ? (
           <section>
             <button type="button" className="pf__back" onClick={() => setOpenId(null)}>← All travellers</button>
@@ -70,7 +81,7 @@ export function DashboardPage({ caregiverId, my, journey, onOpenProfile }: Props
                 </span>
                 <HealthBadge health={open.health} failed={!!alerts.error} />
               </div>
-              <Facts facts={open.facts} />
+              <Facts row={open} liveKnown={liveKnown} />
               <div className="pf__tcard-actions">
                 <button type="button" className="pf__btn pf__btn--secondary"
                   onClick={() => onOpenProfile(open.traveller.travellerId)}>
@@ -78,6 +89,20 @@ export function DashboardPage({ caregiverId, my, journey, onOpenProfile }: Props
                 </button>
               </div>
             </div>
+            {open.live && (
+              <div className="pf__tcard pf__open">
+                <LiveMap key={open.live.tripId} name={open.traveller.name} trip={open.live} />
+                <p className="pf__muted">
+                  Last seen {seenAgo(open.live.lastSeenAt)}
+                  {open.live.batteryPct != null && ` · battery ${Math.round(open.live.batteryPct)}%`}
+                  {open.live.status === "backgrounded" && " · the app isn't open on their phone"}
+                  {" · "}
+                  <a href={`https://www.google.com/maps?q=${open.live.lat},${open.live.lng}`} target="_blank" rel="noreferrer">
+                    Open in Google Maps
+                  </a>
+                </p>
+              </div>
+            )}
             <AlertList caregiverId={caregiverId} incidents={alerts.mine.filter((i) => i.travellerId === openId)}
               known={alerts.known} fresh={alerts.fresh} merge={alerts.merge} onError={alerts.setError} />
           </section>
@@ -95,11 +120,11 @@ export function DashboardPage({ caregiverId, my, journey, onOpenProfile }: Props
               <Tile label="Travellers" value={totals.travellers} />
               <Tile label="Need attention" value={totals.needAttention} tone={totals.needAttention ? "attention" : undefined} />
               <Tile label="Urgent alerts" value={totals.urgentAlerts} tone={totals.urgentAlerts ? "urgent" : undefined} />
-              <Tile label="On a trip you planned" value={totals.onTrip} />
+              <Tile label="On a trip" value={totals.onTrip} />
             </dl>
             <ul className="pf__board">
               {rows.map((row) => (
-                <TravellerCard key={row.traveller.travellerId} row={row} failed={!!alerts.error}
+                <TravellerCard key={row.traveller.travellerId} row={row} failed={!!alerts.error} liveKnown={liveKnown}
                   onOpen={() => setOpenId(row.traveller.travellerId)} />
               ))}
             </ul>
@@ -149,23 +174,28 @@ function HealthIcon({ health }: { health: Health }) {
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
-function tripText(facts: TravellerRow["facts"]): string {
+function tripText({ live, facts }: TravellerRow, liveKnown: boolean): string {
+  if (live?.arrivedAt) return `Arrived ${seenAgo(live.arrivedAt)}`;
+  if (live) return `${live.stepIndex === null ? "Travelling" : `Step ${live.stepIndex + 1}`} · seen ${seenAgo(live.lastSeenAt)}`;
+  if (facts?.activeTrip) return `Trip ${facts.activeTrip.tripId} under way`;
+  if (liveKnown) return "No trip under way"; // check-ins cover every linked caregiver's trips
   if (!facts) return "Checking…";
   if (!facts.tripsKnown) return "Can't check trips right now";
   // Only the caregiver who planned a route sees its trips, so "none" can't be said for certain.
-  return facts.activeTrip ? `Trip ${facts.activeTrip.tripId} under way` : "No trip of yours under way";
+  return "No trip of yours under way";
 }
 
 function count(value: number | null | undefined, one: string, many: string): string {
   return value === null || value === undefined ? "–" : plural(value, one, many);
 }
 
-function Facts({ facts }: { facts: TravellerRow["facts"] }) {
+function Facts({ row, liveKnown }: { row: TravellerRow; liveKnown: boolean }) {
+  const { facts } = row;
   return (
     <dl className="pf__facts">
       <div>
         <dt>Trip</dt>
-        <dd>{tripText(facts)}</dd>
+        <dd>{tripText(row, liveKnown)}</dd>
       </div>
       <div>
         <dt>Safe locations</dt>
@@ -179,8 +209,15 @@ function Facts({ facts }: { facts: TravellerRow["facts"] }) {
   );
 }
 
-function TravellerCard({ row, failed, onOpen }: { row: TravellerRow; failed: boolean; onOpen: () => void }) {
-  const { traveller, health, unresolved, facts } = row;
+interface CardProps {
+  row: TravellerRow;
+  failed: boolean;
+  liveKnown: boolean;
+  onOpen: () => void;
+}
+
+function TravellerCard({ row, failed, liveKnown, onOpen }: CardProps) {
+  const { traveller, health, unresolved } = row;
   const top = unresolved[0];
 
   return (
@@ -209,7 +246,7 @@ function TravellerCard({ row, failed, onOpen }: { row: TravellerRow; failed: boo
         )}
       </div>
 
-      <Facts facts={facts} />
+      <Facts row={row} liveKnown={liveKnown} />
 
       <div className="pf__tcard-actions">
         <button type="button" className="pf__btn pf__btn--secondary" onClick={onOpen}>

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Incident } from "../src/alerts/incidents";
-import { buildRows, summarise, type TravellerFacts } from "../src/profiles/overview";
+import type { LiveTrip } from "../src/profiles/api";
+import { buildRows, seenAgo, summarise, type TravellerFacts } from "../src/profiles/overview";
 import type { Trip } from "../src/journey/types";
 
 const alex = { travellerId: "U-1", name: "Alex" };
@@ -64,5 +65,30 @@ describe("summarise", () => {
   it("leaves the trip number blank if any traveller's trips couldn't be checked", () => {
     const rows = buildRows([alex, bo], [], true, { "U-1": known, "U-2": { ...known, tripsKnown: false } });
     expect(summarise(rows).onTrip).toBeNull();
+  });
+
+  it("counts a traveller seen on a trip even if the Journey Service doesn't list it", () => {
+    const rows = buildRows([alex, bo], [], true, { "U-1": known, "U-2": known }, { "U-1": { tripId: "T-1" } as LiveTrip });
+    expect(summarise(rows, true).onTrip).toBe(1);
+  });
+
+  it("stops counting a traveller who has arrived", () => {
+    const rows = buildRows([alex], [], true, { "U-1": known }, { "U-1": { tripId: "T-1", arrivedAt: "2026-10-12T08:00:00Z" } as LiveTrip });
+    expect(summarise(rows, true).onTrip).toBe(0);
+  });
+
+  it("can count trips from check-ins while the Journey Service is down", () => {
+    const rows = buildRows([alex], [], true, { "U-1": { ...known, tripsKnown: false } }, { "U-1": { tripId: "T-1" } as LiveTrip });
+    expect(summarise(rows, true).onTrip).toBe(1);
+  });
+});
+
+describe("seenAgo", () => {
+  const now = Date.parse("2026-10-12T08:00:00Z");
+
+  it("says how long ago, in words", () => {
+    expect(seenAgo("2026-10-12T07:59:30Z", now)).toBe("just now");
+    expect(seenAgo("2026-10-12T07:58:00Z", now)).toBe("2 min ago");
+    expect(seenAgo("2026-10-12T05:30:00Z", now)).toBe("2 h ago");
   });
 });

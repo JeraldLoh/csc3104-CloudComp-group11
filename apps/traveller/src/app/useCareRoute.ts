@@ -273,9 +273,13 @@ export function useCareRoute(session: Session, opts: { demo: boolean }): CareRou
     const f = e.tracker.fix;
     // Queued, so it keeps trying with no signal. The Alert Service turns repeats into
     // one incident (U-042#T-001#help_requested#<step>), so retrying is safe.
-    void e.requests.add("help", "/api/help", { tripId: session.tripId, lat: f?.lat ?? null, lng: f?.lng ?? null });
+    // travellerId and stepIndex go too: Help can be pressed before any check-in has reached the servers.
+    void e.requests.add("help", "/api/help", {
+      tripId: session.tripId, travellerId: session.travellerId, stepIndex: stepRef.current,
+      lat: f?.lat ?? null, lng: f?.lng ?? null,
+    });
     void e.tracker.checkInNow();
-  }, [session.tripId]);
+  }, [session.tripId, session.travellerId]);
 
   const finish = useCallback(async () => {
     const e = engine.current;
@@ -287,8 +291,10 @@ export function useCareRoute(session: Session, opts: { demo: boolean }): CareRou
     // The photos aren't needed any more; free the space (and don't keep pictures of the
     // traveller's route on the phone longer than necessary).
     void forgetTrip(session.tripId);
+    // Queued like Help, so it keeps trying with no signal. Repeats only tell the caregiver once.
+    void e.requests.add("arrived", "/api/arrived", { tripId: session.tripId, travellerId: session.travellerId });
     void e.requests.add("trip end", `/api/trips/${encodeURIComponent(session.tripId)}/end`, {});
-  }, [session.tripId, stopTracking]);
+  }, [session.tripId, session.travellerId, stopTracking]);
 
   return {
     phase, loaded, stepIndex, sender, requests, problem, fix, helpAskedAt, offlineSim,

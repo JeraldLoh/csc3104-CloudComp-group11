@@ -76,6 +76,20 @@ class AlertPublisher:
         except Exception as e:
             log.warning("couldn't publish %s for %s: %s", event_type, incident.get("incidentId"), e)
 
+    def publish_arrival(self, traveller_id: str, trip_id: str, arrived_at: str) -> None:
+        """arrival-event.json. Never raises, like publish: the arrival is saved, and dashboards read it from there."""
+        try:
+            self.redis.publish(CHANNEL, json.dumps({
+                "event": "trip.arrived",
+                "travellerId": traveller_id,
+                "travellerName": self._name(traveller_id) or traveller_id,
+                "tripId": trip_id,
+                "arrivedAt": arrived_at,
+                "sentAt": now_iso(),
+            }))
+        except Exception as e:
+            log.warning("couldn't publish the arrival of trip %s: %s", trip_id, e)
+
     def _name(self, traveller_id: str) -> str | None:
         """From the travellers table (issue 5.1). None until the traveller has a profile."""
         if traveller_id in self._names or not self.db or not self.travellers_table:

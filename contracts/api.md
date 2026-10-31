@@ -68,8 +68,9 @@ Scenarios: `normal`, `missed_stop`, `wrong_direction`, `long_dwell`, `silence`, 
 | GET | `/api/incidents?travellerId=U-042` | — | list of `incident.json` |
 | POST | `/api/incidents/{incidentId}/ack` | — | updated `incident.json` |
 | POST | `/api/incidents/{incidentId}/resolve` | — | updated `incident.json` |
-| GET | `/api/stream` | — | Live events (SSE), each one is `alert-event.json` |
-| POST | `/api/help` | `{"tripId": "T-001", "lat": 1.40, "lng": 103.90}` | `{"incidentId": "..."}` |
+| GET | `/api/stream` | — | Live events (SSE), each one is `alert-event.json` or `arrival-event.json` |
+| POST | `/api/arrived` | `{"tripId": "T-001", "travellerId": "U-042"}` | `{"tripId", "arrivedAt"}`: the traveller pressed "I've arrived". Safe to repeat; only the first call tells caregivers. No login needed until Cognito |
+| POST | `/api/help` | `{"tripId": "T-001", "travellerId": "U-042", "stepIndex": 2, "lat": 1.40, "lng": 103.90}` | `{"incidentId": "..."}`: an urgent `help_requested` incident. Only `tripId` is required; the trip's check-in context fills in the rest. No login needed until Cognito |
 | POST | `/api/travellers/{travellerId}/where-are-you` | — | `202` |
 | POST | `/api/devices` | `{"token": "<firebase token>"}` | `201` |
 
@@ -78,6 +79,7 @@ Scenarios: `normal`, `missed_stop`, `wrong_direction`, `long_dwell`, `silence`, 
 | Method | Path | Body | Returns |
 |---|---|---|---|
 | GET | `/api/travellers` | — | caregiver's linked travellers |
+| GET | `/api/travellers/live` | — | `{"U-042": {"tripId", "stepIndex", "status", "lastSeenAt", "arrivedAt", "lat", "lng", "accuracyM", "batteryPct", "trail": [[lat, lng], ...]}}`: the caller's travellers with a check-in in the last 30 minutes |
 | POST | `/api/travellers` | `{"name": "Alex", "preferences": {...}}` | `201` traveller (new `U-` id); the caller is linked to them |
 | DELETE | `/api/travellers/{travellerId}` | — | `{"travellerId", "removed": true, "profileDeleted": bool}`: off the caller's list; profile and safe locations deleted if no caregiver is left |
 | GET / POST | `/api/travellers/{travellerId}/safe-locations` | `{"name": "Home", "lat": ..., "lng": ...}` | safe locations / `201` the new one |

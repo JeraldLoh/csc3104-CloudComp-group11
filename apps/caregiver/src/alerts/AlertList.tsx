@@ -93,7 +93,7 @@ function AlertCard({ incident: i, fresh, busy, onAcknowledge, onResolve }: CardP
   const urgent = i.severity === "urgent" && i.state !== "resolved";
   const details = [
     i.tripId && `Trip ${i.tripId}`,
-    i.stepIndex != null && `step ${i.stepIndex}`,
+    i.stepIndex != null && `step ${i.stepIndex + 1}`, // counted from 0; the traveller's phone says "Step 1 of 4"
     i.detectionCount && i.detectionCount > 1 && `detected ${i.detectionCount}×`,
     i.acknowledgedBy && i.state !== "open" && `acknowledged by ${i.acknowledgedBy}`,
   ].filter(Boolean);

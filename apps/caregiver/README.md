@@ -47,9 +47,14 @@ first, with alerts arriving live. It needs the Alert Service on port 8005 with `
 - A traveller is only "All clear" once their alerts have loaded. If they can't be loaded the card says "Can't check
   alerts" and the alert totals show "–", never 0 (`buildRows` and `summarise` in `src/profiles/overview.ts`).
 - If the Journey Service is down only the trip parts go blank (`src/profiles/useTravellerFacts.ts`).
-- The Journey Service only shows a trip to the caregiver who planned its route, so a co-caregiver may not see a
-  traveller's trip. That's why the card says "No trip of yours under way", not "not travelling".
-- Alerts are live. Trips, safe locations and caregivers refresh every 30 seconds.
+- Each card shows the step the traveller is on, and an opened traveller shows a map (`src/profiles/LiveMap.tsx`), from
+  the phone's check-ins (`GET /api/travellers/live`, `useLiveTrips.ts`). These need the Check-in Service running. The
+  caregiver only has to be linked to the traveller, not to have planned the route.
+- If check-ins can't be read, the card falls back to the Journey Service, which only shows a trip to the caregiver who
+  planned its route. That's why it says "No trip of yours under way" then, not "No trip under way".
+- When a traveller presses "I've arrived", a green banner appears straight away (`trip.arrived` on the live stream) and
+  stays until dismissed. A dashboard that wasn't open still shows "Arrived 5 min ago" on the card, for 30 minutes.
+- Alerts are live. Step and location refresh every 3 seconds; safe locations and caregivers every 30.
 
 ## Using the planner in another page
 
@@ -147,7 +152,7 @@ stay mounted, so a half-finished edit is still there when you come back.
 | `src/planner/useTrips.ts`, `Trips.tsx` | trips: list, make, start, end, pack, traveller link, spotting trips whose route changed |
 | `src/planner/RoutePlanner.tsx` | the screen; `PlaceField`, `OptionDetails`, `MapView` are its parts |
 | `src/planner/format.ts` | option / live-data wording |
-| `src/profiles/DashboardPage.tsx`, `overview.ts`, `useTravellerFacts.ts` | the dashboard: the page, what it says about each traveller, and fetching their numbers |
+| `src/profiles/DashboardPage.tsx`, `overview.ts`, `useTravellerFacts.ts`, `useLiveTrips.ts`, `LiveMap.tsx` | the dashboard: the page, what it says about each traveller, fetching their numbers and live position, and the map |
 | `src/alerts/useLiveIncidents.ts`, `AlertList.tsx` | loading alerts and the live stream; a traveller's alerts with Acknowledge and Resolve |
 | `src/App.tsx` | stand-in host page (dev user, traveller id) until real login exists |
 

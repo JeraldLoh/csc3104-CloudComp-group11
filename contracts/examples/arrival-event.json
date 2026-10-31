@@ -1,0 +1,8 @@
+{
+  "event": "trip.arrived",
+  "travellerId": "U-042",
+  "travellerName": "Alex",
+  "tripId": "T-001",
+  "arrivedAt": "2026-10-12T08:45:02Z",
+  "sentAt": "2026-10-12T08:45:02Z"
+}
