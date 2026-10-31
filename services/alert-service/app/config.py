@@ -27,6 +27,9 @@ class Settings:
     disruptions_queue_url: str | None = field(default_factory=lambda: os.getenv("DISRUPTIONS_QUEUE_URL") or None)
     disruptions_consumer_enabled: bool = field(default_factory=lambda: _bool("DISRUPTIONS_CONSUMER_ENABLED", True))
 
+    # A trip counts as live until its last check-in is this old (live.py).
+    live_window_s: int = field(default_factory=lambda: int(os.getenv("LIVE_WINDOW_S", "1800")))
+
     # Create the tables and queue on startup. Local only: on AWS the platform stack already has them.
     create_resources: bool = field(default_factory=lambda: _bool("CREATE_RESOURCES", False))
 

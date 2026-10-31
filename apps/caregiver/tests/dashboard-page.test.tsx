@@ -4,6 +4,15 @@ import type { Trip } from "../src/journey/types";
 import { DashboardPage } from "../src/profiles/DashboardPage";
 import type { MyTravellers } from "../src/profiles/useMyTravellers";
 
+vi.mock("../src/profiles/LiveMap", () => ({ // Leaflet needs a real browser; tested there
+  LiveMap: ({ name }: { name: string }) => <div>Map of {name}</div>,
+}));
+
+const seenNow = (changes = {}) => ({
+  tripId: "T-LIVE", stepIndex: 2, status: "active", lastSeenAt: new Date().toISOString(), arrivedAt: null, lat: 1.4, lng: 103.9,
+  accuracyM: 10, batteryPct: 64.4, trail: [[1.4, 103.9]], ...changes,
+});
+
 class FakeEventSource {
   static last: FakeEventSource;
   onopen: (() => void) | null = null;
@@ -86,6 +95,65 @@ describe("DashboardPage", () => {
     ]);
     show();
     expect(await screen.findByText("Trip T-NOW under way")).toBeTruthy();
+  });
+
+  it("shows which step a traveller is on, counted as their phone counts", async () => {
+    answers["/api/travellers/live"] = () => json({ "U-1": seenNow({ stepIndex: 2 }) });
+    show();
+    expect(await screen.findByText("Step 3 · seen just now")).toBeTruthy();
+  });
+
+  it("says there's no trip for certain once check-ins have been read", async () => {
+    answers["/api/travellers/live"] = () => json({});
+    show();
+    expect(await screen.findByText("No trip under way")).toBeTruthy();
+  });
+
+  it("shows the map and battery inside an opened traveller, but no map with no trip", async () => {
+    answers["/api/travellers/live"] = () => json({ "U-1": seenNow(), "U-2": undefined });
+    show([alex, { travellerId: "U-2", name: "Bo" }]);
+    await screen.findByText("Step 3 · seen just now");
+
+    fireEvent.click(screen.getByRole("button", { name: /Alex/ }));
+    expect(await screen.findByText("Map of Alex")).toBeTruthy();
+    expect(screen.getByText(/battery 64%/)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /All travellers/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Bo/ }));
+    expect(await screen.findByRole("heading", { name: "Bo" })).toBeTruthy();
+    expect(screen.queryByText(/Map of/)).toBeNull();
+  });
+
+  it("announces an arrival straight away, until it's dismissed", async () => {
+    show();
+    await screen.findByText("All clear");
+
+    act(() => FakeEventSource.last.onmessage?.({ data: JSON.stringify({
+      event: "trip.arrived", travellerId: "U-1", travellerName: "Alex", tripId: "T-1",
+      arrivedAt: "2026-10-12T08:00:00Z", sentAt: "2026-10-12T08:00:00Z",
+    }) }));
+
+    expect((await screen.findByText(/has arrived/)).closest("p")?.textContent).toContain("Alex has arrived");
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(screen.queryByText(/has arrived/)).toBeNull();
+  });
+
+  it("ignores an arrival of someone who isn't this caregiver's traveller", async () => {
+    show();
+    await screen.findByText("All clear");
+
+    act(() => FakeEventSource.last.onmessage?.({ data: JSON.stringify({
+      event: "trip.arrived", travellerId: "U-STRANGER", travellerName: "Stranger", tripId: "T-2",
+      arrivedAt: "2026-10-12T08:00:00Z", sentAt: "2026-10-12T08:00:00Z",
+    }) }));
+
+    expect(screen.queryByText(/has arrived/)).toBeNull();
+  });
+
+  it("shows an arrival on the card even if the dashboard wasn't open for it", async () => {
+    answers["/api/travellers/live"] = () => json({ "U-1": seenNow({ arrivedAt: new Date().toISOString() }) });
+    show();
+    expect(await screen.findByText("Arrived just now")).toBeTruthy();
   });
 
   it("updates live when an alert arrives, and moves that traveller to the top", async () => {

@@ -48,7 +48,8 @@ async def event_stream(redis_async, request, traveller_id: str | None = None, ke
                     last_sent = time.monotonic()
                 continue
             data = msg["data"]
-            about = json.loads(data)["incident"]["travellerId"]
+            event = json.loads(data)
+            about = (event.get("incident") or event)["travellerId"]  # arrival events have no incident
             if traveller_id and about != traveller_id:
                 continue
             if load_allowed:

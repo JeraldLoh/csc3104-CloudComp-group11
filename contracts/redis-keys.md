@@ -8,10 +8,11 @@ Journey keys expire **24 hours** after their last update.
 |---|---|---|---|---|
 | `active-trips` | Set | Trip IDs currently in progress | Journey Service (M6), on start/end | Heartbeat (M1), Status page (M3) |
 | `trip:{tripId}:route` | String (JSON) | Cached steps and path for the trip (same shape as `route.json` steps + `path`) | Journey Service (M6), on trip start | Detectors (M4) |
-| `trip:{tripId}:context` | Hash | `travellerId`, `stepIndex`, `routeVersion`, `status` | Check-in Service (M2) | Detectors (M4), Coordinator (M3) |
+| `trip:{tripId}:context` | Hash | `travellerId`, `stepIndex`, `routeVersion`, `status` | Check-in Service (M2) | Detectors (M4), Coordinator (M3), Alert Service (M5) |
 | `trip:{tripId}:lastseq` | String | Highest sequence number processed | Check-in Service (M2) | Check-in Service (M2) |
-| `trip:{tripId}:recent` | List | Last 10 check-ins (JSON), newest first | Check-in Service (M2) | Detectors (M4) |
-| `hb:{tripId}:lastseen` | String | Time of last check-in | Check-in Service (M2) | Heartbeat (M1) |
+| `trip:{tripId}:recent` | List | Last 10 check-ins (JSON), newest first | Check-in Service (M2) | Detectors (M4), Alert Service (M5) |
+| `trip:{tripId}:arrived` | String | When the traveller pressed "I've arrived"; set once, so only the first request tells caregivers | Alert Service (M5) | Alert Service (M5) |
+| `hb:{tripId}:lastseen` | String | Time of last check-in | Check-in Service (M2) | Heartbeat (M1), Alert Service (M5) |
 | `hb:{tripId}:intervals` | List | Last 100 gaps between single live check-ins, in milliseconds (catch-up batches don't add gaps; they only update lastseen) | Check-in Service (M2) | Heartbeat (M1) |
 | `hb:{tripId}:status` | String | `active` or `backgrounded` | Check-in Service (M2) | Heartbeat (M1) |
 | `risk:{travellerId}` | Hash | `score`, `level` (`normal`/`elevated`), `detectorsUsed`, `updatedAt` | Coordinator / Aggregator (M3) | Coordinator (M3), Status page (M3) |
@@ -23,4 +24,4 @@ Journey keys expire **24 hours** after their last update.
 
 | Channel | Message | Published by | Listened to by |
 |---|---|---|---|
-| `alerts:events` | `alert-event.json` | Alert Service (any replica) | Alert Service (every replica, forwards to connected dashboards) |
+| `alerts:events` | `alert-event.json`, `arrival-event.json` | Alert Service (any replica) | Alert Service (every replica, forwards to connected dashboards) |

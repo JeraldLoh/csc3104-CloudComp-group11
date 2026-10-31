@@ -78,8 +78,8 @@ function Journey({ session, demo, debug }: { session: Session; demo: boolean; de
   }
 
   if (app.phase === "arrived") {
-    // Only say the caregiver knows once the "trip end" message has actually got through.
-    const told = !(app.requests?.pending.some((r) => r.label === "trip end") ?? true);
+    // Only say the caregiver knows once the "arrived" message has actually got through.
+    const told = !(app.requests?.pending.some((r) => r.label === "arrived") ?? true);
     return (
       <Screen>
         <div className="message message--arrived">
