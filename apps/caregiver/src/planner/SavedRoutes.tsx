@@ -5,7 +5,7 @@ import type { DisruptionCheck } from "../journey/types";
 import { DisruptedStep, DisruptionWarnings, splitDisruptions } from "./DisruptionWarnings";
 import { EasyReadPoints } from "./EasyReadPoints";
 import { isRoughPhoto, photoHint, roughPhotoHint } from "./format";
-import { StepPhoto } from "./StepPhoto";
+import { LandmarkPhotos, StepPhoto } from "./StepPhoto";
 import { RouteEditor } from "./RouteEditor";
 import type { SavedRoutesState } from "./useSavedRoutes";
 import type { TripsState } from "./useTrips";
@@ -187,11 +187,13 @@ export function SavedRoutes({ saved, trips, disruptions }: Props) {
                       note={isRoughPhoto(step.photoKey) &&
                         <div className="rp__photo-hint">{`${roughPhotoHint(step)} (Edit, then Replace photo.)`}</div>}
                     />
+                    <LandmarkPhotos landmarks={step.landmarks ?? []} />
                   </DisruptedStep>
                 ))}
               </ol>
               <div className="rp__meta">
                 The points under each step are the wording the traveller reads, and the photo shows where the step ends.
+                Smaller photos show the landmarks the wording tells them to look out for.
               </div>
               <DisruptionWarnings check={openedCheck} onSteps={false} />
             </>

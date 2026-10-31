@@ -96,6 +96,10 @@ stay mounted, so a half-finished edit is still there when you come back.
   Where only an old Street View photo was found (its key is under `media/streetview/v2/rough/`, `isRoughPhoto`), the
   photo is shown with a hint under it to check it or add a better one (`roughPhotoHint`).
   Like the wording, a photo change only counts once the route is saved.
+- Landmarks: after **Simplify with AI**, a step whose wording mentions a landmark ("Look out for City Plaza on your
+  left") shows a smaller photo of it under the step photo, captioned "Look for City Plaza" (`LandmarkPhotos` in
+  `StepPhoto.tsx`). Only the landmarks the wording still names are shown and saved (`namedLandmarks` in `format.ts`),
+  so deleting the sentence removes its photo. Saved routes show them the same way.
 - Deleting: **Delete** on a saved route asks first, then calls `deleteRoute(id, version)` (`SavedRoutesApi`; the
   service refuses with 409 if the route changed since the list was loaded, or if one of its trips is active). Pass
   `routesLoaded={saved.loaded}` to `<Trips>` so planned trips left without a route are flagged.

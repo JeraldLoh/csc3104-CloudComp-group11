@@ -1,4 +1,4 @@
-import { easyReadPoints, fromBulletLines, isRoughPhoto, photoHint, roughPhotoHint, toBulletLines } from "../src/planner/format";
+import { easyReadPoints, fromBulletLines, isRoughPhoto, landmarkSeenIn, namedLandmarks, photoHint, roughPhotoHint, toBulletLines } from "../src/planner/format";
 
 describe("photoHint", () => {
   const stop = (code: string | null) => ({ name: "X", code, lat: 1.3, lng: 103.8 });
@@ -55,5 +55,22 @@ describe("easyReadPoints", () => {
     expect(easyReadPoints("  Get on the bus.   Tap your card!  ")).toEqual(["Get on the bus", "Tap your card!"]);
     expect(easyReadPoints(null)).toEqual([]);
     expect(easyReadPoints("   ")).toEqual([]);
+  });
+});
+
+describe("namedLandmarks", () => {
+  it("keeps only the landmarks the wording still names", () => {
+    const marks = [{ name: "City Plaza" }, { name: "Geylang Telephone Exchange" }];
+    expect(namedLandmarks(marks, "Look out for city plaza on your left. Press the bell.")).toEqual([{ name: "City Plaza" }]);
+    expect(namedLandmarks(marks, null)).toEqual([]);
+    expect(namedLandmarks(null, "anything")).toEqual([]);
+  });
+});
+
+describe("landmarkSeenIn", () => {
+  it("points to the photo that already shows it", () => {
+    expect(landmarkSeenIn({ name: "Punggol Coast Mall", sameView: "step" })).toBe(
+      "Look for Punggol Coast Mall: it is in the step photo above.");
+    expect(landmarkSeenIn({ name: "Block 12", sameView: "City Plaza" })).toBe("Look for Block 12: it is in the photo of City Plaza.");
   });
 });

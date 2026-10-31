@@ -28,6 +28,23 @@ export interface Stop {
   lng: number | null;
 }
 
+/** A building the step's wording tells the traveller to look out for ("Simplify with AI"), with a photo of it. */
+export interface Landmark {
+  name: string;
+  /** "mall", "station", "hawker centre", ... or "building". */
+  kind?: string | null;
+  lat: number;
+  lng: number;
+  /** [lat, lng] of the traveller's spot on the route it is seen from (and photographed from). */
+  seenFrom?: [number, number] | null;
+  /** A Street View photo of it, taken from the street, in S3. */
+  photoKey?: string | null;
+  /** A temporary link to that photo, made by the service for each answer (never saved). */
+  photoUrl?: string | null;
+  /** No photo of its own, as it would look the same as the step's photo ("step") or another landmark's (its name). */
+  sameView?: string | null;
+}
+
 export interface RouteStep {
   stepIndex: number;
   mode: StepMode;
@@ -46,6 +63,8 @@ export interface RouteStep {
   backup?: { instruction: string; line?: string | null } | null;
   /** Train steps: every station on the leg, so a disruption between the two ends is noticed. */
   stops?: { code: string | null; name: string | null }[];
+  /** What the wording tells the traveller to look out for. The service keeps only those the wording still names. */
+  landmarks?: Landmark[] | null;
 }
 
 export interface PlanRequest {
@@ -159,7 +178,7 @@ export interface SavedRoute extends RouteDraft {
 /** POST /api/routes/{id}/easy-read: AI wording for each step, for the caregiver to check before saving. */
 export interface EasyReadSuggestion {
   /** `fallback`: the AI's text didn't pass the checks (or the AI was unavailable), so this is the standard wording. */
-  steps: { stepIndex: number; easyRead: string; fallback: boolean }[];
+  steps: { stepIndex: number; easyRead: string; fallback: boolean; landmarks?: Landmark[] }[];
   /** "template": the AI was unavailable, so every step has the standard wording. */
   provider: "ollama" | "template" | string;
 }

@@ -53,6 +53,19 @@ export const toBulletLines = (text: string | null | undefined) =>
 
 /** The editor's lines back to the stored wording: one sentence per line, bullets and blank lines dropped.
  *  "• Get on the bus\n• Tap your card" -> "Get on the bus. Tap your card." */
+/** The landmarks the wording names: one the caregiver edits out of the text goes (the service drops it on save too). */
+export function namedLandmarks<T extends { name: string }>(landmarks: T[] | null | undefined, text: string | null | undefined): T[] {
+  const words = (text ?? "").toLowerCase();
+  return (landmarks ?? []).filter((m) => words.includes(m.name.toLowerCase()));
+}
+
+/** Where a landmark without a photo of its own can be seen: its photo would have looked the same as that one. */
+export function landmarkSeenIn(m: { name: string; sameView?: string | null }): string {
+  return m.sameView === "step"
+    ? `Look for ${m.name}: it is in the step photo above.`
+    : `Look for ${m.name}: it is in the photo of ${m.sameView}.`;
+}
+
 export function fromBulletLines(lines: string): string {
   return lines.split("\n")
     .map((line) => line.replace(/^\s*[•*-]\s*/, "").trim())

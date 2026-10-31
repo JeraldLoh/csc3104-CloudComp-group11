@@ -1,7 +1,7 @@
 import { type KeyboardEvent, useId, useLayoutEffect, useRef, useState } from "react";
 import type { EasyReadSuggestion, SavedRoute, UploadedPhoto } from "../journey/types";
-import { BULLET, fromBulletLines, isRoughPhoto, photoHint, roughPhotoHint, toBulletLines } from "./format";
-import { StepPhoto } from "./StepPhoto";
+import { BULLET, fromBulletLines, isRoughPhoto, namedLandmarks, photoHint, roughPhotoHint, toBulletLines } from "./format";
+import { LandmarkPhotos, StepPhoto } from "./StepPhoto";
 import type { RouteChanges } from "./useSavedRoutes";
 
 interface Props {
@@ -38,14 +38,21 @@ export function RouteEditor({ route, affectedTrips, saving, suggested, onUploadP
   const [easyRead, setEasyRead] = useState(route.steps.map((s) => toBulletLines(aiFor(s.stepIndex)?.easyRead ?? s.easyRead)));
   const [photos, setPhotos] = useState<Photo[]>(route.steps.map((s) => ({ key: s.photoKey ?? null, url: s.photoUrl ?? null })));
   const [uploading, setUploading] = useState<number | null>(null);
+  // The landmarks each step may mention: the AI's (with photos) when it suggested wording, else the saved ones.
+  // Only those the wording names are shown and saved, so editing a landmark out of the text removes it.
+  const landmarks = route.steps.map((s) => (suggested ? aiFor(s.stepIndex)?.landmarks : s.landmarks) ?? []);
+  const shownLandmarks = easyRead.map((lines, i) => namedLandmarks(landmarks[i], fromBulletLines(lines)));
 
   const setStepText = (i: number, text: string) => setEasyRead((list) => list.map((t, j) => (j === i ? text : t)));
   const photoChanged = (i: number) => photos[i].key !== (route.steps[i].photoKey ?? null);
   // Compared as sentences, so opening a route saved as one paragraph doesn't count as a change.
   const wordingChanged = (i: number) => fromBulletLines(easyRead[i]) !== fromBulletLines(toBulletLines(route.steps[i].easyRead));
   const tooLong = easyRead.map((lines) => fromBulletLines(lines).length > MAX_EASY_READ);
+  const names = (list: { name: string }[]) => list.map((m) => m.name).join("\n");
+  const landmarksChanged = (i: number) =>
+    names(shownLandmarks[i]) !== names(namedLandmarks(route.steps[i].landmarks, route.steps[i].easyRead));
   const changed = name.trim() !== route.name
-    || route.steps.some((_, i) => wordingChanged(i) || photoChanged(i));
+    || route.steps.some((_, i) => wordingChanged(i) || photoChanged(i) || landmarksChanged(i));
   const canSave = changed && name.trim().length > 0 && !saving && uploading === null && !tooLong.some(Boolean);
 
   // Where the caret goes once a new bullet is in the box (set right after React updates it, before the next key).
@@ -89,6 +96,8 @@ export function RouteEditor({ route, affectedTrips, saving, suggested, onUploadP
           easyRead: easyRead.map((lines, i) => (wordingChanged(i) ? fromBulletLines(lines) || null : undefined)),
           // Unchanged = undefined (kept as it is); null = the service adds a Street View photo again.
           photoKey: photos.map((p, i) => (photoChanged(i) ? p.key : undefined)),
+          // The AI's landmarks (with their photos) go with its wording; undefined keeps the saved ones.
+          landmarks: shownLandmarks.map((list, i) => (landmarksChanged(i) ? list : undefined)),
         });
       }}
     >
@@ -140,6 +149,7 @@ export function RouteEditor({ route, affectedTrips, saving, suggested, onUploadP
                   : <div className="rp__photo-hint">{photoHint(step)}</div>}
                 note={isRoughPhoto(photo.key) && <div className="rp__photo-hint">{roughPhotoHint(step)}</div>}
               />
+              <LandmarkPhotos landmarks={shownLandmarks[i]} />
               <div className="rp__row">
                 <label className="rp__btn rp__btn--secondary rp__btn--small rp__file">
                   {uploading === i ? "Uploading..." : "Replace photo"}

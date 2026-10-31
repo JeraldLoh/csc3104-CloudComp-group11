@@ -3,18 +3,20 @@
 // the planner saves a route) and hands the result to <SavedRoutes> and <RoutePlanner viewing>.
 import { useEffect, useRef, useState } from "react";
 import { ApiError, type SavedRoutesApi } from "../journey/api";
-import type { EasyReadSuggestion, RouteUpdate, SavedRoute, UploadedPhoto } from "../journey/types";
+import type { EasyReadSuggestion, Landmark, RouteUpdate, SavedRoute, UploadedPhoto } from "../journey/types";
 import { failure, info, message, type Status } from "./status";
 
 /**
  * What the editor can change. `easyRead[i]`: undefined keeps step i as it is, null clears it (the service fills in
  * its own wording). `photoKey[i]`: undefined keeps the photo, a key (from uploadPhoto) replaces it, null clears it
- * (the service adds a Street View photo again when there is one).
+ * (the service adds a Street View photo again when there is one). `landmarks[i]`: undefined keeps them, a list
+ * replaces them (e.g. the AI's, with their photos).
  */
 export interface RouteChanges {
   name: string;
   easyRead: (string | null | undefined)[];
   photoKey?: (string | null | undefined)[];
+  landmarks?: (Landmark[] | undefined)[];
 }
 
 /** AI wording for the open route, waiting in the editor for the caregiver to check. */
@@ -157,6 +159,7 @@ export function useSavedRoutes(api: SavedRoutesApi, travellerId: string, reloadK
         ...step,
         easyRead: changes.easyRead[i] === undefined ? step.easyRead : changes.easyRead[i],
         photoKey: changes.photoKey?.[i] === undefined ? step.photoKey : changes.photoKey[i],
+        landmarks: changes.landmarks?.[i] === undefined ? step.landmarks : changes.landmarks[i],
       })),
       path: base.path,
       version: base.version,
