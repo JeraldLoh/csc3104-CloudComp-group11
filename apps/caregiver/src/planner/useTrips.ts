@@ -9,16 +9,13 @@ import type { TripsApi } from "../journey/api";
 import type { PackLink, SavedRoute, Trip } from "../journey/types";
 import { failure, info, message, type Status } from "./status";
 
-/** Today as YYYY-MM-DD in the browser's timezone (the day the caregiver means). */
+// Today as YYYY-MM-DD in the browser's timezone (the day the caregiver means).
 export function todayLocal(now = new Date()): string {
   const two = (n: number) => String(n).padStart(2, "0");
   return `${now.getFullYear()}-${two(now.getMonth() + 1)}-${two(now.getDate())}`;
 }
 
-/**
- * Why this trip can't be used any more, or null. Needs the traveller's routes. A route that isn't in
- * the list is given the benefit of the doubt, unless `routesLoaded` says the list is complete (then it was deleted).
- */
+// The trip's problem, if any, that prevents it from being started or having its pack built.
 export function tripProblem(trip: Trip, routes: SavedRoute[], routesLoaded = false): string | null {
   if (trip.status === "completed") return null;
   const route = routes.find((r) => r.routeId === trip.routeId);
@@ -29,13 +26,13 @@ export function tripProblem(trip: Trip, routes: SavedRoute[], routesLoaded = fal
   return null;
 }
 
-/** The link the traveller opens on their phone (apps/traveller reads trip and traveller from it). */
+// The link the traveller opens on their phone to see the trip, if the caregiver knows where the app is hosted.
 export function travellerLink(appUrl: string, trip: Trip): string {
   const base = appUrl.replace(/\/+$/, "");
   return `${base}/?trip=${encodeURIComponent(trip.tripId)}&traveller=${encodeURIComponent(trip.travellerId)}`;
 }
 
-/** `reloadKey`: change it to fetch again for the same traveller (e.g. a new login). */
+// The traveller's trips, with actions to make one on an approved route, start or end it, and prepare its offline pack.
 export function useTrips(api: TripsApi, travellerId: string, reloadKey?: unknown) {
   const traveller = travellerId.trim();
   const latestApi = useRef(api);

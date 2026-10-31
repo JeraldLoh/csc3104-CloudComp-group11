@@ -148,9 +148,9 @@ try {
   Write-Info "Allowed origin: $CorsOrigin (tighten it to the traveller app's address with -CorsOrigin)"
 
   # ---------------------------------------------------------------------------
-  Write-Step 'Creating the Secret with the LTA and OneMap keys'
-  $Keys = Get-EnvValues $EnvFile @('LTA_API_KEY', 'ONEMAP_API_KEY', 'ONEMAP_API_EMAIL', 'ONEMAP_API_PASSWORD')
-  foreach ($n in 'LTA_API_KEY', 'ONEMAP_API_EMAIL', 'ONEMAP_API_PASSWORD', 'ONEMAP_API_KEY') {
+  Write-Step 'Creating the Secret with the LTA, OneMap and Google Maps keys'
+  $Keys = Get-EnvValues $EnvFile @('LTA_API_KEY', 'ONEMAP_API_KEY', 'ONEMAP_API_EMAIL', 'ONEMAP_API_PASSWORD', 'GOOGLE_MAPS_API_KEY')
+  foreach ($n in 'LTA_API_KEY', 'ONEMAP_API_EMAIL', 'ONEMAP_API_PASSWORD', 'ONEMAP_API_KEY', 'GOOGLE_MAPS_API_KEY') {
     if ($Keys.ContainsKey($n)) { Write-Info "$n found in $EnvFile" } else { Write-Info "NOTE: $n not found in $EnvFile" }
   }
   if (-not ($Keys.ContainsKey('ONEMAP_API_EMAIL') -and $Keys.ContainsKey('ONEMAP_API_PASSWORD')) -and -not $Keys.ContainsKey('ONEMAP_API_KEY')) {

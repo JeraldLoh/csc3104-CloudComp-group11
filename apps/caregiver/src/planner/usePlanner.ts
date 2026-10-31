@@ -10,17 +10,17 @@ import { failure, info, message, type Status } from "./status";
 
 export type Which = "from" | "to";
 
-/** A chosen end of the trip. `label` is the text it belongs to: editing the box to something else drops the pin. */
+// Point is a place the user has pinned on the map, with its coordinates and what they typed in the box.
 export interface Point extends LatLng {
   label: string;
 }
-
-/** Ask the map to move somewhere. `n` makes asking for the same place twice still count. */
+// Focus means the map should be centered on this point, with this zoom, and the n-th time it was set (so a later one can be ignored).
 export interface Focus extends LatLng {
   zoom: number;
   n: number;
 }
 
+// The planner's state and actions, with no screen in it. The host owns it (so it can refresh the list when
 export interface PlannerOptions {
   travellerId: string;
   caregiverId: string;
@@ -34,15 +34,16 @@ const NAMES: Record<Which, string> = { from: "start", to: "destination" };
 const FALLBACK_NAMES: Record<Which, string> = { from: "Start", to: "Destination" };
 const COORDINATES = /^-?\d+(\.\d+)?\s*,\s*-?\d+(\.\d+)?$/;
 
-/** The name to store for a place: what the person typed, unless it is only a map pin or coordinates. */
+// A place's name, or null if it is just coordinates or a pin on the map. The service fills in its own wording for those.
 export function placeName(p: Point): string | null {
   const text = p.label.trim();
   return !text || text === PIN_LABEL || COORDINATES.test(text) ? null : text;
 }
 
-/** The input was changed or cleared while a lookup was running; its answer is no longer wanted. */
+// The search or plan was superseded by a later one, so its result is ignored. The host can show a message if it wants.
 class Superseded extends Error {}
 
+// Type for a pair of values, one for each end of the trip. The planner's state has a pair of points, a pair of queries, and a pair of candidates.
 type Pair<T> = Record<Which, T>;
 
 export function usePlanner(api: PlannerApi, opts: PlannerOptions) {
@@ -62,7 +63,7 @@ export function usePlanner(api: PlannerApi, opts: PlannerOptions) {
   const [sortBy, setSortBy] = useState<SortBy>("walking");
   const [options, setOptions] = useState<PlanOption[]>([]);
   const [activeIndex, setActiveIndex] = useState(0);
-  /** The trip the options were planned for. The route is saved with these, even if the boxes were edited since. */
+  // The ends that were used to make the current options, or null if they have changed since the last plan.
   const [planned, setPlanned] = useState<Pair<Point> | null>(null);
   const [routeName, setRouteName] = useState("");
   const [status, setStatus] = useState<Status>(info(""));
@@ -76,13 +77,14 @@ export function usePlanner(api: PlannerApi, opts: PlannerOptions) {
 
   const moveMapTo = (p: LatLng) => setFocus({ lat: p.lat, lng: p.lng, zoom: 15, n: ++focusCount.current });
 
+  // Set the point for one end of the trip, and update the box to match it. Bumping the editSeq means a search or plan that was started before this change is ignored.
   function setPoint(which: Which, p: Point) {
     editSeq.current[which]++;
     commitPoints({ ...pointsRef.current, [which]: p });
     commitQueries({ ...queriesRef.current, [which]: p.label });
   }
 
-  /** Use one of the search results. */
+  // Choose one of the search results.
   function choosePlace(which: Which, place: PlaceResult): Point {
     const p = { lat: place.lat, lng: place.lng, label: place.name };
     setPoint(which, p);
@@ -90,7 +92,7 @@ export function usePlanner(api: PlannerApi, opts: PlannerOptions) {
     return p;
   }
 
-  /** Searches the text and pins the first result. Throws a readable message if it can't. */
+  // Search for places matching the text in one of the boxes, and pin the first result. The host can show a message if it fails or finds nothing.
   async function search(which: Which, text: string): Promise<Point> {
     const q = text.trim();
     if (q.length < 2) throw new Error(`Type a ${NAMES[which]} place (or click the map) first.`);
@@ -102,7 +104,7 @@ export function usePlanner(api: PlannerApi, opts: PlannerOptions) {
     return choosePlace(which, places[0]);
   }
 
-  /** Enter in a box. */
+  // Look up the text in one of the boxes and pin the first result. The host can show a message if it fails or finds nothing.
   async function lookUp(which: Which) {
     setStatus(info("Searching..."));
     try {
@@ -113,6 +115,7 @@ export function usePlanner(api: PlannerApi, opts: PlannerOptions) {
     }
   }
 
+  // Set the text in one of the boxes, and bump the editSeq so a search or plan that was started before this change is ignored. If the text doesn't match the pinned place, clear the pin.
   function setQuery(which: Which, text: string) {
     editSeq.current[which]++;
     commitQueries({ ...queriesRef.current, [which]: text });
@@ -121,7 +124,7 @@ export function usePlanner(api: PlannerApi, opts: PlannerOptions) {
     if (p && text !== p.label) commitPoints({ ...pointsRef.current, [which]: null });
   }
 
-  /** First click = from, second = to; a click after that starts again. */
+  // Click on the map to pin a place. If both ends are already pinned, clear the pins and start again.
   function clickMap(lat: number, lng: number) {
     const pin = { lat, lng, label: PIN_LABEL };
     const { from, to } = pointsRef.current;
@@ -133,6 +136,7 @@ export function usePlanner(api: PlannerApi, opts: PlannerOptions) {
     }
   }
 
+  // Clear the planner's state, so the caregiver can start again. The host can show a message if it wants.
   function clear() {
     planSeq.current++;
     editSeq.current = { from: editSeq.current.from + 1, to: editSeq.current.to + 1 };
@@ -147,6 +151,7 @@ export function usePlanner(api: PlannerApi, opts: PlannerOptions) {
     setBusy(false);
   }
 
+  // Plan a route for the pinned points. The host can show a message if it fails or finds nothing.
   async function plan() {
     const mine = ++planSeq.current;
     const stale = () => planSeq.current !== mine;
@@ -190,7 +195,7 @@ export function usePlanner(api: PlannerApi, opts: PlannerOptions) {
 
   const place = (p: Point): RoutePlace => ({ name: placeName(p), lat: p.lat, lng: p.lng });
 
-  /** Saves the selected option as a route (not approved yet). Returns it, or null if it could not be saved. */
+  // Save the chosen option as a route. The host can show a message if it fails.
   async function save(): Promise<SavedRoute | null> {
     const option = options[activeIndex];
     if (!option || !planned) {

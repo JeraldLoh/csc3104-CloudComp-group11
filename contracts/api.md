@@ -110,6 +110,39 @@ own safe locations.
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
-| POST | `/internal/easyread` | `{"steps": [{"stepIndex": 0, "instruction": "..."}]}` | `{"steps": [{"stepIndex": 0, "easyRead": "..."}], "provider": "groq"}` |
+| POST | `/internal/easyread` | `{"steps": [{"stepIndex": 0, "mode": "bus", "text": "<template wording>", "keep": ["45", "Opposite Fengshan Primary School", "5"]}], "maxChars": 300}` | `{"steps": [{"stepIndex": 0, "easyRead": "...", "fallback": false}], "provider": "ollama", "model": "qwen2.5:1.5b"}` |
 
-Only route steps are sent. Never names, addresses or labels like "Home".
+Only route steps are sent. Never names, addresses or labels like "Home": a place without a stop code is sent as
+`[place 1]`, `[place 2]`, ... and the Journey Service puts the name back.
+
+- `text` is the Journey Service's own template wording for the step; it is also the fallback.
+- `maxChars` (optional) is the longest wording a step may have: the Journey Service's `EASYREAD_MAX_CHARS`, the one
+  setting for it. The caregiver app reads the same value from `GET /api/easy-read/limits` -> `{"maxChars": 300}`.
+- `keep` lists what the AI must not lose (bus/line number, stop names, stop count, `[place N]` tokens).
+- `fallback: true` means the AI's text failed the checks (dropped a `keep` item, added a number, too long) and `easyRead` is `text`.
+- `provider: "template"` means Ollama was unavailable and every step is `text`. The endpoint still answers `200`.
+- A step may also carry `spots`: `{"before_stop": [{"id": "L5", "name": "City Plaza", "kind": "mall", "metres": 60,
+  "side": "left"}], ...}` (spots: `start`, `middle`, `end`, `before_stop`), the buildings along it. Names, kinds,
+  sides and distances only, never coordinates, and none within 200 m of a place without a stop code. The answer's
+  `landmarks` lists the ids of those its wording mentions (`[]` otherwise); every name is checked like the rest.
+- `easyRead` (here and on route steps) stays one string, written as one short action per sentence ("Wait for bus
+  number 45. Tap your card. Count 5 stops."). Apps may show each sentence as a bullet point.
+
+The caregiver app reaches it through the Journey Service: `POST /api/routes/{routeId}/easy-read` (route owner only)
+returns `{"steps": [{"stepIndex", "easyRead", "fallback", "landmarks": [{name, kind, lat, lng, seenFrom, photoKey, sameView, photoUrl}]}], "provider"}` and saves nothing; the caregiver checks
+the wording in the editor and saves the route as usual.
+
+Bus steps may also carry `stops` (every stop of the ride, as train steps do), `towards` (where the bus is going, as
+on its front sign) and `every` ([low, high] minutes between buses in the daytime), all optional: the easy-read
+wording uses them.
+
+Route steps may carry `landmarks: [{name, kind, lat, lng, seenFrom, photoKey, sameView}]` (optional): what the wording tells
+the traveller to look out for, each with a Street View photo of it taken from `seenFrom`, the traveller's spot on the
+route (`sameView`: no photo of its own, as it would repeat the step's photo, `"step"`, or that landmark's). The
+service keeps only those the step's `easyRead` names; answers add `photoUrl` to each, and the route pack
+has `landmarks: [{name, photoUrl}]` per step.
+
+Step photos (Journey Service): saving a route adds a Google Street View photo of where each walk/bus step ends
+(`photoKey`, an S3 key under `media/`; a recent panorama, Google's own first, else a recent upload close by, else an older one under `media/streetview/v2/rough/` for the caregiver to check; a walk to a station shows its nearest exit). `POST /api/routes/{routeId}/photos` (multipart field `photo`, JPEG/PNG/WebP
+up to 5 MB) stores the caregiver's own photo and returns `{"photoKey", "photoUrl"}` for the editor to save in a step.
+Route answers and packs carry `photoUrl`, a temporary link.

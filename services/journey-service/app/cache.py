@@ -17,8 +17,9 @@ class JsonCache:
         self._r = redis_client
         self._prefix = prefix
 
-    def cached(self, key: str, ttl_s: int, load: Callable[[], Any]) -> Any:
-        """The cached value for `key`, or `load()` (stored for `ttl_s` seconds) on a miss."""
+    def cached(self, key: str, ttl_s: int, load: Callable[[], Any], empty_ttl_s: int | None = None) -> Any:
+        """The cached value for `key`, or `load()` (stored for `ttl_s` seconds) on a miss. `empty_ttl_s`: keep an
+        empty answer ([], {}, None) only this long, in case it was a blip upstream."""
         full = self._prefix + key
         if self._r is not None:
             try:
@@ -30,7 +31,8 @@ class JsonCache:
         value = load()
         if self._r is not None:
             try:
-                self._r.set(full, json.dumps(value), ex=ttl_s)
+                ex = empty_ttl_s if empty_ttl_s is not None and not value else ttl_s
+                self._r.set(full, json.dumps(value), ex=ex)
             except Exception as e:  # noqa: BLE001
                 log.warning("cache set %s failed: %s", key, type(e).__name__)
         return value

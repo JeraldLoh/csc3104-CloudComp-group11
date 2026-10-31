@@ -8,19 +8,20 @@ import "./planner.css";
 
 interface Props {
   trips: TripsState;
-  /** The traveller's routes (from useSavedRoutes). Only approved ones can have a trip. */
+  // The traveller's approved routes, so a new trip can be made on one of them.
   routes: SavedRoute[];
-  /** True once `routes` is the traveller's whole list (useSavedRoutes `loaded`), so a trip whose route is missing is flagged. */
+  // Whether the routes have been loaded yet, so a trip can show a problem if its route was deleted.
   routesLoaded?: boolean;
-  /** Where the traveller app is hosted, e.g. "https://app.example.com". Without it no link is shown. */
+  // Optional: the URL of the traveller's app, so a link can be shown to open the trip on their phone.
   travellerAppUrl?: string;
-  /** Optional: the latest disruption check per route id (useDisruptions); planned and active trips show it. */
+  // Optional: the latest disruption check for each route, so a trip can show any warnings.
   disruptions?: Record<string, DisruptionCheck>;
 }
 
-/** Only web links from the service are opened; anything else (javascript:, data:) is shown as text. */
+// A web link is one that the browser can open, so it can be copied to the clipboard. Other links (e.g. "file://") are not copied, but are shown so the caregiver can type them into a file manager.
 const isWebLink = (url: string) => /^https?:\/\//i.test(url);
 
+// The caregiver's trips: make one on an approved route, start or end it, prepare its pack, and copy the link the traveller opens on their phone.
 export function Trips({ trips, routes, routesLoaded, travellerAppUrl, disruptions }: Props) {
   const routeId = useId();
   const dateId = useId();

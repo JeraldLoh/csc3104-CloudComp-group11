@@ -7,9 +7,10 @@ degrade (plan without live data) rather than return a 500.
 import copy
 import dataclasses
 import logging
+import threading
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 import httpx
 
@@ -52,6 +53,15 @@ def _float(value: Any) -> float | None:
     return f if f != 0.0 else None          # buses with no GPS fix report 0.0/0.0
 
 
+def every(freq: str | None) -> list[int] | None:
+    """LTA's frequency "08-12" (minutes between buses) -> [8, 12]; "-", "" or zeros (no service then) -> None."""
+    try:
+        low, high = (int(x) for x in (freq or "").split("-"))
+    except ValueError:
+        return None
+    return [low, high] if 0 < low <= high else None
+
+
 def eta_minutes(estimated_arrival: str, now: datetime) -> int | None:
     """Whole minutes until arrival, rounded down; None if unparseable. Negative -> 0."""
     try:
@@ -90,6 +100,8 @@ class LtaClient:
             base_url=settings.lta_base_url.rstrip("/") + "/", timeout=settings.lta_timeout_s)
         self._recorded_http: httpx.Client | None = None          # built on first use in saved-data mode
         self._stops_index: dict[str, tuple[float, dict[str, dict]]] = {}    # cache prefix -> (expiry, {code: stop})
+        self._bus_memo: tuple[float, tuple | None] = (0.0, None)             # (expiry, the bus lists), see _bus_lists
+        self._bus_lock = threading.Lock()
 
     @property
     def _recorded(self) -> bool:
@@ -101,6 +113,10 @@ class LtaClient:
     def _cache_prefix(self) -> str:
         """Saved data must never be served from a cache filled by live data, or the other way round."""
         return "recorded:" if self._recorded else ""
+
+    @property
+    def _headers(self) -> dict[str, str]:
+        return {"AccountKey": self._s.lta_account_key, "accept": "application/json"}
 
     def _client(self) -> httpx.Client:
         if not self._recorded:
@@ -122,7 +138,7 @@ class LtaClient:
         recorded = self._recorded
         if not self._s.lta_account_key and not recorded:
             raise LtaAuthError("LTA_API_KEY is not set")
-        headers = {"AccountKey": self._s.lta_account_key, "accept": "application/json"}
+        headers = self._headers
         http = self._client()
         last: Exception | None = None
         for attempt in range(self._s.lta_retries + 1):
@@ -174,6 +190,93 @@ class LtaClient:
             index = {s["code"]: s for s in self.bus_stops()}
             self._stops_index[prefix] = (time.monotonic() + self._s.bus_stops_ttl_s, index)
         return index.get(code)
+
+    # Bus services: where a bus is going and how often it comes (for the easy-read wording)
+    #
+    # Static lists (BusServices ~800 rows, BusRoutes ~27k rows, about 9 s to page through), so cached for a week
+    # and, like station exits, always fetched from live LTA, also with saved data. Best-effort: no key or a
+    # failure means the wording just leaves these details out. One thread loads them at a time (the startup
+    # prefetch, usually); a plan made meanwhile goes without rather than waiting, and a failure is remembered for
+    # BUS_RETRY_S so a slow LTA doesn't hold up every bus step of every plan.
+
+    BUS_SERVICES_TTL_S = 7 * 24 * 3600
+    BUS_MEMO_S = 3600                       # how long the lists stay in memory before the (Redis) cache is read
+    BUS_RETRY_S = 600                       # after a failure, how long until the lists are fetched again
+
+    def bus_service(self, service_no: str, board_code: str, alight_code: str) -> dict | None:
+        """For `service_no` riding from one stop to the other: {"towards": the stop the bus is going to (its front
+        sign), None for a loop service; "every": [low, high] minutes between buses in the daytime, or None}. None
+        when the lists aren't to hand or LTA has no direction of the service that stops at both, in that order.
+        A loop service needs no direction: it passes each stop pole once a loop, always the same way, so at the
+        right pole (the wording has the traveller check its number) every bus of that number is the right one.
+        (LTA's LoopDesc isn't what its sign shows either: "PTB2 BASEMENT" for bus 24.)"""
+        lists = self._bus_lists()
+        if lists is None:
+            return None
+        routes, services = lists
+        for direction, stops in (routes.get(service_no) or {}).items():
+            if board_code in stops and alight_code in stops[stops.index(board_code) + 1:]:
+                info = (services.get(service_no) or {}).get(direction) or {}
+                dest, origin = info.get("dest"), info.get("origin")
+                loop = not dest or dest == origin
+                towards = None if loop else (self.bus_stop(dest) or {}).get("description")
+                return {"towards": towards, "every": info.get("every")}
+        return None
+
+    def warm_bus_services(self) -> None:
+        """Fetch the lists ahead of the first plan that needs them (call it in a background thread)."""
+        self._bus_lists()
+
+    def _bus_lists(self) -> tuple[dict, dict] | None:
+        """({service: {direction: [stop codes in order]}}, {service: {direction: {origin, dest, every}}}), kept
+        in memory after the first read from the cache; None while another thread is loading them, or for
+        BUS_RETRY_S after loading failed."""
+        expires, lists = self._bus_memo
+        if time.monotonic() < expires:
+            return lists
+        if not self._bus_lock.acquire(blocking=False):
+            return None                                     # being loaded: this plan goes without
+        try:
+            try:
+                lists = (self._cache.cached("bus-routes", self.BUS_SERVICES_TTL_S, self._load_bus_routes),
+                         self._cache.cached("bus-services", self.BUS_SERVICES_TTL_S, self._load_bus_services))
+                self._bus_memo = (time.monotonic() + self.BUS_MEMO_S, lists)
+            except (LtaError, httpx.HTTPError, ValueError, KeyError, TypeError) as e:
+                log.warning("bus services unavailable (%s): trying again in %d s", type(e).__name__, self.BUS_RETRY_S)
+                lists = None
+                self._bus_memo = (time.monotonic() + self.BUS_RETRY_S, None)
+            return lists
+        finally:
+            self._bus_lock.release()
+
+    def _live_pages(self, path: str) -> Iterator[dict]:
+        """Every row of a paged LTA list, from live LTA even with saved data and without _get's retries: the
+        caller is best-effort, so one failure just leaves the details out."""
+        if not self._s.lta_account_key:
+            raise LtaAuthError("LTA_API_KEY is not set")
+        skip = 0
+        while True:
+            r = self._http.get(path, params={"$skip": skip}, headers=self._headers)
+            r.raise_for_status()
+            rows = r.json().get("value", [])
+            yield from rows
+            if len(rows) < PAGE_SIZE:
+                return
+            skip += PAGE_SIZE
+
+    def _load_bus_routes(self) -> dict:
+        routes: dict[str, dict[str, list]] = {}
+        for r in sorted(self._live_pages("BusRoutes"), key=lambda r: (r["ServiceNo"], r["Direction"], r["StopSequence"])):
+            routes.setdefault(r["ServiceNo"], {}).setdefault(str(r["Direction"]), []).append(r["BusStopCode"])
+        return routes
+
+    def _load_bus_services(self) -> dict:
+        services: dict[str, dict[str, dict]] = {}
+        for r in self._live_pages("BusServices"):
+            services.setdefault(r["ServiceNo"], {})[str(r["Direction"])] = {
+                "origin": r.get("OriginCode"), "dest": r.get("DestinationCode"),
+                "every": every(r.get("AM_Offpeak_Freq"))}            # daytime: 08:31-16:59
+        return services
 
     def bus_arrival(self, bus_stop_code: str, service_no: str | None = None) -> dict:
         """Next buses at a stop. `services` is empty outside service hours (not an error)."""

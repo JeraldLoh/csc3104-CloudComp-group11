@@ -71,6 +71,24 @@ class Settings:
     pack_url_ttl_s: int = field(default_factory=lambda: int(os.getenv("PACK_URL_TTL_S", "3600")))
     s3_public_endpoint_url: str | None = field(default_factory=lambda: os.getenv("S3_PUBLIC_ENDPOINT_URL") or None)
 
+    # AI easy-read: the Easy-read Service (services/easyread-service, which runs Ollama). Only the caregiver's
+    # "Simplify with AI" button calls it. Unset = always the template wording. CPU inference is slow, hence the timeout.
+    easyread_url: str = field(default_factory=lambda: os.getenv("EASYREAD_URL", ""))
+    easyread_timeout_s: float = field(default_factory=lambda: float(os.getenv("EASYREAD_TIMEOUT_S", "90")))
+    # Landmarks along the route (landmarks.py, from OneMap) for the AI to mention, so the traveller can tell they
+    # are going the right way. Off = the AI only rewords the steps.
+    easyread_landmarks: bool = field(default_factory=lambda: _bool("EASYREAD_LANDMARKS", True))
+
+    # Landmark photos (streetview.py), stored in PACKS_BUCKET under media/. Unset key = no Street View photos;
+    # caregivers can still upload their own. Like the LTA key: never log it or send it to the browser.
+    google_maps_api_key: str = field(default_factory=lambda: os.getenv("GOOGLE_MAPS_API_KEY", ""), repr=False)
+    streetview_timeout_s: float = field(default_factory=lambda: float(os.getenv("STREETVIEW_TIMEOUT_S", "5")))
+    # Older Street View panoramas are skipped: in Singapore the old Google ones are mostly indoor walk-throughs.
+    streetview_max_age_years: int = field(default_factory=lambda: int(os.getenv("STREETVIEW_MAX_AGE_YEARS", "5")))
+    # Photo links in packs must last while the phone is offline: 7 days is the longest an S3 presigned link allows.
+    photo_url_ttl_s: int = field(default_factory=lambda: int(os.getenv("PHOTO_URL_TTL_S", "604800")))
+    photo_max_bytes: int = field(default_factory=lambda: int(os.getenv("PHOTO_MAX_BYTES", str(5 * 1024 * 1024))))
+
     # Disruption checker (Lambda). contracts/queues.md: the sender (us) creates this queue.
     disruptions_queue: str = field(default_factory=lambda: os.getenv("DISRUPTIONS_QUEUE", "careroute-disruptions"))
     # LTA's Status is 1 for normal/minor delays and 2 for disrupted/major delays. Alerting on

@@ -4,7 +4,8 @@
 
     client.search_places("Tampines Mall")        OneMap place/address search
     client.plan(origin, destination, ...)        OneMap itineraries -> contract steps, checked against LTA
-    client.create_route / create_trip / ...      saved routes, trips, route packs
+    client.create_route / create_trip / ...      saved routes (with Street View photos), trips, route packs
+    client.suggest_easy_read / upload_photo      AI wording for the caregiver to review; their own step photo
     client.bus_arrival("83139")                  LTA data, through the shared LtaClient in client.lta
 
 The LTA client lives in lta.py and the disruption checker in disruption.py: they are shared with / run by the
@@ -13,6 +14,7 @@ Lambda, which must not need this file's login, route and pack code.
 Failures raise LtaError / OneMapError subclasses; plan() degrades instead when only LTA is down.
 Redis is optional here (a cache for lookups; stores for routes and trips when no DynamoDB table is configured).
 """
+import hashlib
 import json
 import logging
 import math
@@ -21,14 +23,16 @@ import secrets
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
-from typing import Callable
+from typing import BinaryIO, Callable
 
 import httpx
 
+from . import easy_read_ai, landmarks, streetview
 from .auth import Caller, Forbidden
 from .cache import JsonCache
 from .config import Settings
-from .easy_read import LINE_NAMES, easy_read, with_easy_read
+from .easy_read import LINE_NAMES, easy_read, route_wording, with_easy_read
+from .geo import EARTH_RADIUS_M, distance_to_path_m
 from .lta import LINE_CODES, SST, LtaClient, LtaError
 from .onemap_token import OneMapToken
 from .pack_store import PackUnavailable
@@ -37,12 +41,11 @@ from .trip_store import RedisTripStore, TripConflict, TripExists, TripNotFound
 
 log = logging.getLogger("journey")
 
-EARTH_RADIUS_M = 6_371_000.0
 
-ONEMAP_MODES = {"any": "TRANSIT", "bus": "BUS", "train": "RAIL"}   # plan() `mode` -> OneMap `mode`
-CROWD_RANK = {None: 0, "low": 0, "moderate": 1, "high": 2}       # unknown counts as low when comparing options
-REALTIME_WITHIN = timedelta(minutes=20)           # a train leg starting later than this uses the crowd forecast
-SORTS = {                                        # plan(sort_by=...) -> sort key over an option
+ONEMAP_MODES = {"any": "TRANSIT", "bus": "BUS", "train": "RAIL"}   # Different modes for OneMap search and plan calls, from the API's `mode` query param.
+CROWD_RANK = {None: 0, "low": 0, "moderate": 1, "high": 2}       # Crowding levels, for sorting and for the API's `crowd` field: None/low < moderate < high.
+REALTIME_WITHIN = timedelta(minutes=20)           # How recent a bus arrival must be to be considered "realtime" (for the API's `realtime` field).
+SORTS = {                                        # Sorting keys for the API's `sort` query param: a tuple of values for each plan, in order of priority.
     "time": lambda o: 0,
     "walking": lambda o: o["summary"]["walkDistanceM"],
     "crowding": lambda o: (CROWD_RANK[o["summary"]["crowd"]], sum(e.get("crowd") == "high" for e in o["live"]),
@@ -50,7 +53,7 @@ SORTS = {                                        # plan(sort_by=...) -> sort key
 }
 SERIOUS_INCIDENTS = {"Accident", "Road Block", "Fire", "Diversion", "Reverse Flow"}
 
-# Standard texts for the traveller's phone (contracts/examples/route-pack.json).
+# Standard texts for the traveller's phone
 PACK_MESSAGES = {
     "somethingChanged": "Something has changed. Stay where you are. Your caregiver has been told.",
     "offRoute": "You may be going the wrong way. Stop and look at the next picture.",
@@ -58,8 +61,7 @@ PACK_MESSAGES = {
 }
 
 
-# --- errors ----------------------------------------------------------------------------
-
+# Exceptions ---------------------------------------------------------------------------
 class StorageNotReady(Exception):
     """A store the service needs can't be used. `label` says which one, `code` is the AWS error code
     (e.g. ResourceNotFoundException, AccessDeniedException) and nothing more, so /ready can show it safely."""
@@ -67,6 +69,10 @@ class StorageNotReady(Exception):
     def __init__(self, label: str, code: str):
         super().__init__(f"{label}: {code}")
         self.label, self.code = label, code
+
+
+class PhotoInvalid(ValueError):
+    """An uploaded step photo that isn't a JPEG, PNG or WebP image, or is too big."""
 
 
 class OneMapError(Exception):
@@ -81,8 +87,7 @@ class OneMapAuthError(OneMapError):
     """The token is missing, expired or rejected."""
 
 
-# --- helpers ---------------------------------------------------------------------------
-
+# Helpers ---------------------------------------------------------------------------
 def titlecase(name: str | None) -> str | None:
     """'PUNGGOL MRT STATION' -> 'Punggol MRT Station'."""
     if not name:
@@ -128,31 +133,6 @@ def decode_polyline(encoded: str, precision: int = 5) -> list[tuple[float, float
         lng += deltas[1]
         coords.append((lat / factor, lng / factor))
     return coords
-
-
-def _to_xy(lat: float, lng: float, ref_lat: float) -> tuple[float, float]:
-    """Local flat-earth projection in metres; accurate enough over a few kilometres."""
-    return (math.radians(lng) * EARTH_RADIUS_M * math.cos(math.radians(ref_lat)),
-            math.radians(lat) * EARTH_RADIUS_M)
-
-
-def distance_to_path_m(lat: float, lng: float, path: list[tuple[float, float]]) -> float:
-    """Shortest distance in metres from a point to a polyline (inf for an empty path)."""
-    if not path:
-        return math.inf
-    px, py = _to_xy(lat, lng, lat)
-    if len(path) == 1:
-        ax, ay = _to_xy(*path[0], lat)
-        return math.hypot(px - ax, py - ay)
-    best = math.inf
-    for (alat, alng), (blat, blng) in zip(path, path[1:]):
-        ax, ay = _to_xy(alat, alng, lat)
-        bx, by = _to_xy(blat, blng, lat)
-        dx, dy = bx - ax, by - ay
-        seg2 = dx * dx + dy * dy
-        t = 0.0 if seg2 == 0 else max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / seg2))
-        best = min(best, math.hypot(px - (ax + t * dx), py - (ay + t * dy)))
-    return best
 
 
 def _near_box(path: list[tuple[float, float]], radius_m: float) -> Callable[[float, float], bool]:
@@ -263,7 +243,7 @@ class _LiveData:
         return self._crowd[(line, when)]
 
 
-# --- the client ------------------------------------------------------------------------
+# Client ------------------------------------------------------------------------
 
 class JourneyClient:
     def __init__(
@@ -279,6 +259,8 @@ class JourneyClient:
         pack_store=None,
         lta: LtaClient | None = None,
         mode=None,                                   # data_mode.DataMode; None = ONEMAP_MODE / LTA_MODE, fixed
+        easyread_http: httpx.Client | None = None,   # the Easy-read Service (tests pass a mocked one)
+        photo_http: httpx.Client | None = None,      # Google Street View
     ):
         self._s = settings
         self._r = redis_client
@@ -302,8 +284,10 @@ class JourneyClient:
         self._onemap_recorded_http: httpx.Client | None = None    # built on first use in saved-data mode
         # Logs in with the OneMap account when there is one, and only when live data is asked for.
         self._token = OneMapToken(settings, redis_client, clock=clock)
+        self._easyread_http = easyread_http or httpx.Client()
+        self._photo_http = photo_http or httpx.Client()
 
-    # ===== OneMap transport =====
+    # OneMap transport =====
 
     @property
     def _recorded(self) -> bool:
@@ -362,7 +346,7 @@ class JourneyClient:
         log.warning("OneMap %s failed after %d attempts: %s", path, self._s.onemap_retries + 1, type(last).__name__)
         raise OneMapUnavailable("OneMap is not responding") from last
 
-    # ===== LTA DataMall (the work is done by self.lta, see lta.py) =====
+    # LTA DataMall (the work is done by self.lta, see lta.py) =====
 
     def bus_stops(self) -> list[dict]:
         return self.lta.bus_stops()
@@ -379,7 +363,7 @@ class JourneyClient:
     def traffic_incidents(self) -> list[dict]:
         return self.lta.traffic_incidents()
 
-    # ===== OneMap =====
+    # OneMap ---------------
 
     def search_places(self, query: str, limit: int = 10) -> list[dict]:
         """Place/address search: [{name, address, postalCode, lat, lng}]. Needs no token."""
@@ -403,6 +387,76 @@ class JourneyClient:
             })
         return places[:limit]
 
+    STATION_EXITS_TTL_S = 7 * 24 * 3600               # exits don't move, so cache them for a week. Cached to ensure the API can still return them when OneMap is down.
+    NO_EXITS_TTL_S = 3600                             # if a station has no exits, cache that for an hour (OneMap may be wrong or incomplete)
+
+    def station_exits(self, station_name: str) -> list[tuple[float, float]]:
+        """Where an MRT/LRT station's exits are, from OneMap's search ("SENGKANG MRT STATION EXIT A"); [] if unknown.
+        Exits are fixed public data and the search needs no token, so this always asks live OneMap, also in
+        saved-data mode (like the Street View photos it is for). Best-effort: a failure means no exits."""
+        name = re.sub(r"\s*\(.*?\)", "", station_name).strip().upper()     # "Sengkang MRT Station (NE16)"
+
+        def look_up() -> list[list[float]]:
+            exits = []
+            for page in (1, 2, 3):                       # 10 results a page; big interchanges have more exits
+                r = self._onemap_http.get("/api/common/elastic/search", params={
+                    "searchVal": f"{name} EXIT", "returnGeom": "Y", "getAddrDetails": "N", "pageNum": str(page)})
+                r.raise_for_status()
+                found = r.json()
+                exits += [[float(x["LATITUDE"]), float(x["LONGITUDE"])] for x in found.get("results") or []
+                          if (x.get("SEARCHVAL") or "").upper().startswith(f"{name} EXIT ")]
+                if page >= int(found.get("totalNumPages") or 1):
+                    break
+            return exits
+
+        try:
+            return [(lat, lng) for lat, lng in self._cache.cached(f"station-exits:{name}", self.STATION_EXITS_TTL_S,
+                                                                  look_up, empty_ttl_s=self.NO_EXITS_TTL_S)]
+        except (httpx.HTTPError, ValueError, KeyError, TypeError) as e:
+            log.warning("couldn't look up the exits of %s (%s)", name, type(e).__name__)
+            return []
+
+    # Buildings ---------------------------------------------------------------------------
+
+    BUILDINGS_TTL_S = 30 * 24 * 3600                  # buildings don't move
+    BUILDINGS_RADIUS_M = 100
+
+    def nearby_buildings(self, lat: float, lng: float) -> list[dict]:
+        """Named buildings within BUILDINGS_RADIUS_M of a point, [{name, lat, lng}], from OneMap's reverse geocode
+        (for landmarks.py). Like station_exits: fixed public data, so always live OneMap, also in saved-data mode,
+        and best-effort: no token or a failure means none. Cached on a ~10 m grid."""
+        def look_up() -> list[dict]:
+            token = self._token.get() or self._s.onemap_api_key
+            if not token:
+                return []
+            r = self._onemap_http.get("/api/public/revgeocode", headers={"Authorization": f"Bearer {token}"}, params={
+                "location": f"{lat},{lng}", "buffer": str(self.BUILDINGS_RADIUS_M), "addressType": "All",
+                "otherFeatures": "N"})
+            r.raise_for_status()
+            out = []
+            for b in r.json().get("GeocodeInfo") or []:
+                name = _clean(re.sub(r"\s*\(.*?\)", "", b.get("BUILDINGNAME") or ""))   # "HAWKER CENTRE (BLK 208B ...)"
+                if name:
+                    out.append({"name": titlecase(name), "lat": float(b["LATITUDE"]), "lng": float(b["LONGITUDE"])})
+            return out
+
+        try:
+            return self._cache.cached(f"buildings:{lat:.4f}_{lng:.4f}", self.BUILDINGS_TTL_S, look_up,
+                                      empty_ttl_s=self.NO_EXITS_TTL_S)
+        except (httpx.HTTPError, ValueError, KeyError, TypeError) as e:
+            log.warning("couldn't look up buildings near %.4f,%.4f (%s)", lat, lng, type(e).__name__)
+            return []
+
+    def route_landmarks(self, route: dict) -> dict[int, dict[str, list[dict]]]:
+        """What the traveller will see at each spot of the route (landmarks.py), the lookups run at once."""
+        found = landmarks.spots(route)
+        points = sorted({(s.lat, s.lng) for by_spot in found.values() for s in by_spot.values()})
+        if not points:
+            return {}
+        with ThreadPoolExecutor(max_workers=min(8, len(points))) as pool:
+            buildings = dict(zip(points, pool.map(lambda p: self.nearby_buildings(*p), points)))
+        return landmarks.offer(route, found, lambda lat, lng: buildings[(lat, lng)])
+
     def route_pt(self, start: tuple[float, float], end: tuple[float, float], when: datetime,
                  mode: str = "TRANSIT", max_walk_m: int | None = None, num_itineraries: int | None = None) -> dict:
         """OneMap's raw public-transport itineraries: plan.itineraries[].legs[] (see app/saved_data/fixtures)."""
@@ -417,7 +471,7 @@ class JourneyClient:
             "numItineraries": str(num_itineraries or self._s.plan_options),
         })
 
-    # ===== planning: OneMap itineraries -> contract steps, checked against LTA =====
+    # Planning
     #
     # Per itinerary: each leg becomes one step (WALK -> walk, BUS -> bus, SUBWAY -> train), matching
     # contracts/examples/route.json. `live` lists the next buses for every bus leg. `warnings` flags MRT
@@ -509,15 +563,26 @@ class JourneyClient:
             "from": frm, "to": to, "line": line, "expectedDurationS": leg.get("duration"),
             "underground": underground, "photoKey": None, "audioKey": None, "backup": None,
         }
-        # Extras (not in contracts/examples/route.json): how many stops to ride, which easy-read wording uses.
+        # Extra: info on how many stops to ride, which easy-read wording uses, and
+        # every stop on the leg: for a train, so check_disruptions() can tell whether an MRT fault falls between
+        # the two ends and easy_read() which way it goes; for a bus, the stop before getting off ("After
+        # Block 301, press the bell").
         if step_mode in ("bus", "train"):
             step["stopCount"] = stops
-        if step_mode == "train":
-            # Every station on the leg, so check_disruptions() can tell whether an MRT fault falls between the two ends.
             every = [leg["from"], *(leg.get("intermediateStops") or []), leg["to"]]
             step["stops"] = [{"code": s.get("stopCode"), "name": pretty(s.get("name"))} for s in every]
-        step["easyRead"] = easy_read(step)
-        return step
+        return step                     # easyRead: _option() writes it for the whole route (route_wording)
+
+    def _with_bus_service(self, step: dict) -> dict:
+        """A bus step with where the bus is going (`towards`, its front sign) and how often it comes (`every`, in
+        minutes), from LTA's static lists. Best-effort."""
+        board, alight = (step.get("from") or {}).get("code"), (step.get("to") or {}).get("code")
+        if step["mode"] != "bus" or not (step.get("line") and board and alight):
+            return step
+        found = self.lta.bus_service(step["line"], board, alight)
+        if not found:
+            return step
+        return {**step, "towards": pretty(found["towards"]), "every": found["every"]}
 
     @staticmethod
     def _leg_path(leg: dict) -> list[tuple[float, float]]:
@@ -619,7 +684,7 @@ class JourneyClient:
     def _option(self, number: int, itinerary: dict, live: _LiveData, walk_limit_m: int) -> dict:
         steps, path, step_paths, live_entries, warnings = [], [], [], [], []
         for i, leg in enumerate(itinerary.get("legs", [])):
-            steps.append(self._step(i, leg))
+            steps.append(self._with_bus_service(self._step(i, leg)))
             leg_path = self._leg_path(leg)                   # decoded once: drawn here, checked in _check_leg
             pts = [list(pt) for pt in leg_path]
             # OneMap's legs can end up to ~80 m apart (a bus stop sits off the snapped road). Start each
@@ -641,6 +706,10 @@ class JourneyClient:
             entries, warns = self._check_leg(i, leg, live, leg_path)
             live_entries += entries
             warnings += warns
+
+        # The wording again, now each step knows the one before it (and the buses where they are going).
+        for step, text in zip(steps, route_wording(steps)):
+            step["easyRead"] = text
 
         total_walk = itinerary.get("walkDistance", 0)
         if total_walk > 2 * walk_limit_m:                 # a few short walks can still add up to too much
@@ -670,7 +739,7 @@ class JourneyClient:
             "steps": steps, "path": path, "stepPaths": step_paths, "live": live_entries, "warnings": warnings,
         }
 
-    # ===== saved routes (contracts/api.md: /api/routes) =====
+    # Saved routes and trips
     #
     # A route is route.json: the caregiver's chosen plan option plus names. `version` goes up by one on
     # every edit and an edit clears `approved`, so a caregiver must re-approve what they changed. Approving
@@ -731,7 +800,8 @@ class JourneyClient:
             if data.get("caregiverId") != caller.id:
                 raise Forbidden("A route can only be saved as yourself: caregiverId must be your own id.")
         store = self._route_store()
-        route = {**with_easy_read(data), "version": 1, "approved": False, "updatedAt": self._now_iso()}
+        route = {**self._with_photos(with_easy_read(data)), "version": 1, "approved": False,
+                 "updatedAt": self._now_iso()}
         for _ in range(5):                       # ids are random; a clash is vanishingly rare
             candidate = self._ordered({**route, "routeId": "R-" + secrets.token_hex(3).upper()})
             try:
@@ -755,8 +825,8 @@ class JourneyClient:
         for field in ("travellerId", "caregiverId"):
             if data.get(field) != current[field]:
                 raise RouteInvalid(f"{field} can't be changed on a saved route")
-        route = self._ordered({**with_easy_read(data), "routeId": route_id, "version": current["version"] + 1,
-                               "approved": False, "updatedAt": self._now_iso()})
+        route = self._ordered({**self._with_photos(with_easy_read(data)), "routeId": route_id,
+                               "version": current["version"] + 1, "approved": False, "updatedAt": self._now_iso()})
         self._route_store().replace(route, expected_version)
         return route
 
@@ -791,6 +861,210 @@ class JourneyClient:
             routes = [r for r in routes if self._participates(caller, r)]
         return sorted(routes, key=lambda r: r["updatedAt"], reverse=True)
 
+    # Step photos and landmarks and their Street View photos
+    #
+    # A step's `photoKey` is an S3 key in the pack bucket: a Street View photo (media/streetview/..., filled in on
+    # save for steps without one) or the caregiver's upload (media/uploads/..., kept like caregiver-written
+    # easyRead). Responses carry `photoUrl`, a presigned link made per response and never stored.
+    #
+    # A step's `landmarks` (from "Simplify with AI", landmarks.py) are the buildings its wording tells the traveller
+    # to look out for, each with its own Street View photo, taken from the street facing it. They are kept only
+    # while the wording still names them, so a landmark the caregiver edits out of the text goes with it.
+
+    def _with_photos(self, data: dict) -> dict:
+        """Street View photos for steps with no photoKey (under rough/ when only an old panorama was there), and a
+        recent one for a step with a rough photo once Google has one; and for landmarks without one. Best-effort:
+        a step stays without one when Street View has no panorama there at all, Google or S3 fails, or photos are
+        off (no API key or no bucket)."""
+        steps = [self._stored_step(s) for s in data["steps"]]
+        if not self._photos_on:
+            return {**data, "steps": steps}
+        wanted: dict[tuple[int, int | None], tuple] = {}         # (step, landmark or None) -> (point, seen from)
+        for i, step in enumerate(steps):
+            key = step.get("photoKey")
+            arrives = data.get("destination") if i == len(steps) - 1 else None
+            point = self._photo_target(step, arrives) if not key or streetview.is_rough(key) else None
+            if point:
+                wanted[(i, None)] = (point, None)
+            for n, mark in enumerate(step.get("landmarks") or []):
+                if not mark.get("photoKey") and not mark.get("sameView"):        # sameView: shown in another photo
+                    wanted[(i, n)] = self._landmark_view(mark)
+        for (i, n), key in self._street_photos(wanted).items():
+            if n is None:
+                steps[i] = {**steps[i], "photoKey": key}
+            else:
+                steps[i]["landmarks"][n] = {**steps[i]["landmarks"][n], "photoKey": key}
+        return {**data, "steps": steps}
+
+    @staticmethod
+    def _stored_step(step: dict) -> dict:
+        """A step as it is saved: no presigned links, and only the landmarks its wording still names."""
+        step = {k: v for k, v in step.items() if k != "photoUrl"}
+        if "landmarks" in step:
+            text = (step.get("easyRead") or "").lower()
+            kept = [{k: v for k, v in m.items() if k != "photoUrl"} for m in step["landmarks"] or []
+                    if m.get("name") and m["name"].lower() in text]
+            step["landmarks"] = kept or None
+        return step
+
+    @property
+    def _photos_on(self) -> bool:
+        return bool(self._s.google_maps_api_key and self._packs)
+
+    @staticmethod
+    def _landmark_view(mark: dict) -> tuple:
+        """(the building, the traveller's spot it is photographed from, if known)."""
+        seen = mark.get("seenFrom")
+        return (mark["lat"], mark["lng"]), (tuple(seen) if seen else None)
+
+    def _street_photos(self, wanted: dict) -> dict:
+        """{id: S3 key} of a Street View photo looking at each {id: (point, seen from or None)}, fetched at once;
+        ids with none are left out. The same view is fetched once, here and across routes (see photo_key)."""
+        if not wanted:
+            return {}
+        with ThreadPoolExecutor(max_workers=min(8, len(wanted))) as pool:
+            keys = dict(zip(wanted, pool.map(lambda view: self._street_photo(*view), wanted.values())))
+        return {i: key for i, key in keys.items() if key}
+
+    def _street_photo(self, point: tuple[float, float], near: tuple[float, float] | None = None) -> str | None:
+        good, rough = streetview.photo_key(*point, near=near), streetview.photo_key(*point, rough=True, near=near)
+        try:
+            if self._packs.exists(good):          # the same place in another route: already fetched
+                return good
+            # A rough photo is looked for again on every save, so a recent one replaces it once Google has one.
+            have_rough = self._packs.exists(rough)
+            photo = streetview.fetch(*point, self._photo_http, self._s.google_maps_api_key,
+                                     self._s.streetview_timeout_s, self._s.streetview_max_age_years, have_rough,
+                                     near)
+            if photo is None:                     # Google down or refusing: the rough photo is still better
+                return rough if have_rough else None
+            key = rough if photo.rough else good
+            if photo.image is not None:
+                self._packs.put(key, photo.image, "image/jpeg")
+            return key
+        except PackUnavailable as e:
+            log.warning("couldn't store a street view photo: %s", e)
+            return None
+
+    STATION_NAME = re.compile(r"\b(MRT|LRT) Station\b", re.IGNORECASE)
+
+    def _photo_target(self, step: dict, destination: dict | None = None) -> tuple[float, float] | None:
+        """Where a step's photo looks: the end of the step, but for a walk to a station the exit nearest to where
+        the walk starts (the station's own point is underground or inside a mall).
+
+        `destination`: the route's, given for its last step. A last walk ends there, so the photo is of the
+        destination itself, not of where OneMap's leg ends (up to ~50 m off: the saved demo trips were recorded
+        with rounded endpoints). A destination that is a station ("Orchard MRT Station (NS22)") gets its exit."""
+        start = step.get("from") or {}
+        station = streetview.walks_to_station(step)
+        end = step.get("to") or {}
+        if (destination and destination.get("lat") is not None and destination.get("lng") is not None
+                and step.get("mode") == "walk" and not end.get("code")):
+            if not self.STATION_NAME.search(destination.get("name") or ""):
+                return destination["lat"], destination["lng"]
+            station = destination
+        if station and start.get("lat") is not None and start.get("lng") is not None:
+            exit_point = streetview.nearest(self.station_exits(station["name"]), (start["lat"], start["lng"]))
+            if exit_point:
+                return exit_point
+            if station is destination:
+                return destination["lat"], destination["lng"]
+        return streetview.target(step)
+
+    def _photo_url(self, key: str | None) -> str | None:
+        return self._packs.url(key, self._s.photo_url_ttl_s) if key and self._packs else None
+
+    def with_photo_urls(self, route: dict) -> dict:
+        """The route as the API returns it: each step, and each of its landmarks, with a temporary `photoUrl` for
+        its photo (or null)."""
+        return {**route, "steps": [self._step_with_urls(s) for s in route["steps"]]}
+
+    def _step_with_urls(self, step: dict) -> dict:
+        out = {**step, "photoUrl": self._photo_url(step.get("photoKey"))}
+        if step.get("landmarks"):
+            out["landmarks"] = [{**m, "photoUrl": self._photo_url(m.get("photoKey"))} for m in step["landmarks"]]
+        return out
+
+    # Magic bytes, so the file's own claim about its type isn't trusted. WebP is RIFF....WEBP, checked below.
+    PHOTO_TYPES = ((b"\xff\xd8\xff", "jpg", "image/jpeg"), (b"\x89PNG\r\n\x1a\n", "png", "image/png"))
+
+    def upload_photo(self, route_id: str, photo: bytes | BinaryIO, caller: Caller | None = None) -> dict:
+        """Stores a caregiver's photo for a step: {"photoKey", "photoUrl"}. The route itself is not changed: the
+        editor puts the key in the step and the caregiver's save stores it (so Cancel really discards it).
+        A file is only read once the route and the caller are checked, and only one byte past the size limit."""
+        route = self.get_route(route_id, caller)
+        if caller is not None and not self._owns(caller, route):
+            raise Forbidden("Only the route's caregiver can change its photos.")
+        data = photo if isinstance(photo, bytes) else photo.read(self._s.photo_max_bytes + 1)
+        if len(data) > self._s.photo_max_bytes:
+            raise PhotoInvalid(f"The photo is too big. The limit is {self._s.photo_max_bytes // (1024 * 1024)} MB.")
+        found = next(((ext, ctype) for magic, ext, ctype in self.PHOTO_TYPES if data.startswith(magic)), None)
+        if found is None and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+            found = ("webp", "image/webp")
+        if found is None:
+            raise PhotoInvalid("The file isn't a photo. Use a JPEG, PNG or WebP image.")
+        if self._packs is None:
+            raise PackUnavailable("photo storage is not configured")
+        key = f"media/uploads/{hashlib.sha256(data).hexdigest()[:16]}.{found[0]}"
+        self._packs.put(key, data, found[1])
+        return {"photoKey": key, "photoUrl": self._photo_url(key)}
+
+    def suggest_easy_read(self, route_id: str, caller: Caller | None = None) -> dict:
+        """AI wording for every step of a saved route, for the caregiver to check and edit before saving. Nothing
+        is saved. Template wording (provider "template") when the Easy-read Service can't help (easy_read_ai.py)."""
+        route = self.get_route(route_id, caller)
+        if caller is not None and not self._owns(caller, route):
+            raise Forbidden("Only the route's caregiver can reword it.")
+        found = self.route_landmarks(route) if self._s.easyread_url and self._s.easyread_landmarks else {}
+        answer = easy_read_ai.suggest(route["steps"], self._easyread_http, self._s.easyread_url,
+                                      self._s.easyread_timeout_s, found, (route.get("destination") or {}).get("name"))
+        # A photo of each landmark the wording names, so the caregiver sees what the traveller will look for
+        # before saving (each new one is a paid Street View image; the same place is fetched only once).
+        if self._photos_on:
+            self._photograph_landmarks(route, answer["steps"])
+        for s in answer["steps"]:
+            s["landmarks"] = [{**m, "photoKey": m.get("photoKey"), "sameView": m.get("sameView"),
+                               "photoUrl": self._photo_url(m.get("photoKey"))} for m in s["landmarks"]]
+        return answer
+
+    def _photograph_landmarks(self, route: dict, steps: list[dict]) -> None:
+        """A photo of each landmark in `steps` (the AI's answer), unless it would look (nearly) the same as the
+        step's own photo or an earlier landmark's, e.g. a mall next to the bus stop, seen from the stop. Such a
+        landmark gets no photo of its own; `sameView` says where it is seen instead ("step", or the other
+        landmark's name). Which panorama and direction each photo would use is free to find out (metadata)."""
+        by_index = {s["stepIndex"]: s for s in route["steps"]}
+        last = route["steps"][-1]["stepIndex"] if route["steps"] else None
+        views: dict[tuple[int, int | None], tuple] = {}            # (step, landmark or None) -> (point, seen from)
+        for i, s in enumerate(steps):
+            step = by_index.get(s["stepIndex"])
+            if not s["landmarks"] or step is None:
+                continue
+            key = step.get("photoKey")
+            target = None if key and not key.startswith("media/streetview/") else self._photo_target(
+                step, route.get("destination") if s["stepIndex"] == last else None)     # an upload can't be compared
+            if target:
+                views[(i, None)] = (target, None)
+            for n, m in enumerate(s["landmarks"]):
+                views[(i, n)] = self._landmark_view(m)
+        with ThreadPoolExecutor(max_workers=min(8, len(views) or 1)) as pool:
+            seen_as = dict(zip(views, pool.map(lambda v: streetview.view(
+                *v[0], self._photo_http, self._s.google_maps_api_key, self._s.streetview_timeout_s,
+                self._s.streetview_max_age_years, near=v[1]), views.values())))
+        wanted = {}
+        for i, s in enumerate(steps):
+            shown = [("step", seen_as[(i, None)])] if seen_as.get((i, None)) else []
+            for n, m in enumerate(s["landmarks"]):
+                mine = seen_as.get((i, n))
+                same = next((label for label, other in shown if mine and streetview.same_view(mine, other)), None)
+                if same:
+                    m["sameView"] = same
+                    continue
+                if mine:
+                    shown.append((m["name"], mine))
+                wanted[(i, n)] = views[(i, n)]
+        for (i, n), key in self._street_photos(wanted).items():
+            steps[i]["landmarks"][n]["photoKey"] = key
+
     @staticmethod
     def _ordered(route: dict) -> dict:
         """Same field order as contracts/examples/route.json, for readable output."""
@@ -798,7 +1072,7 @@ class JourneyClient:
                 "origin", "destination", "steps", "path", "updatedAt"]
         return {**{k: route[k] for k in head if k in route}, **{k: v for k, v in route.items() if k not in head}}
 
-    # ===== trips (contracts/api.md: /api/trips) =====
+    # Trips 
     #
     # A trip is one journey on one day along an approved route. It pins the route's version, because a
     # disruption or an edit must never change a journey that is already under way. Statuses:
@@ -940,8 +1214,11 @@ class JourneyClient:
                 "easyRead": step.get("easyRead") or easy_read(step),
                 "lat": target.get("lat"), "lng": target.get("lng"),     # where this step ends
                 "underground": step.get("underground"),
-                "photoUrl": step.get("photoKey"), "audioUrl": step.get("audioKey"),
+                "photoUrl": self._photo_url(step.get("photoKey")), "audioUrl": step.get("audioKey"),
                 "backup": (step.get("backup") or {}).get("instruction"),
+                # What the wording tells them to look out for, with a photo of each.
+                "landmarks": [{"name": m["name"], "photoUrl": self._photo_url(m.get("photoKey"))}
+                              for m in step.get("landmarks") or []],
             })
         return {
             "packVersion": f"{route['routeId']}-v{route['version']}", "routeId": route["routeId"],

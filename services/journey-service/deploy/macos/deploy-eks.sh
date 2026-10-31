@@ -159,10 +159,10 @@ aws s3api put-bucket-cors --bucket "$BUCKET" --cors-configuration "file://$WORK_
 info "Allowed origin: $CORS_ORIGIN (tighten it to the traveller app's address with --cors-origin)"
 
 # ---------------------------------------------------------------------------
-step "Creating the Secret with the LTA and OneMap keys"
+step "Creating the Secret with the LTA, OneMap and Google Maps keys"
 SECRET_FILE="$WORK_DIR/secret.env"
 ( umask 077; : > "$SECRET_FILE" )
-for name in LTA_API_KEY ONEMAP_API_EMAIL ONEMAP_API_PASSWORD ONEMAP_API_KEY; do
+for name in LTA_API_KEY ONEMAP_API_EMAIL ONEMAP_API_PASSWORD ONEMAP_API_KEY GOOGLE_MAPS_API_KEY; do
   value="$(env_value "$name")"
   if [ -n "$value" ]; then
     printf '%s=%s\n' "$name" "$value" >> "$SECRET_FILE"
