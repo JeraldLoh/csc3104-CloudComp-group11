@@ -1,0 +1,11 @@
+# metrics-server for kind, so `kubectl top` works and the HPAs see CPU (otherwise <unknown>).
+#   kubectl apply -k k8s/local/metrics-server
+# kind's kubelets use self-signed certificates, hence --kubelet-insecure-tls (local only, never on EKS).
+resources:
+  - https://github.com/kubernetes-sigs/metrics-server/releases/download/v0.7.2/components.yaml
+patches:
+  - target: { kind: Deployment, name: metrics-server }
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --kubelet-insecure-tls

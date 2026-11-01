@@ -256,7 +256,7 @@ docker build -t checkin-service:local services/checkin-service
 docker build -t alert-service:local services/alert-service
 docker build -t journey-service:local services/journey-service
 docker build -t easyread-service:local services/easyread-service
-kind create cluster --name csc3104-local
+kind create cluster --name csc3104-local --config k8s/local/kind-config.yaml
 kind load docker-image cloud-fastapi:local checkin-service:local alert-service:local journey-service:local easyread-service:local --name csc3104-local
 ```
 
@@ -290,6 +290,64 @@ kubectl port-forward svc/cloud-fastapi 8000:8000 -n csc3104
 ```powershell
 curl.exe http://localhost:8000/health
 ```
+
+### Check-in analysis (Coordinator, Aggregator, detectors)
+
+Not part of `kubectl apply -k k8s/local`, so teammates without these images aren't affected. With them, the
+local cluster runs the whole chain: app -> Check-in Service -> Redis and SQS -> Coordinator -> detectors ->
+Aggregator -> Alert Service -> caregiver app.
+
+```powershell
+docker build -t cloud-detectors:local services/detectors
+docker build -t coordinator:local services/coordinator
+docker build -t aggregator:local services/aggregator
+kind load docker-image cloud-detectors:local coordinator:local aggregator:local --name csc3104-local
+kubectl apply -k k8s/local/detectors
+kubectl apply -k k8s/local/analysis
+kubectl get pods -n csc3104 -w
+```
+
+With Podman instead of Docker, set `KIND_EXPERIMENTAL_PROVIDER=podman`, and load each image by its full name
+(`podman tag localhost/coordinator:local docker.io/library/coordinator:local`, then
+`kind load docker-image docker.io/library/coordinator:local --name csc3104-local`). Podman names a built image
+`localhost/...`, which the pods' `coordinator:local` doesn't match, so they would fail with `ErrImageNeverPull`.
+
+The Coordinator reads the `careroute-checkins` queue the Check-in Service creates on its start, so it reports
+not ready until that pod is up.
+
+### Reach the services from your machine
+
+A cluster made with `k8s/local/kind-config.yaml` opens these on localhost once you apply `k8s/local/expose`, so no
+`kubectl port-forward` is needed. A cluster made without the config can't; recreate it.
+
+```powershell
+kubectl apply -k k8s/local/expose
+```
+
+| Address | Service |
+|---|---|
+| <http://localhost:8001> | Check-in Service |
+| <http://localhost:8002/dashboard> | Aggregator dashboard |
+| <http://localhost:8005> | Alert Service |
+| <http://localhost:8006> | Journey Service |
+
+The caregiver app's dev server (`apps/caregiver`, `npm run dev`) already calls these addresses.
+
+### Everything in one command, with a simulated trip
+
+`local-sim` does all of the above: it creates the cluster with the config, builds and loads every image, makes the
+LocalStack secret from `.env`, applies everything, waits until it's ready, starts the caregiver app and can send a
+simulated trip through the whole chain. Run it from the repo root.
+
+| | Windows (PowerShell) | Mac or Linux |
+|---|---|---|
+| First time, and after changing service code | `.\scripts\windows\local-sim.ps1 -Setup` | `bash scripts/macos/local-sim.sh --setup` |
+| Start everything and send a trip | `.\scripts\windows\local-sim.ps1 -Scenario off_route -Caregiver G-777` | `bash scripts/macos/local-sim.sh --scenario off_route --caregiver G-777` |
+
+Then open <http://localhost:5174>, type the caregiver in **Act as** and open the traveller on the Dashboard. The
+script keeps the app running until Ctrl+C; the cluster keeps running after that. `-Setup` on a cluster made
+without the config deletes and recreates it, so its data is lost. Scenarios and the `live` command:
+`services/detectors/README.md`, "Watch a scenario in the caregiver app".
 
 ### Stop
 

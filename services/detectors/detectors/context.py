@@ -24,6 +24,8 @@ class TripContext:
     recent: List[CheckIn] = field(default_factory=list)
     # check-in and context disagree on route version
     route_version_mismatch: bool = False
+    # for detectors that keep state across check-ins and None in unit tests
+    redis: Any = None
 
 
 # redis may return bytes
@@ -47,6 +49,7 @@ def _parse_route(raw: Any) -> Tuple[Optional[List[dict]], Optional[List[Tuple[fl
     return steps, path
 
 
+# int or None when missing or not a number
 def _parse_int(value: Any) -> Optional[int]:
     try:
         return int(_text(value))
@@ -93,4 +96,5 @@ def load_context(redis, request: DetectorRequest) -> TripContext:
         route_version_mismatch=route_version is not None
         and checkin.route_version is not None
         and route_version != checkin.route_version,
+        redis=redis
     )

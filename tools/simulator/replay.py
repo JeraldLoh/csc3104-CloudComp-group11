@@ -1,9 +1,4 @@
-"""Replay a scenario against live detectors.
-
-Seeds ``trip:{id}:route`` and ``trip:{id}:context`` in Redis, then for each check-in pushes it onto
-``trip:{id}:recent`` (LPUSH + LTRIM 10, newest first, like the Check-in Service), builds a
-detector-request and POSTs it to every detector in parallel. Needs ``redis``; HTTP is stdlib.
-"""
+# replay one scenario against live detectors the way the check-in service and coordinator would
 
 import csv
 import json
@@ -18,38 +13,55 @@ from tools.simulator.route import build_route
 from tools.simulator.scenarios import INTERVAL_S, generate, strip_labels
 
 RECENT_MAX = 10
-# The problem type each detector is responsible for; delay is only scored against that
+# problem each detector owns and delay is only scored against it
 OWN_PROBLEM = {"route-corridor": "off_route", "heading-speed": "wrong_direction", "dwell-time": "long_dwell"}
 
 Post = Callable[[str, dict], dict]
 
 
+# post a detector request and return the vote
 def post_json(url: str, body: dict) -> dict:
     req = urllib.request.Request(
         url.rstrip("/") + "/internal/detect",
         data=json.dumps(body).encode(),
-        headers={"content-type": "application/json"},
+        headers={"content-type": "application/json"}
     )
     with urllib.request.urlopen(req, timeout=5) as resp:
         return json.load(resp)
 
 
-def _ask(post: Post, url: str, body: dict) -> dict:
+# vote from one detector or an error vote
+def ask(post: Post, url: str, body: dict) -> dict:
     try:
         return post(url, body)
     except Exception as exc:  # a dead detector must not stop the replay
         return {"detectorId": url, "verdict": "error", "problemType": None, "latencyMs": None, "reason": repr(exc)}
 
 
-def seed_trip(redis_client, trip_id: str, route: dict, first: dict) -> None:
-    redis_client.set(f"trip:{trip_id}:route", json.dumps({"steps": route["steps"], "path": route["path"]}))
+# route and context for a trip with an optional expiry
+def seed_trip(redis_client, trip_id: str, route: dict, first: dict, ttl_s: Optional[int] = None) -> None:
+    redis_client.set(f"trip:{trip_id}:route", json.dumps({"steps": route["steps"], "path": route["path"]}), ex=ttl_s)
     redis_client.delete(f"trip:{trip_id}:recent")
     redis_client.hset(
         f"trip:{trip_id}:context",
-        mapping={k: first[k] for k in ("travellerId", "stepIndex", "routeVersion", "status")},
+        mapping={k: first[k] for k in ("travellerId", "stepIndex", "routeVersion", "status")}
     )
+    if ttl_s:
+        redis_client.expire(f"trip:{trip_id}:context", ttl_s)
 
 
+# what the check-in service writes before the coordinator asks the detectors
+def record_checkin(redis_client, checkin: dict, ttl_s: Optional[int] = None) -> None:
+    trip = checkin["tripId"]
+    key = f"trip:{trip}:recent"
+    redis_client.lpush(key, json.dumps(checkin))
+    redis_client.ltrim(key, 0, RECENT_MAX - 1)
+    redis_client.hset(f"trip:{trip}:context", "stepIndex", checkin["stepIndex"])
+    if ttl_s:
+        redis_client.expire(key, ttl_s)
+
+
+# one row per check-in with seq expected and a vote per detector in url order
 def replay_scenario(
     scenario: str,
     redis_client,
@@ -58,9 +70,8 @@ def replay_scenario(
     seed: int = 42,
     browser: bool = True,
     post: Post = post_json,
-    on_row: Optional[Callable[[dict], None]] = None,
+    on_row: Optional[Callable[[dict], None]] = None
 ) -> List[dict]:
-    """One row per check-in: ``{seq, expected, votes: [vote dict per detector, in url order]}``."""
     checkins = generate(scenario, seed, browser=browser)
     trip = checkins[0]["tripId"]
     seed_trip(redis_client, trip, build_route(), checkins[0])
@@ -68,12 +79,9 @@ def replay_scenario(
     with ThreadPoolExecutor(max_workers=len(detector_urls)) as pool:
         for c in checkins:
             body = strip_labels(c)
-            key = f"trip:{trip}:recent"
-            redis_client.lpush(key, json.dumps(body))
-            redis_client.ltrim(key, 0, RECENT_MAX - 1)
-            redis_client.hset(f"trip:{trip}:context", "stepIndex", c["stepIndex"])
+            record_checkin(redis_client, body)
             request = {"requestId": f"{trip}#{c['seq']}", "riskLevel": "normal", "checkin": body}
-            votes = list(pool.map(lambda u: _ask(post, u, request), detector_urls))
+            votes = list(pool.map(lambda u: ask(post, u, request), detector_urls))
             row = {"seq": c["seq"], "expected": c["expected"], "votes": votes}
             rows.append(row)
             if on_row:
@@ -83,21 +91,25 @@ def replay_scenario(
     return rows
 
 
+# one table cell for a vote
 def _cell(vote: dict) -> str:
     text = vote["verdict"] + (f"/{vote['problemType']}" if vote.get("problemType") else "")
     return f"{text} {vote['latencyMs']:.0f}ms" if vote.get("latencyMs") is not None else text
 
 
+# one table row per check-in
 def format_row(row: dict, widths: List[int]) -> str:
     cells = [f"{row['seq']:>4}", f"{row['expected']:<16}"] + [_cell(v).ljust(w) for v, w in zip(row["votes"], widths)]
     return "  ".join(cells)
 
 
+# table header with detector ids
 def format_header(row: dict, widths: List[int]) -> str:
     names = [v["detectorId"].ljust(w) for v, w in zip(row["votes"], widths)]
     return "  ".join(["seq ", "expected        "] + names)
 
 
+# replay rows as a csv in out_dir
 def write_csv(rows: List[dict], scenario: str, out_dir: Path) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"{scenario}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.csv"
@@ -110,14 +122,8 @@ def write_csv(rows: List[dict], scenario: str, out_dir: Path) -> Path:
     return path
 
 
+# true positives false alarms abstains errors and detection delay per detector over all scenarios
 def summarize(results: Dict[str, List[dict]]) -> Dict[str, dict]:
-    """Per detector, over all scenarios.
-
-    ``true_positives``: problem votes whose type equals the check-in's expected label.
-    ``false_alarms``: problem votes anywhere else (wrong type, or expected normal/abstain).
-    ``delays``: scenario -> check-ins between the first labelled problem check-in and the first
-    matching problem vote, only for the problem the detector owns; None when it never fired.
-    """
     out: Dict[str, dict] = {}
     for scenario, rows in results.items():
         for i, v in enumerate(rows[0]["votes"]):
@@ -138,6 +144,7 @@ def summarize(results: Dict[str, List[dict]]) -> Dict[str, dict]:
     return out
 
 
+# summary table per detector
 def format_summary(summary: Dict[str, dict]) -> str:
     lines = [f"{'detector':<16} {'TP':>5} {'false alarms':>13} {'abstains':>9} {'errors':>7}  delay (check-ins)"]
     for name, d in summary.items():

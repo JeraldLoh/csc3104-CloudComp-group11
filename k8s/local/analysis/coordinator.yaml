@@ -1,0 +1,55 @@
+# Coordinator (Member 3) on the local kind cluster: consumes careroute-checkins from LocalStack's SQS
+# and asks the detectors (k8s/local/detectors) about each check-in. Same shape as k8s/eks/services/coordinator.yaml.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: coordinator
+  namespace: csc3104
+  labels: { app: coordinator }
+spec:
+  replicas: 2   # two, so killing one mid-analysis shows SQS redelivery
+  selector:
+    matchLabels: { app: coordinator }
+  template:
+    metadata:
+      labels: { app: coordinator }
+    spec:
+      containers:
+        - name: coordinator
+          image: coordinator:local
+          imagePullPolicy: IfNotPresent   # kind: use the image loaded with `kind load`
+          ports: [{ containerPort: 8000 }]
+          env:
+            - { name: REDIS_URL, value: "redis://cloud-redis:6379/0" }
+            - { name: AWS_ENDPOINT_URL, value: "http://cloud-localstack:4566" }
+            - { name: AWS_ACCESS_KEY_ID, value: "csc3104" }
+            - { name: AWS_SECRET_ACCESS_KEY, value: "csc3104" }
+            - { name: AWS_DEFAULT_REGION, value: "ap-southeast-1" }
+            # The Check-in Service creates the queue on its start (CREATE_RESOURCES). Giving the URL
+            # instead of the name means this pod doesn't look the queue up at start-up and crash if
+            # it isn't there yet: it just reports not ready, and starts consuming once it exists.
+            - { name: CHECKINS_QUEUE_URL, value: "http://cloud-localstack:4566/000000000000/careroute-checkins" }
+            - { name: REDUNDANCY_MODE, value: "fixed4" }   # fixed4 | adaptive | fixed2
+            # Detector and Aggregator URLs default to the in-cluster service names.
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+          # Ready = Redis and the queue reachable. Not ready -> no traffic, but not restarted.
+          readinessProbe:
+            httpGet: { path: /ready, port: 8000 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /health, port: 8000 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: coordinator
+  namespace: csc3104
+spec:
+  type: ClusterIP
+  selector: { app: coordinator }
+  ports: [{ port: 8000, targetPort: 8000 }]
