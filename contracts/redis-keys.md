@@ -11,6 +11,7 @@ Journey keys expire **24 hours** after their last update.
 | `trip:{tripId}:context` | Hash | `travellerId`, `stepIndex`, `routeVersion`, `status` | Check-in Service (M2) | Detectors (M4), Coordinator (M3), Alert Service (M5) |
 | `trip:{tripId}:lastseq` | String | Highest sequence number processed | Check-in Service (M2) | Check-in Service (M2) |
 | `trip:{tripId}:recent` | List | Last 10 check-ins (JSON), newest first | Check-in Service (M2) | Detectors (M4), Alert Service (M5) |
+| `trip:{tripId}:dwell` | Hash | `lat`, `lng`, `since`: where the traveller stopped and when, so a stop longer than the `recent` window can be timed | Detectors (M4), dwell-time | Detectors (M4), dwell-time |
 | `trip:{tripId}:arrived` | String | When the traveller pressed "I've arrived"; set once, so only the first request tells caregivers | Alert Service (M5) | Alert Service (M5) |
 | `hb:{tripId}:lastseen` | String | Time of last check-in | Check-in Service (M2) | Heartbeat (M1), Alert Service (M5) |
 | `hb:{tripId}:intervals` | List | Last 100 gaps between single live check-ins, in milliseconds (catch-up batches don't add gaps; they only update lastseen) | Check-in Service (M2) | Heartbeat (M1) |
