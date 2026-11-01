@@ -44,6 +44,8 @@ export interface SavedRoutesApi {
 export interface TripsApi {
   /** A traveller's trips, newest day first (only those the caller may see). */
   listTrips(travellerId: string): Promise<Trip[]>;
+  // one trip, to find the route it follows
+  getTrip(tripId: string): Promise<Trip>;
   /** Needs an approved route. `date` is YYYY-MM-DD. */
   createTrip(routeId: string, date: string): Promise<Trip>;
   startTrip(tripId: string): Promise<Trip>;
@@ -148,6 +150,10 @@ export class JourneyApi implements PlannerApi, SavedRoutesApi, TripsApi, Disrupt
   async listTrips(travellerId: string): Promise<Trip[]> {
     const body = await this.request<{ trips: Trip[] }>(`/api/trips?travellerId=${encodeURIComponent(travellerId)}`);
     return body.trips;
+  }
+
+  getTrip(tripId: string): Promise<Trip> {
+    return this.request<Trip>(`/api/trips/${encodeURIComponent(tripId)}`);
   }
 
   createTrip(routeId: string, date: string): Promise<Trip> {

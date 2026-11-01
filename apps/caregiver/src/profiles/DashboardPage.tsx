@@ -10,12 +10,13 @@ import { Avatar } from "./TravellersPage";
 import { useLiveTrips } from "./useLiveTrips";
 import { isCaregiverId, type MyTravellers } from "./useMyTravellers";
 import { useTravellerFacts } from "./useTravellerFacts";
+import { useTripPath, type PathApi } from "./useTripPath";
 import "./profiles.css";
 
 interface Props {
   caregiverId: string;
   my: MyTravellers;
-  journey: Pick<TripsApi, "listTrips">;
+  journey: Pick<TripsApi, "listTrips"> & PathApi;
   /** Go to the Travellers page, optionally with one traveller open. */
   onOpenProfile: (travellerId?: string) => void;
 }
@@ -26,6 +27,7 @@ export function DashboardPage({ caregiverId, my, journey, onOpenProfile }: Props
   const facts = useTravellerFacts(caregiverId, my, journey);
   const { live, known: liveKnown } = useLiveTrips(caregiverId, isCaregiverId(caregiverId));
   const [openId, setOpenId] = useState<string | null>(null);
+  const path = useTripPath(journey, openId ? live[openId]?.tripId : undefined);
 
   if (!isCaregiverId(caregiverId)) {
     return (
@@ -91,7 +93,7 @@ export function DashboardPage({ caregiverId, my, journey, onOpenProfile }: Props
             </div>
             {open.live && (
               <div className="pf__tcard pf__open">
-                <LiveMap key={open.live.tripId} name={open.traveller.name} trip={open.live} />
+                <LiveMap key={open.live.tripId} name={open.traveller.name} trip={open.live} path={path} />
                 <p className="pf__muted">
                   Last seen {seenAgo(open.live.lastSeenAt)}
                   {open.live.batteryPct != null && ` · battery ${Math.round(open.live.batteryPct)}%`}

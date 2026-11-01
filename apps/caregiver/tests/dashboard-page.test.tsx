@@ -1,11 +1,12 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Trip } from "../src/journey/types";
+import type { SavedRoute, Trip } from "../src/journey/types";
 import { DashboardPage } from "../src/profiles/DashboardPage";
 import type { MyTravellers } from "../src/profiles/useMyTravellers";
 
 vi.mock("../src/profiles/LiveMap", () => ({ // Leaflet needs a real browser; tested there
-  LiveMap: ({ name }: { name: string }) => <div>Map of {name}</div>,
+  LiveMap: ({ name, path }: { name: string; path: [number, number][] | null }) =>
+    <div>Map of {name}{path && `, route of ${path.length} points`}</div>,
 }));
 
 const seenNow = (changes = {}) => ({
@@ -35,7 +36,11 @@ function my(travellers: MyTravellers["travellers"]): MyTravellers {
 }
 
 const alex = { travellerId: "U-1", name: "Alex" };
-const journey = { listTrips: vi.fn<(id: string) => Promise<Trip[]>>() };
+const journey = {
+  listTrips: vi.fn<(id: string) => Promise<Trip[]>>(),
+  getTrip: vi.fn<(id: string) => Promise<Trip>>(),
+  getRoute: vi.fn<(id: string) => Promise<SavedRoute>>(),
+};
 
 function show(travellers = [alex], onOpenProfile = vi.fn()) {
   // The same `my` every render, as App gives it (a new `reload` would mean a new load).
@@ -53,6 +58,8 @@ beforeEach(() => {
     "/caregivers": () => json(["G-1"]),
   };
   journey.listTrips.mockReset().mockResolvedValue([]);
+  journey.getTrip.mockReset().mockRejectedValue(new Error("not yours"));
+  journey.getRoute.mockReset();
   vi.stubGlobal("EventSource", FakeEventSource);
   vi.stubGlobal("fetch", vi.fn(async (url: string) => {
     const paths = Object.keys(answers).sort((a, b) => b.length - a.length); // the most specific path wins
@@ -122,6 +129,20 @@ describe("DashboardPage", () => {
     fireEvent.click(await screen.findByRole("button", { name: /Bo/ }));
     expect(await screen.findByRole("heading", { name: "Bo" })).toBeTruthy();
     expect(screen.queryByText(/Map of/)).toBeNull();
+  });
+
+  // planned route under the trail so a detour shows
+  it("draws the live trip's planned route on the map", async () => {
+    answers["/api/travellers/live"] = () => json({ "U-1": seenNow() });
+    journey.getTrip.mockResolvedValue({ tripId: "T-LIVE", routeId: "R-1" } as Trip);
+    journey.getRoute.mockResolvedValue({ path: [[1.4, 103.9], [1.41, 103.91], [1.42, 103.92]] } as SavedRoute);
+    show();
+    await screen.findByText("Step 3 · seen just now");
+
+    fireEvent.click(screen.getByRole("button", { name: /Alex/ }));
+    expect(await screen.findByText("Map of Alex, route of 3 points")).toBeTruthy();
+    expect(journey.getTrip).toHaveBeenCalledWith("T-LIVE");
+    expect(journey.getRoute).toHaveBeenCalledWith("R-1");
   });
 
   it("announces an arrival straight away, until it's dismissed", async () => {

@@ -7,10 +7,11 @@ import type { LiveTrip } from "./api";
 
 const ZOOM = 16;
 
-export function LiveMap({ name, trip }: { name: string; trip: LiveTrip }) {
+export function LiveMap({ name, trip, path }: { name: string; trip: LiveTrip; path: [number, number][] | null }) {
   const host = useRef<HTMLDivElement>(null);
   const map = useRef<L.Map | null>(null);
   const layer = useRef<L.LayerGroup | null>(null);
+  const route = useRef<L.LayerGroup | null>(null);
 
   useEffect(() => {
     if (!host.current) return;
@@ -20,10 +21,13 @@ export function LiveMap({ name, trip }: { name: string; trip: LiveTrip }) {
       attribution: '<a href="https://www.onemap.gov.sg/">OneMap</a> &copy; contributors &middot; <a href="https://www.sla.gov.sg/">Singapore Land Authority</a>',
     }).addTo(created);
     map.current = created;
+    // added first so the planned route sits under the trail
+    route.current = L.layerGroup().addTo(created);
     layer.current = L.layerGroup().addTo(created);
     return () => {
       created.remove();
       map.current = null;
+      route.current = null;
       layer.current = null;
     };
   }, []); // made once; the effect below follows the traveller
@@ -37,6 +41,13 @@ export function LiveMap({ name, trip }: { name: string; trip: LiveTrip }) {
       .addTo(layer.current);
     map.current.panTo([trip.lat, trip.lng]); // not setView: the caregiver may have zoomed
   }, [name, trip.lat, trip.lng, trip.trail]);
+
+  // planned route as a grey dashed line
+  useEffect(() => {
+    if (!route.current) return;
+    route.current.clearLayers();
+    if (path) L.polyline(path, { color: "#6b7280", weight: 4, opacity: 0.7, dashArray: "8 8" }).addTo(route.current);
+  }, [path]);
 
   return <div ref={host} className="pf__map" role="img" aria-label={`Map showing where ${name} is`} />;
 }
