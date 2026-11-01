@@ -99,12 +99,24 @@ live APIs, so it needs the keys (they go into a Kubernetes Secret, never into th
 .\scripts\windows\deploy.ps1 -BudgetEmail <your email>                                          # the platform (25-35 min)
 powershell -ExecutionPolicy Bypass -File services\journey-service\deploy\windows\deploy-eks.ps1    # the Journey Service
 powershell -ExecutionPolicy Bypass -File services\journey-service\deploy\windows\deploy-lambda.ps1 # the disruption checker
+.\scripts\windows\deploy.ps1 -Service easyread-service                                          # Simplify with AI (Ollama)
 ```
 
 ```bash
 ./scripts/macos/deploy.sh --email <your email>                     # the platform (25-35 min)
 bash services/journey-service/deploy/macos/deploy-eks.sh            # the Journey Service
 bash services/journey-service/deploy/macos/deploy-lambda.sh         # the disruption checker
+bash scripts/macos/deploy.sh --service easyread-service             # Simplify with AI (Ollama)
+```
+
+The last line deploys the Easy-read Service and Ollama (`k8s/eks/services/easyread-service.yaml`). Skip it if you
+won't show **Simplify with AI**: without it the button says the AI isn't available and the editor keeps the
+standard wording. Ollama adds about **$0.12 an hour** (2 vCPU / 4 GB on Fargate) and downloads its model (~1 GB)
+when its pod starts, so deploy it at least 10 minutes before the demo. It is ready when this prints
+`qwen2.5:1.5b`:
+
+```powershell
+kubectl exec -n careroute deploy/ollama -- ollama list
 ```
 
 **2. Turn on the demo extras.** On AWS the service starts with `DEMO_UI` off, so the **Data** box and `demo_tools`
@@ -158,6 +170,11 @@ t="kubectl exec -n careroute deploy/journey-service -- python -m app.demo_tools"
 - **Nothing is forgotten on restart.** Routes and trips are in real DynamoDB tables (`careroute-routes`,
   `careroute-trips`) and packs are in the S3 bucket `careroute-files-<account id>`. They stay until you delete them or
   tear the environment down.
+- **Simplify with AI is slower.** Ollama runs on 2 vCPU with no GPU, so a long route can run past the 75-second
+  limit and keep the standard wording. In Demo C, the Ollama commands change: check the model with
+  `kubectl logs -n careroute deploy/ollama`, and instead of `docker compose ... stop ollama` use
+  `kubectl scale deployment/ollama -n careroute --replicas=0` (`--replicas=1` brings it back, and it downloads the
+  model again).
 - **No `docker exec`:** there is no local Redis container. The commands below go through `kubectl exec` (the image has
   no `redis-cli`, so they use Python) or your own AWS CLI.
 
@@ -516,7 +533,7 @@ three steps **in this order** and let each one finish first:
 |---|---|---|
 | 1. `teardown-lambda` | the disruption checker: stack `careroute-journey-lambda` (function, role, schedule, logs) and its zips in `s3://careroute-files-<account id>/lambda/` | `careroute-journey-lambda` |
 | 2. `teardown-eks` | our Deployment, Service and Secret, our `journey-*` images in ECR, the packs in `s3://.../packs/` | `journey-service` |
-| 3. the platform's `teardown` | everything else: the cluster, the DynamoDB tables (all saved routes and trips), Redis, the queues, the bucket, the load balancer, the VPC. Takes 15-25 minutes | `careroute-stack-1` |
+| 3. the platform's `teardown` | everything else: the cluster (with the Easy-read Service and Ollama), the `careroute-*` ECR repositories, the DynamoDB tables (all saved routes and trips), Redis, the queues, the bucket, the load balancer, the VPC. Takes 15-25 minutes | `careroute-stack-1` |
 
 Stop the port-forward (Ctrl+C in its window) first. Add `-Yes` (PowerShell) or `--yes` (bash) to any of them to
 skip the question.
