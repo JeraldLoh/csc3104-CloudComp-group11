@@ -47,8 +47,8 @@ printing them.
 | `teardown-lambda` | Deletes the Lambda stack and the uploaded zips. |
 | `resource-names` | Shared by the others (dot-sourced / `source`d): finds the stack's resource prefix (warns if it isn't `careroute`) and derives the shared bucket name. |
 
-What each set needs: Windows: `aws`, `kubectl`, Docker Desktop. macOS: the same plus `curl` and `shasum` (both come
-with macOS). On Apple Silicon, Docker builds the `linux/amd64` image and zip by emulation, which is what Fargate and
+What each set needs: Windows: `aws`, `kubectl`, Docker Desktop. macOS / Linux: the same plus `curl` and `shasum`
+or `sha256sum` (macOS has `shasum`, most Linux distributions `sha256sum`). On Apple Silicon, Docker builds the `linux/amd64` image and zip by emulation, which is what Fargate and
 the Lambda run.
 
 ## Names: the team prefix is `careroute`
