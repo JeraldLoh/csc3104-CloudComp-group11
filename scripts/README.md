@@ -212,3 +212,16 @@ If several people use the same AWS account:
 | Pods in `CrashLoopBackOff` | Your app is crashing: `kubectl logs -n careroute deploy/<name>` |
 | The first deploy failed half-way | Just run it again; it carries on from where it stopped |
 | Not sure if you're still being charged | Run teardown; it's safe to run even if things are already deleted |
+
+## Local stack, no AWS
+
+`local-sim` runs everything on a kind cluster on your machine instead, for free: the services, the check-in
+analysis, the caregiver app and, optionally, a simulated trip through the whole chain.
+
+| What you want | Mac or Linux | Windows (PowerShell) |
+|---|---|---|
+| First time, and after changing service code | `bash scripts/macos/local-sim.sh --setup` | `.\scripts\windows\local-sim.ps1 -Setup` |
+| Start everything and send a trip | `bash scripts/macos/local-sim.sh --scenario off_route` | `.\scripts\windows\local-sim.ps1 -Scenario off_route` |
+
+Needs Docker or Podman, kind, kubectl, Node and Python, plus `.env` with `LOCALSTACK_AUTH_TOKEN`. Details in the
+repo README, "Run locally with kind".

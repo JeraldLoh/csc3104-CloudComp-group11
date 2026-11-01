@@ -1,0 +1,10 @@
+# Check-in analysis (Member 3) on the local kind cluster: the Coordinator and the Aggregator.
+# Not in k8s/local/kustomization.yaml, so teammates without the images aren't affected. To run them:
+#   docker build -t coordinator:local services/coordinator
+#   docker build -t aggregator:local services/aggregator
+#   kind load docker-image coordinator:local aggregator:local --name csc3104-local
+#   kubectl apply -k k8s/local/analysis
+# Needs k8s/local (Redis, LocalStack, Check-in and Alert Services) and k8s/local/detectors first.
+resources:
+  - coordinator.yaml
+  - aggregator.yaml
