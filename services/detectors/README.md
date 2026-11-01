@@ -76,7 +76,14 @@ docker compose down
 
 `--request <scenario>` prints a `detector-request.json` for the scenario's interesting moment; send it
 to any port. `dev/seed.py` also runs on the host (`python dev/seed.py --redis redis://localhost:6379/0`)
-to re-seed. `long_dwell` makes dwell-time abstain: Redis only keeps 10 check-ins (see the dwell-time docstring).
+to re-seed. `long_dwell` makes dwell-time abstain here: the seed only writes 10 check-ins and no `trip:{id}:dwell`.
+
+## Dwell-time
+
+`trip:{id}:recent` holds 10 check-ins, about 90 s, far shorter than the 300 s walking limit. So dwell-time keeps
+where and when the traveller stopped in `trip:{id}:dwell` (24 h expiry), and times the stop from there while the
+newest check-in stays within `DWELL_RADIUS_M` of that spot. Moving off starts a new stop. Without that key, as
+after a Redis restart, it falls back to the window and abstains when the whole window is stationary.
 
 ### Replay a whole scenario
 
@@ -90,6 +97,49 @@ python -m tools.simulator replay --all                     # every scenario, the
 Flags: `--redis`, `--detectors` (comma-separated URLs), `--speed` (0 = fast, 1 = real time),
 `--no-browser` (clean check-ins), `--seed`. The summary lists true positives, false alarms, abstains and the
 detection delay in check-ins (only for the problem each detector owns). `results/` is git-ignored.
+
+### Watch a scenario in the caregiver app
+
+`replay` and `load` call the detectors directly. `live` goes through the real services instead, as a phone would:
+it starts a trip in the Journey Service, posts each check-in to the Check-in Service, and the Coordinator, detectors,
+Aggregator and Alert Service do the rest. The caregiver app shows the traveller moving and the alerts they raise.
+
+Locally, one script brings up the whole chain on kind, starts the caregiver app and sends the trip (repo README,
+"Everything in one command"):
+
+```powershell
+.\scripts\windows\local-sim.ps1 -Scenario off_route -Caregiver G-777       # Windows
+bash scripts/macos/local-sim.sh --scenario off_route --caregiver G-777        # Mac or Linux
+```
+
+While it runs, send more trips from another terminal at the repo root (only the standard library, no venv needed;
+on Windows use `py` if `python` isn't found):
+
+```powershell
+python -m tools.simulator live --scenario off_route --caregiver G-777
+```
+
+In the app, type the same caregiver in **Act as** and open the traveller on the Dashboard: the map shows the planned
+route dashed and the trail in blue. The command uses the caregiver's first traveller, or makes one called Sim Alex.
+It ends the trip after the last check-in (`--keep-trip` leaves it active) and lists the incidents it raised.
+
+| Flag | Default | What |
+|---|---|---|
+| `--interval` | 1 | seconds between sends; timestamps stay 10 s apart, so a 15 min dwell takes 90 s at 1, real time at 10 |
+| `--traveller` | caregiver's first | a traveller id to use instead |
+| `--journey`, `--checkin`, `--alert` | localhost 8006, 8001, 8005 | service addresses |
+| `--seed` | new each run | same seed, same check-ins |
+
+On EKS only the Check-in Service is public, and the Alert Service runs with login off, so it can't tell which
+caregiver is asking for profiles. Port-forward the Journey and Alert Services from the EKS cluster, point
+`--checkin` at the load balancer and give a traveller id:
+
+```powershell
+python -m tools.simulator live --scenario off_route --traveller U-SIM-001 --checkin http://LOAD-BALANCER-ADDRESS
+```
+
+The detection chain runs and the command lists the incidents, but the caregiver map stays empty until the cloud
+has a login (issue 1.5).
 
 ### Load test: many travellers at once, and watching the HPAs scale
 

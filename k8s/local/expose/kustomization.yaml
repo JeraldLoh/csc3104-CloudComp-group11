@@ -1,0 +1,7 @@
+# Opens services on localhost for a cluster made with k8s/local/kind-config.yaml:
+#   localhost:8001 Check-in, 8002 Aggregator dashboard, 8005 Alert, 8006 Journey
+# Separate Services beside the services' own, so their manifests stay as they are.
+#   kubectl apply -k k8s/local/expose
+namespace: csc3104
+resources:
+  - services.yaml
