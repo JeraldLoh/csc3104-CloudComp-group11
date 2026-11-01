@@ -2,6 +2,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import fakeredis
 import pytest
 
 from detectors.config import Settings
@@ -128,14 +129,16 @@ def test_abstain_on_route_version_mismatch():
 
 # Replay: feed each simulator scenario one check-in at a time, with a sliding window
 
-def replay(scenario, window_size):
+def replay(scenario, window_size, redis=None):
     route = json.loads((FIXTURES / "route.json").read_text())
     path = [tuple(p) for p in route["path"]]
     rows = json.loads((FIXTURES / f"{scenario}.json").read_text())
     checkins = [CheckIn.model_validate(r) for r in rows]
     for i, row in enumerate(rows):
         window = checkins[max(0, i - window_size + 1) : i + 1]
-        ctx = TripContext(steps=route["steps"], path=path, step_index=row["stepIndex"], route_version=3, recent=window)
+        ctx = TripContext(
+            steps=route["steps"], path=path, step_index=row["stepIndex"], route_version=3, recent=window, redis=redis
+        )
         request = DetectorRequest(request_id=f"{row['tripId']}#{row['seq']}", risk_level="normal", checkin=checkins[i])
         yield row["expected"], detect(request, ctx, SETTINGS)
 
@@ -175,3 +178,50 @@ def test_train_step_uses_the_transit_limit():
     steps = [{"stepIndex": 0, "mode": "train"}]
     vote = vote_for(still(10, every=40), steps=steps)
     assert "limit 1200 s" in vote.reason and vote.verdict != "problem"
+
+
+# dwell start kept in redis so the live 10 check-in window can still see a long stop
+
+def calls(batches, redis):
+    return [vote_for(recent, redis=redis) for recent in batches]
+
+
+def test_saved_start_outlasts_the_window():
+    r = fakeredis.FakeRedis()
+    stopped = still(40)  # 390 s at one spot, 10 s apart
+    votes = calls([stopped[max(0, i - 9) : i + 1] for i in range(40)], r)
+    assert votes[-1].problem_type == "long_dwell"
+    assert votes[-1].reason == "stationary for 390 s within 30 m (limit 300 s)"
+    assert all(v.verdict != "abstain" for v in votes)
+    assert 0 < r.ttl("trip:T-001:dwell") <= 86400
+
+
+def test_moving_off_starts_a_new_stop():
+    r = fakeredis.FakeRedis()
+    calls([still(10, every=40)], r)  # stopped long enough to flag
+    moved = [checkin(i, lat=1.405 + 200 * M, every=40) for i in range(10, 12)]
+    vote = vote_for(moved, redis=r)
+    assert vote.verdict == "normal" and vote.reason == "stationary for 40 s (limit 300 s)"
+
+
+def test_malformed_saved_start_is_ignored():
+    r = fakeredis.FakeRedis()
+    r.hset("trip:T-001:dwell", mapping={"lat": "x", "lng": "103.9", "since": "yesterday"})
+    assert vote_for(still(5), redis=r).verdict == "normal"
+    assert r.hget("trip:T-001:dwell", "lat") != b"x"  # replaced by the window start
+
+
+@pytest.mark.parametrize("suffix", SUFFIXES)
+def test_replay_long_dwell_is_flagged_with_the_real_window_and_redis(suffix):
+    results = list(replay("long_dwell" + suffix, 10, fakeredis.FakeRedis()))
+    flagged = [i for i, (_, v) in enumerate(results) if v.problem_type == "long_dwell"]
+    labels = [expected for expected, _ in results]
+    end = len(labels) - labels[::-1].index("long_dwell")
+    # the slow approach to the stop already counts as standing still
+    assert flagged and min(flagged) >= labels.index("long_dwell") - 5
+    assert max(flagged) < end + 3
+
+
+@pytest.mark.parametrize("scenario", ["normal", "normal_bus_wait", "normal_bus_wait-browser", "off_route", "poor_gps"])
+def test_replay_other_scenarios_never_flag_with_redis(scenario):
+    assert not [v for _, v in replay(scenario, 10, fakeredis.FakeRedis()) if v.verdict == "problem"]
