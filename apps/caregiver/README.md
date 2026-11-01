@@ -2,12 +2,13 @@
 
 Where a caregiver plans a route for a traveller. So far: the **route planner** (search two
 places or click the map, see the options on the OneMap map, save one as a route) and the
-traveller's **saved routes** (list, open one on the map, edit its name and easy-read wording,
-approve) and **trips** (make one on an approved route, start, end, prepare the pack, copy the
-traveller's link). The live dashboard comes later.
+traveller's **saved routes** (list, open one on the map, edit its name, easy-read wording and step
+photos, simplify the wording with AI, approve) and **trips** (make one on an approved route, start, end, prepare the pack, copy the
+traveller's link). The **dashboard** and **travellers** tabs are the caregiver's side of issues 5.1
+and 5.3.
 
-React + TypeScript + Vite, same tooling as `apps/traveller`. Talks to the Journey Service
-(`contracts/api.md`).
+React + TypeScript + Vite, same tooling as `apps/traveller`. Talks to the Journey Service and the
+Alert Service (`contracts/api.md`).
 
 ## Run it
 
@@ -35,6 +36,25 @@ npm run build
 
 > If `npm install` fails with `Cannot read properties of null (reading 'edgesOut')`, that is a
 > bug in older npm 11 releases: `npx npm@latest install` works.
+
+## Dashboard
+
+**Dashboard** (or `/#dashboard`) shows everyone the "Act as" caregiver looks after, those who need attention
+first, with alerts arriving live. It needs the Alert Service on port 8005 with `AUTH_MODE=dev`
+(`services/alert-service/dev.ps1`). Opening a traveller shows their alerts, where they're acknowledged and resolved
+(`src/alerts/AlertList.tsx`); **Edit profile** there leads to the Travellers tab.
+
+- A traveller is only "All clear" once their alerts have loaded. If they can't be loaded the card says "Can't check
+  alerts" and the alert totals show "–", never 0 (`buildRows` and `summarise` in `src/profiles/overview.ts`).
+- If the Journey Service is down only the trip parts go blank (`src/profiles/useTravellerFacts.ts`).
+- Each card shows the step the traveller is on, and an opened traveller shows a map (`src/profiles/LiveMap.tsx`), from
+  the phone's check-ins (`GET /api/travellers/live`, `useLiveTrips.ts`). These need the Check-in Service running. The
+  caregiver only has to be linked to the traveller, not to have planned the route.
+- If check-ins can't be read, the card falls back to the Journey Service, which only shows a trip to the caregiver who
+  planned its route. That's why it says "No trip of yours under way" then, not "No trip under way".
+- When a traveller presses "I've arrived", a green banner appears straight away (`trip.arrived` on the live stream) and
+  stays until dismissed. A dashboard that wasn't open still shows "Arrived 5 min ago" on the card, for 30 minutes.
+- Alerts are live. Step and location refresh every 3 seconds; safe locations and caregivers every 30.
 
 ## Using the planner in another page
 
@@ -79,6 +99,35 @@ stay mounted, so a half-finished edit is still there when you come back.
   editor says how many trips are affected (pass `trips` to `<SavedRoutes>`), and the trips list
   flags such trips and hides Start, Pack and the link for them. If someone else saved first the
   service refuses (409): the page offers **Reload this route**, and nothing is overwritten.
+- Simplify with AI: **Simplify with AI** on a saved route opens it and asks the service for simpler wording
+  (`suggestEasyRead`, `POST /api/routes/{id}/easy-read`; it runs on CPU, so allow up to a minute). The editor then
+  opens with that wording: the caregiver checks and edits each step and saves as usual (nothing is saved before).
+  A step marked "standard wording" is one where the AI's text didn't keep every stop and number; if the AI is
+  unavailable, the editor doesn't open: the status line says "Simplify with AI didn't work ... Try again in a
+  minute", and nothing changes. Only a step being edited has to fit the 300-character limit to save.
+- Point form: the wording is one short action per sentence, and the saved route shows each sentence as a bullet
+  point (`EasyReadPoints`, `easyReadPoints` in `format.ts`). The editor's box has one "• point" per line (Enter
+  starts a new one); saving joins the lines back into sentences (`toBulletLines` / `fromBulletLines`).
+- Photos: each walk and bus step shows a photo of where it ends (Street View, added by the service when a route is
+  saved, if it has a Google Maps key). In the editor, **Replace photo** uploads the caregiver's own
+  (`uploadStepPhoto`; JPEG, PNG or WebP up to 5 MB) and **Use Street View photo** goes back to the automatic one.
+  A step with no photo (or whose link doesn't load) says what to add instead (`photoHint` in `format.ts`,
+  `StepPhoto`): the gantry or platform for a train step, the entrance or gantry for a walk to a station, the bus
+  stop, or where the walk ends. Street View has nothing inside stations and malls, so these need the caregiver.
+  Where only an old Street View photo was found (its key is under `media/streetview/v2/rough/`, `isRoughPhoto`), the
+  photo is shown with a hint under it to check it or add a better one (`roughPhotoHint`).
+  Like the wording, a photo change only counts once the route is saved.
+- Editor layout: each step is a card titled with the planned instruction (step number, a WALK / BUS / TRAIN chip),
+  with "What the traveller reads" above its wording box and the photo's buttons on the photo's corner.
+- Phone preview: while editing, a phone over the map shows the step the caregiver last clicked or typed in, drawn
+  like the traveller app's step screen (`PhonePreview.tsx`, copying `apps/traveller`'s StepCard look: the coloured
+  sign, "Step 2 of 4", photo, wording in large type, "I've done this step" and Help). It updates as they type; the
+  arrows step through the route and **Hide** closes it. The planner offers the spot over the map through
+  `PreviewSlot`; in a narrow slot the phone goes under the map instead.
+- Landmarks: after **Simplify with AI**, a step whose wording mentions a landmark ("Look out for City Plaza on your
+  left") shows a smaller photo of it under the step photo, captioned "Look for City Plaza" (`LandmarkPhotos` in
+  `StepPhoto.tsx`). Only the landmarks the wording still names are shown and saved (`namedLandmarks` in `format.ts`),
+  so deleting the sentence removes its photo. Saved routes show them the same way.
 - Deleting: **Delete** on a saved route asks first, then calls `deleteRoute(id, version)` (`SavedRoutesApi`; the
   service refuses with 409 if the route changed since the list was loaded, or if one of its trips is active). Pass
   `routesLoaded={saved.loaded}` to `<Trips>` so planned trips left without a route are flagged.
@@ -103,7 +152,9 @@ stay mounted, so a half-finished edit is still there when you come back.
 | `src/planner/useTrips.ts`, `Trips.tsx` | trips: list, make, start, end, pack, traveller link, spotting trips whose route changed |
 | `src/planner/RoutePlanner.tsx` | the screen; `PlaceField`, `OptionDetails`, `MapView` are its parts |
 | `src/planner/format.ts` | option / live-data wording |
-| `src/App.tsx` | stand-in host page (dev user, traveller id) until the real dashboard exists |
+| `src/profiles/DashboardPage.tsx`, `overview.ts`, `useTravellerFacts.ts`, `useLiveTrips.ts`, `LiveMap.tsx` | the dashboard: the page, what it says about each traveller, fetching their numbers and live position, and the map |
+| `src/alerts/useLiveIncidents.ts`, `AlertList.tsx` | loading alerts and the live stream; a traveller's alerts with Acknowledge and Resolve |
+| `src/App.tsx` | stand-in host page (dev user, traveller id) until real login exists |
 
 `services/journey-service/app/demo_map.html` stays as the service's own dev page; this is the
 version meant to be built on.

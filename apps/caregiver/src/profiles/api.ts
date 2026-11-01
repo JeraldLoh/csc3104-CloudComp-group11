@@ -17,6 +17,28 @@ export interface SafeLocation {
   lng: number;
 }
 
+/** A traveller's latest trip, from their phone's check-ins. */
+export interface LiveTrip {
+  tripId: string;
+  /** Counted from 0: the phone's "Step 1 of 4" is 0. */
+  stepIndex: number | null;
+  status: string | null;
+  lastSeenAt: string;
+  /** When they pressed "I've arrived", if they have. */
+  arrivedAt: string | null;
+  lat: number;
+  lng: number;
+  accuracyM: number | null;
+  batteryPct: number | null;
+  /** Their last few positions, oldest first. */
+  trail: [number, number][];
+}
+
+/** Only travellers with a recent check-in are in the answer. */
+export function fetchLive(caregiverId: string): Promise<Record<string, LiveTrip>> {
+  return call("/api/travellers/live", caregiverId);
+}
+
 export function listTravellers(caregiverId: string): Promise<Traveller[]> {
   return call("/api/travellers", caregiverId);
 }
@@ -36,6 +58,11 @@ export function addCaregiver(caregiverId: string, travellerId: string, otherCare
     method: "POST",
     body: JSON.stringify({ travellerId, caregiverId: otherCaregiverId }),
   });
+}
+
+/** Every caregiver linked to a traveller, the caller included. */
+export function listCaregivers(caregiverId: string, travellerId: string): Promise<string[]> {
+  return call(`/api/travellers/${encodeURIComponent(travellerId)}/caregivers`, caregiverId);
 }
 
 const locationsPath = (travellerId: string) => `/api/travellers/${encodeURIComponent(travellerId)}/safe-locations`;

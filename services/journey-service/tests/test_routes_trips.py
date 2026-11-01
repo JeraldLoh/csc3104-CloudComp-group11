@@ -200,5 +200,6 @@ def test_pack_matches_the_contract_example():
     walk, bus = pack["steps"]
     assert (walk["lat"], walk["lng"]) == (1.4052, 103.9024)             # where the step ends
     assert bus["backup"] == "If bus 190 does not come in 20 minutes, take bus 83."
-    assert walk["backup"] is None and walk["easyRead"].startswith("Walk to Punggol Interchange")
+    assert walk["backup"] is None and walk["easyRead"].startswith("Walk to the bus stop at Punggol Interchange")
+    assert walk["landmarks"] == [] and bus["landmarks"] == []
     assert (pack["travellerName"], pack["caregiver"]) == (None, {"name": None, "phone": None})   # Profiles service not built

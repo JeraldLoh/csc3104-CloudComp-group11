@@ -252,9 +252,16 @@ instead of ElastiCache.
 
 ```powershell
 docker build -t cloud-fastapi:local .
+docker build -t checkin-service:local services/checkin-service
+docker build -t alert-service:local services/alert-service
+docker build -t journey-service:local services/journey-service
+docker build -t easyread-service:local services/easyread-service
 kind create cluster --name csc3104-local
-kind load docker-image cloud-fastapi:local --name csc3104-local
+kind load docker-image cloud-fastapi:local checkin-service:local alert-service:local journey-service:local easyread-service:local --name csc3104-local
 ```
+
+`k8s/local` also runs Ollama (for the caregiver app's "Simplify with AI"); it downloads its model (~1 GB) when its
+pod starts, and asks for 2 GB of memory.
 
 Create `.env` in the project root with your LocalStack token (the `*.env`
 pattern in `.gitignore` keeps it out of Git):

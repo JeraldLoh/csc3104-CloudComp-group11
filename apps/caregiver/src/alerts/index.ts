@@ -1,1 +1,2 @@
-export { AlertsPage } from "./AlertsPage";
+export { AlertList } from "./AlertList";
+export { useLiveIncidents } from "./useLiveIncidents";

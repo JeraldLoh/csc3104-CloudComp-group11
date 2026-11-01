@@ -23,11 +23,15 @@ that problem already has an incident. **Retrying is safe**: send again if a requ
 | GET | `/health` | Process is alive |
 | GET | `/ready` | Redis and DynamoDB reachable |
 | POST | `/internal/problems` | See above |
+| POST | `/api/help` | The traveller pressed Help: an urgent incident. No login until Cognito, because a refused request for help is worse than a false alarm |
+| POST | `/api/arrived` | The traveller pressed "I've arrived": tells their caregivers once. Not an incident |
 | GET | `/api/incidents?travellerId=U-042` | Newest first |
 | POST | `/api/incidents/{incidentId}/ack` | URL-encode the ID: `U-042%23T-001%23off_route%232` |
 | POST | `/api/incidents/{incidentId}/resolve` | |
 | GET | `/api/stream` | Live alerts (SSE) for the caller's travellers |
 | GET / POST | `/api/travellers` | The caller's travellers / add one (you're linked to them) |
+| GET | `/api/travellers/live` | Their current step and location, from the Check-in Service's Redis keys (`app/live.py`) |
+| GET | `/api/travellers/{travellerId}/caregivers` | Who looks after them (you must be linked already) |
 | POST | `/api/links` | `{"travellerId", "caregiverId"}`: add another caregiver (you must be linked already) |
 | GET / POST | `/api/travellers/{travellerId}/safe-locations` | Home, School… |
 | GET | `/internal/links?caregiverId=&travellerId=` | `{"linked": true/false}` for other services |
@@ -73,12 +77,20 @@ pytest -v                                  # tests, against LocalStack
 python tools\send_disruption.py U-042      # put the example disruption on the queue
 ```
 
-In the kind cluster (2 replicas):
+In the kind cluster (2 replicas). `k8s/local/alert-service.yaml` is in `kustomization.yaml`, so
+`kubectl apply -k k8s/local` runs it once the image is loaded:
 
 ```powershell
 docker build --provenance=false -t alert-service:local services/alert-service
 kind load docker-image alert-service:local --name csc3104-local
-kubectl apply -f k8s/local/alert-service.yaml
+kubectl apply -k k8s/local
+```
+
+After changing the code, build and load again, then restart. The tag stays the same, so applying doesn't
+replace the pods:
+
+```powershell
+kubectl rollout restart deployment/alert-service -n csc3104
 ```
 
 ## Deploy to AWS

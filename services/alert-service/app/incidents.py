@@ -144,7 +144,8 @@ class IncidentStore:
         expr, names, vals = _set_clause({
             "updatedAt": now,
             "lastDetectedAt": detected_at,
-            "lastLocation": location,
+            # A report with no GPS fix must not wipe the last location the caregiver can see.
+            **({"lastLocation": location} if location else {}),
             "batteryPct": report.batteryPct,
             "confidence": report.confidence,
             "lastReportId": report.reportId,

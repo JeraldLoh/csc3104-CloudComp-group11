@@ -39,6 +39,24 @@ class ProblemReport(BaseModel):
     timestamp: datetime  # when the problem was detected
 
 
+class ArrivalRequest(BaseModel):
+    """POST /api/arrived, from the traveller's phone when they press "I've arrived"."""
+
+    tripId: str = Field(min_length=1, max_length=64)
+    # The traveller app's own rule (session.ts), which also allows hyphens: anything it sends must be accepted.
+    travellerId: str | None = Field(default=None, pattern=r"^U-[A-Za-z0-9-]+$", max_length=64)
+
+
+class HelpRequest(ArrivalRequest):
+    """POST /api/help, from the traveller's phone. Only tripId has to be there: an older queued request has no
+    travellerId or stepIndex, and the Check-in Service's trip context fills them in. lat and lng aren't range
+    checked, because a 422 would make the phone give up and a bad GPS reading must not lose the request."""
+
+    stepIndex: int | None = None
+    lat: float | None = None
+    lng: float | None = None
+
+
 class Disruption(BaseModel):
     """disruption.json: from the Disruption Lambda (Member 6), one message per affected trip."""
 

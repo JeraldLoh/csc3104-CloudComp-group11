@@ -1,0 +1,101 @@
+# Easy-read Service and Ollama on the local kind cluster. Build and load the image first:
+#   docker build -t easyread-service:local services/easyread-service
+#   kind load docker-image easyread-service:local --name csc3104-local
+# Ollama downloads its model (~1 GB) when its pod starts; until then "Simplify with AI" gives the standard wording.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: easyread-service
+  namespace: csc3104
+  labels: { app: easyread-service }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: easyread-service }
+  template:
+    metadata:
+      labels: { app: easyread-service }
+    spec:
+      containers:
+        - name: easyread-service
+          image: easyread-service:local
+          imagePullPolicy: IfNotPresent   # kind: use the image loaded with `kind load`
+          ports: [{ containerPort: 8000 }]
+          env:
+            - { name: OLLAMA_URL, value: "http://ollama:11434" }
+            - { name: OLLAMA_MODEL, value: "qwen2.5:1.5b" }
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+          # Ready = the process answers; it gives the standard wording while Ollama is still loading (see /ready).
+          readinessProbe:
+            httpGet: { path: /health, port: 8000 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /health, port: 8000 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: easyread-service
+  namespace: csc3104
+spec:
+  type: ClusterIP
+  selector: { app: easyread-service }
+  ports: [{ port: 8000, targetPort: 8000 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ollama
+  namespace: csc3104
+  labels: { app: ollama }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: ollama }
+  template:
+    metadata:
+      labels: { app: ollama }
+    spec:
+      containers:
+        - name: ollama
+          image: ollama/ollama:0.35.1
+          command: ["/bin/sh", "-c", "ollama serve & sleep 3 && ollama pull \"$OLLAMA_MODEL\" && wait"]
+          ports: [{ containerPort: 11434 }]
+          env:
+            - { name: OLLAMA_MODEL, value: "qwen2.5:1.5b" }
+            - { name: OLLAMA_KEEP_ALIVE, value: "30m" }
+          resources:
+            requests: { cpu: 500m, memory: 2Gi }
+            limits: { memory: 4Gi }        # no CPU limit: generation uses whatever the laptop can spare
+          volumeMounts:
+            - { name: models, mountPath: /root/.ollama }
+          startupProbe:
+            exec: { command: ["/bin/sh", "-c", "ollama list | grep -q \"$OLLAMA_MODEL\""] }
+            periodSeconds: 10
+            failureThreshold: 60
+          readinessProbe:
+            exec: { command: ["/bin/sh", "-c", "ollama list | grep -q \"$OLLAMA_MODEL\""] }
+            periodSeconds: 15
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet: { path: /, port: 11434 }
+            periodSeconds: 20
+            timeoutSeconds: 5
+      volumes:
+        - name: models
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama
+  namespace: csc3104
+spec:
+  type: ClusterIP
+  selector: { app: ollama }
+  ports: [{ port: 11434, targetPort: 11434 }]

@@ -5,6 +5,7 @@ import {
   addCaregiver,
   addSafeLocation,
   addTraveller,
+  listCaregivers,
   listSafeLocations,
   removeTraveller,
   type SafeLocation,
@@ -13,8 +14,15 @@ import {
 import { isCaregiverId, type MyTravellers } from "./useMyTravellers";
 import "./profiles.css";
 
-export function TravellersPage({ caregiverId, my }: { caregiverId: string; my: MyTravellers }) {
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+interface Props {
+  caregiverId: string;
+  my: MyTravellers;
+  /** Start with this traveller open (when opened from the dashboard). */
+  initialTravellerId?: string | null;
+}
+
+export function TravellersPage({ caregiverId, my, initialTravellerId }: Props) {
+  const [selectedId, setSelectedId] = useState<string | null>(initialTravellerId ?? null);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -124,6 +132,7 @@ interface DetailProps {
 function TravellerDetail({ caregiverId, traveller, onRemoved }: DetailProps) {
   const [confirming, setConfirming] = useState(false);
   const [locations, setLocations] = useState<SafeLocation[]>([]);
+  const [caregivers, setCaregivers] = useState<string[]>([]);
   const [place, setPlace] = useState({ name: "", lat: "", lng: "" });
   const [other, setOther] = useState("");
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
@@ -131,6 +140,8 @@ function TravellerDetail({ caregiverId, traveller, onRemoved }: DetailProps) {
 
   useEffect(() => {
     listSafeLocations(caregiverId, traveller.travellerId).then(setLocations,
+      (e) => setMessage({ ok: false, text: (e as Error).message }));
+    listCaregivers(caregiverId, traveller.travellerId).then(setCaregivers,
       (e) => setMessage({ ok: false, text: (e as Error).message }));
   }, [caregiverId, traveller.travellerId]);
 
@@ -152,6 +163,7 @@ function TravellerDetail({ caregiverId, traveller, onRemoved }: DetailProps) {
     const id = other.trim();
     try {
       await addCaregiver(caregiverId, traveller.travellerId, id);
+      setCaregivers((current) => [...new Set([...current, id])].sort());
       setMessage({ ok: true, text: `${id} can now see ${traveller.name} and their alerts.` });
       setOther("");
     } catch (err) {
@@ -182,6 +194,7 @@ function TravellerDetail({ caregiverId, traveller, onRemoved }: DetailProps) {
   }
 
   const placeValid = place.name.trim() && place.lat !== "" && place.lng !== "";
+  const others = caregivers.filter((id) => id !== caregiverId);
 
   return (
     <>
@@ -243,6 +256,11 @@ function TravellerDetail({ caregiverId, traveller, onRemoved }: DetailProps) {
       <div className="pf__section">
         <h3>Other caregivers</h3>
         <p className="pf__muted">Give another caregiver access to {traveller.name} and their alerts.</p>
+        {others.length > 0 && (
+          <ul className="pf__caregivers">
+            {others.map((id) => <li key={id} className="pf__chip">{id}</li>)}
+          </ul>
+        )}
         <form className="pf__form" onSubmit={link}>
           <input value={other} onChange={(e) => setOther(e.target.value)} placeholder="Caregiver ID, e.g. G-002" aria-label="Caregiver ID" />
           <button type="submit" className="pf__btn pf__btn--secondary" disabled={!isCaregiverId(other.trim())}>Give access</button>
@@ -256,7 +274,7 @@ function TravellerDetail({ caregiverId, traveller, onRemoved }: DetailProps) {
 
 const AVATAR_COLOURS = ["#2563eb", "#7c3aed", "#db2777", "#ea580c", "#0d9488", "#4f46e5", "#0891b2"];
 
-function Avatar({ name, large = false }: { name: string; large?: boolean }) {
+export function Avatar({ name, large = false }: { name: string; large?: boolean }) {
   const initials = name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join("") || "?";
   const colour = AVATAR_COLOURS[[...name].reduce((sum, c) => sum + c.charCodeAt(0), 0) % AVATAR_COLOURS.length];
   return <span className={`pf__avatar${large ? " pf__avatar--large" : ""}`} style={{ background: colour }} aria-hidden="true">{initials}</span>;

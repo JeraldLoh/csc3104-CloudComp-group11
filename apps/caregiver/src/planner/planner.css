@@ -1,71 +1,100 @@
 /* Everything is under .rp so it can't leak into the page that hosts the planner.
-   A host can retheme it by setting the --rp-* variables on .rp or a parent. */
+   A host can retheme it by setting the --rp-* variables on .rp or a parent.
+   The look matches the rest of the caregiver app (the Dashboard and Travellers pages): slate greys, a blue accent,
+   rounded cards with a soft shadow, segmented tabs and the same buttons, inputs and message boxes. */
 .rp {
   --rp-bg: #fff;
-  --rp-fg: #111;
-  --rp-muted: #555;
-  --rp-line: #ddd;
-  --rp-surface: #f3f4f6;
-  --rp-accent: #1d6fd6;
+  --rp-fg: #0f172a;
+  --rp-muted: #64748b;
+  --rp-label: #475569;
+  --rp-line: #e2e8f0;
+  --rp-input-line: #cbd5e1;
+  --rp-surface: #f8fafc;
+  --rp-subtle: #f1f5f9;
+  --rp-accent: #2563eb;
+  --rp-accent-hover: #1d4ed8;
   --rp-accent-fg: #fff;
-  --rp-walk: #6b7280;
-  --rp-bus: #1d6fd6;
-  --rp-train: #d6331d;
+  --rp-selected: #eff6ff;
+  --rp-selected-line: #bfdbfe;
+  --rp-walk: #94a3b8;
+  --rp-bus: #2563eb;
+  --rp-train: #dc2626;
   --rp-warn: #b45309;
-  --rp-high: #b91c1c;
+  --rp-high: #dc2626;
+  --rp-ok: #15803d;
+  --rp-ring: 0 0 0 3px rgba(37, 99, 235, 0.15);
+  --rp-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
 
   container-type: inline-size;
   display: flex;
+  flex-wrap: wrap;                     /* only used when narrow: see the end of this file */
   width: 100%;
   height: 100%;
   min-height: 420px;
   background: var(--rp-bg);
   color: var(--rp-fg);
-  font: 14px/1.4 system-ui, sans-serif;
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 .rp *, .rp *::before, .rp *::after { box-sizing: border-box; }
 
-.rp__panel { width: 380px; max-width: 45%; display: flex; flex-direction: column; min-height: 0;
+/* max-height: .rp wraps (for the narrow layout), and a wrapping row would otherwise grow to fit the panel. */
+.rp__panel { width: 400px; max-width: 45%; display: flex; flex-direction: column; min-height: 0; max-height: 100%;
   border-right: 1px solid var(--rp-line); background: var(--rp-surface); }
-.rp__body { flex: 1; min-height: 0; overflow: auto; padding: 10px 12px 16px; }
+.rp__body { flex: 1; min-height: 0; overflow: auto; padding: 14px 16px 24px; }
 .rp__body[hidden] { display: none; }
 
-/* Tabs: one job at a time instead of one long scrolling panel. */
-.rp__tabs { display: flex; flex: none; background: var(--rp-bg); border-bottom: 1px solid var(--rp-line); }
-.rp__tab { flex: 1; padding: 10px 6px; font: inherit; font-weight: 600; cursor: pointer; color: var(--rp-muted);
-  background: none; border: 0; border-bottom: 3px solid transparent; }
-.rp__tab--active { color: var(--rp-fg); border-bottom-color: var(--rp-accent); }
-.rp__count { margin-left: 6px; padding: 0 6px; font-size: 11px; font-weight: 600; border-radius: 9px;
-  color: var(--rp-fg); background: var(--rp-surface); }
+/* Tabs: one job at a time instead of one long scrolling panel. Drawn like the app's own page tabs. */
+.rp__tabs { display: flex; flex: none; gap: 2px; margin: 14px 16px 0; padding: 3px; border-radius: 9px;
+  background: var(--rp-subtle); }
+.rp__tab { flex: 1; padding: 6px 8px; white-space: nowrap; font: inherit; font-weight: 600; cursor: pointer; color: var(--rp-label);
+  background: transparent; border: 0; border-radius: 7px; transition: background-color 0.15s, color 0.15s; }
+.rp__tab:hover { color: var(--rp-fg); }
+.rp__tab--active, .rp__tab--active:hover { background: var(--rp-bg); color: var(--rp-accent-hover); box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12); }
+.rp__count { margin-left: 6px; padding: 1px 7px; font-size: 11px; font-weight: 600; border-radius: 999px;
+  color: var(--rp-muted); background: var(--rp-line); }
+.rp__tab--active .rp__count { color: var(--rp-accent-hover); background: var(--rp-selected); }
 
 /* Each part of a tab is its own card. */
-.rp__card { background: var(--rp-bg); border: 1px solid var(--rp-line); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
-.rp__card > .rp__heading { margin-bottom: 8px; }
-.rp__pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.rp__card { background: var(--rp-bg); border: 1px solid var(--rp-line); border-radius: 14px; padding: 16px 18px;
+  margin-bottom: 14px; box-shadow: var(--rp-shadow); }
+.rp__card > .rp__heading { margin-bottom: 10px; }
+.rp__pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.rp__stage { position: relative; flex: 1; min-width: 0; max-height: 100%; display: flex; }
 .rp__map { flex: 1; min-width: 0; min-height: 280px; }
 
-.rp__hint { color: var(--rp-muted); margin: 0 0 10px; font-size: 12px; }
-.rp__field { margin-top: 8px; }
-.rp label { display: block; font-weight: 600; }
-.rp input, .rp select, .rp__btn { width: 100%; padding: 6px 8px; font: inherit; margin-top: 3px; }
-.rp input, .rp select { color: inherit; background: var(--rp-bg); border: 1px solid var(--rp-line); border-radius: 4px; }
-.rp__row { display: flex; gap: 6px; margin-top: 12px; }
+.rp__hint { color: var(--rp-muted); margin: 0 0 12px; font-size: 13px; }
+.rp__field { margin-top: 10px; }
+.rp label { display: block; font-size: 13px; font-weight: 600; color: var(--rp-label); }
+.rp input, .rp select, .rp__btn { width: 100%; padding: 8px 10px; font: inherit; margin-top: 4px; }
+.rp input, .rp select { color: var(--rp-fg); background: var(--rp-bg); border: 1px solid var(--rp-input-line);
+  border-radius: 8px; transition: border-color 0.15s, box-shadow 0.15s; }
+.rp input:focus, .rp select:focus, .rp textarea:focus { outline: none; border-color: var(--rp-accent); box-shadow: var(--rp-ring); }
+.rp__row { display: flex; gap: 8px; margin-top: 14px; }
 .rp__row > * { flex: 1; }
 
-.rp__btn { cursor: pointer; background: var(--rp-accent); color: var(--rp-accent-fg); border: 0; border-radius: 4px; }
-.rp__btn--secondary { background: var(--rp-surface); color: var(--rp-fg); }
-.rp__btn:disabled { opacity: .5; cursor: default; }
+.rp__btn { cursor: pointer; font-weight: 600; background: var(--rp-accent); color: var(--rp-accent-fg);
+  border: 1px solid var(--rp-accent); border-radius: 8px; transition: background-color 0.15s; }
+.rp__btn:hover:not(:disabled) { background: var(--rp-accent-hover); }
+.rp__btn--secondary { background: var(--rp-bg); color: var(--rp-fg); border-color: var(--rp-input-line); }
+.rp__btn--secondary:hover:not(:disabled) { background: var(--rp-subtle); }
+.rp__btn--danger { background: var(--rp-high); border-color: var(--rp-high); color: #fff; }
+.rp__btn--danger:hover:not(:disabled) { background: #b91c1c; }
+.rp__btn:disabled { opacity: .45; cursor: not-allowed; }
 .rp :focus-visible { outline: 2px solid var(--rp-accent); outline-offset: 2px; }
 
-.rp__status { margin: 8px 0; min-height: 1.2em; }
+.rp__status { margin: 10px 0; min-height: 1.2em; color: var(--rp-muted); }
 .rp__status--error { color: var(--rp-high); }
 
-.rp__option { display: block; text-align: left; margin-top: 6px; padding: 6px 8px; font: inherit; width: 100%;
-  cursor: pointer; background: var(--rp-surface); color: var(--rp-fg); border: 0; border-radius: 4px; }
-.rp__option--active { background: #dbeafe; color: #111; outline: 2px solid var(--rp-bus); }
+/* A plan option, and a saved route in the list: a row you can pick. */
+.rp__option, .rp__open { display: block; text-align: left; padding: 9px 12px; font: inherit; width: 100%;
+  cursor: pointer; background: var(--rp-bg); color: var(--rp-fg); border: 1px solid var(--rp-line);
+  border-radius: 10px; transition: background-color 0.15s, border-color 0.15s; }
+.rp__option { margin-top: 8px; }
+.rp__option:hover, .rp__open:hover { background: var(--rp-surface); }
+.rp__option--active, .rp__open[aria-current="true"] { background: var(--rp-selected); border-color: var(--rp-selected-line); }
 
-.rp__steps { padding: 0; list-style: none; margin: 10px 0; }
-.rp__step { border-left: 5px solid var(--rp-walk); padding: 2px 0 6px 8px; margin-bottom: 4px; }
+.rp__steps { padding: 0; list-style: none; margin: 12px 0; }
+.rp__step { border-left: 4px solid var(--rp-walk); padding: 4px 0 8px 12px; margin-bottom: 6px; }
 .rp__step--bus { border-color: var(--rp-bus); }
 .rp__step--train { border-color: var(--rp-train); }
 /* A disrupted step: the warning is laid over the step (both in one grid cell, so the step grows to fit the
@@ -73,58 +102,143 @@
 .rp__step--disrupted { display: grid; border-color: var(--rp-high); }
 .rp__step--disrupted > * { grid-area: 1 / 1; }
 .rp__step-body { opacity: 0.25; }
-.rp__step-overlay { align-self: center; padding: 4px 8px; border: 1px solid var(--rp-high); border-radius: 4px;
-  background: rgba(254, 242, 242, 0.92); color: #7f1d1d; font-size: 12px; font-weight: 600; }
+.rp__step-overlay { align-self: center; padding: 6px 10px; border: 1px solid #fecaca; border-radius: 8px;
+  background: rgba(254, 242, 242, 0.94); color: #991b1b; font-size: 12px; font-weight: 600; }
 .rp__step-overlay::before { content: "Disruption: "; text-transform: uppercase; letter-spacing: 0.03em; }
 .rp__meta { color: var(--rp-muted); font-size: 12px; }
-.rp__live { color: #065f46; font-size: 12px; }
+.rp__live { color: var(--rp-ok); font-size: 12px; }
 
-.rp__warning { font-size: 12px; padding: 4px 6px; margin: 3px 0; border-left: 4px solid var(--rp-warn); background: #fffbeb; color: #111; }
-.rp__warning--high { border-color: var(--rp-high); background: #fef2f2; }
+/* Message boxes, as on the other pages: a tinted box with a matching border. */
+.rp__warning { font-size: 12px; padding: 6px 10px; margin: 6px 0; border: 1px solid #fde68a; border-radius: 8px;
+  background: #fffbeb; color: #92400e; }
+.rp__warning--high { border-color: #fecaca; background: #fef2f2; color: #991b1b; }
 
-.rp__btn--spaced { margin-top: 10px; }
-.rp__spaced { margin-top: 8px; }
+.rp__btn--spaced { margin-top: 12px; }
+.rp__spaced { margin-top: 10px; }
 
-.rp__heading { font-size: 15px; margin: 0 0 6px; }
+.rp__heading { font-size: 1rem; font-weight: 650; margin: 0 0 6px; }
 .rp__list { list-style: none; margin: 0; padding: 0; }
-.rp__route { margin-top: 6px; }
+.rp__route { margin-top: 8px; }
 .rp__route > .rp__item { margin-top: 0; }
 .rp__row-actions { display: flex; flex-direction: column; gap: 4px; flex: none; }
-.rp__item { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
-.rp__open { flex: 1; min-width: 0; text-align: left; padding: 6px 8px; font: inherit; cursor: pointer;
-  background: var(--rp-surface); color: var(--rp-fg); border: 0; border-radius: 4px; }
+.rp__item { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+.rp__open { flex: 1; min-width: 0; }
 .rp__open > span { display: block; }
 .rp__name { font-weight: 600; }
-.rp__meta code { font: inherit; font-family: ui-monospace, monospace; }
-.rp__easy { color: var(--rp-muted); font-size: 12px; }
+.rp__meta code { font: inherit; font-family: ui-monospace, monospace; padding: 0 4px; border-radius: 4px;
+  background: var(--rp-subtle); }
+.rp__easy { color: var(--rp-label); font-size: 12px; margin: 4px 0 0; padding-left: 18px; }
+.rp__easy > li + li { margin-top: 2px; }
+.rp__points-edit { line-height: 1.6; resize: vertical; }
+/* A step with no photo: what the caregiver could add. */
+.rp__photo-hint { margin-top: 6px; padding: 6px 10px; font-size: 12px; color: #92400e;
+  border: 1px solid #fde68a; border-radius: 8px; background: #fffbeb; }
+.rp__badge { display: block; font-size: 11px; font-weight: 600; color: var(--rp-warn); }
 .rp__badge--warn { color: var(--rp-warn); }
-.rp__open[aria-current="true"] { outline: 2px solid var(--rp-bus); }
-.rp__badge { display: block; font-size: 11px; color: var(--rp-warn); }
-.rp__badge--ok { color: #065f46; }
-.rp__btn--small { width: auto; margin-top: 0; }
-.rp__btn--danger { background: var(--rp-high); color: #fff; }
-.rp__confirm { margin-top: 6px; padding: 8px; border-left: 4px solid var(--rp-high); background: #fef2f2; color: #111; font-size: 13px; }
-.rp__confirm .rp__row { margin-top: 8px; }
+.rp__badge--ok { color: var(--rp-ok); }
+.rp__btn--small { width: auto; margin-top: 0; padding: 5px 10px; font-size: 12px; }
+.rp__confirm { margin-top: 8px; padding: 12px 14px; border: 1px solid #fecaca; border-radius: 10px;
+  background: #fef2f2; color: #7f1d1d; font-size: 13px; }
+.rp__confirm .rp__row { margin-top: 10px; }
 .rp__opened-head { display: flex; gap: 8px; align-items: flex-start; justify-content: space-between; }
 .rp__opened-head .rp__heading { margin: 0; }
 .rp__opened-actions { display: flex; gap: 6px; flex: none; }
 .rp__opened .rp__steps { margin-bottom: 6px; }
 
-.rp__editor { margin-top: 8px; }
-.rp__editor textarea { width: 100%; margin-top: 3px; padding: 6px 8px; font: inherit; resize: vertical;
-  color: inherit; background: var(--rp-bg); border: 1px solid var(--rp-line); border-radius: 4px; }
-.rp__editor .rp__warning { margin-bottom: 8px; }
-.rp__trip { margin-top: 6px; padding-bottom: 6px; border-bottom: 1px solid var(--rp-line); }
+.rp__editor { margin-top: 10px; }
+.rp__editor textarea { width: 100%; margin-top: 4px; padding: 8px 10px; font: inherit; resize: vertical;
+  color: var(--rp-fg); background: var(--rp-bg); border: 1px solid var(--rp-input-line); border-radius: 8px;
+  transition: border-color 0.15s, box-shadow 0.15s; }
+.rp__editor .rp__warning { margin-bottom: 10px; }
+/* Step photos: where the step ends (Street View or the caregiver's own). */
+.rp__photo { display: block; width: 100%; max-width: 320px; aspect-ratio: 16 / 10; object-fit: cover;
+  margin-top: 6px; border-radius: 10px; border: 1px solid var(--rp-line); background: var(--rp-subtle); }
+.rp__photo-edit { margin-top: 6px; }
+.rp__landmarks { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 6px; }
+.rp__landmark { flex: 1 1 140px; max-width: 200px; margin: 0; }
+.rp__landmark .rp__photo { max-width: 100%; }
+.rp__photo-edit .rp__row { margin-top: 6px; }
+.rp__file { display: inline-block; }
+.rp__file input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.rp__file:focus-within { outline: 2px solid var(--rp-accent); outline-offset: 2px; }
+.rp__trip { margin-top: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--rp-line); }
 .rp__trip:last-child { border-bottom: 0; }
 .rp__trip .rp__item { margin-top: 0; }
 .rp__trip-text { flex: 1; min-width: 0; }
 .rp__trip-text > span { display: block; }
-.rp__link { display: flex; gap: 6px; align-items: center; margin-top: 4px; }
+.rp__link { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
 .rp__link input { margin-top: 0; font-size: 12px; }
 
-/* Narrow room (a phone, or a small slot in a dashboard): map on top, panel below. */
+/* The editor's steps: the planned instruction is the card's title, the box under it what the traveller reads. */
+.rp__step-card { position: relative; margin-top: 12px; padding: 12px 14px 14px; border: 1px solid var(--rp-line);
+  border-left: 4px solid var(--rp-walk); border-radius: 12px; background: var(--rp-bg); box-shadow: var(--rp-shadow);
+  transition: border-color 0.15s, box-shadow 0.15s; }
+.rp__step-card--bus { border-left-color: var(--rp-bus); }
+.rp__step-card--train { border-left-color: var(--rp-train); }
+.rp__step-card[aria-current="step"] { box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15); }
+.rp__step-head { display: flex; align-items: flex-start; gap: 8px; }
+.rp__step-no { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px;
+  border-radius: 50%; background: var(--rp-subtle); color: var(--rp-label); font-size: 12px; font-weight: 700; }
+.rp__chip { flex: none; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; letter-spacing: 0.02em;
+  text-transform: uppercase; color: #fff; background: var(--rp-walk); }
+.rp__chip--bus { background: var(--rp-bus); }
+.rp__chip--train { background: var(--rp-train); }
+.rp__step-title { min-width: 0; font-weight: 600; line-height: 1.35; }
+.rp .rp__step-label { margin-top: 10px; font-size: 12px; font-weight: 600; color: var(--rp-muted); }
+/* The photo's buttons sit on its corner when there is a photo, and under the hint when there isn't. */
+.rp__photo-frame { position: relative; max-width: 320px; }
+.rp__photo-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.rp__photo-frame:has(> img) .rp__photo-actions { position: absolute; right: 8px; bottom: 8px; margin: 0; }
+.rp__photo-frame:has(> img) .rp__photo-actions .rp__btn { box-shadow: 0 1px 3px rgba(15, 23, 42, 0.25); }
+
+/* The phone preview, over the map's top right corner (or in place when there is no map). */
+.rp__preview-slot { position: absolute; top: 12px; right: 12px; bottom: 12px; z-index: 1000; display: flex;
+  flex-direction: column; align-items: flex-end; pointer-events: none; }
+.rp__preview { display: flex; flex-direction: column; align-items: center; gap: 8px; max-height: 100%; pointer-events: auto; }
+.rp__editor .rp__preview { margin: 12px 0; }
+.rp__preview-nav { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 10px;
+  background: var(--rp-bg); box-shadow: 0 1px 3px rgba(15, 23, 42, 0.18); }
+.rp__preview-nav .rp__btn { min-width: 30px; }
+.rp__phone { width: 270px; min-height: 0; flex: 0 1 auto; display: flex; padding: 10px; border-radius: 36px;
+  background: #0f172a; box-shadow: 0 12px 32px -12px rgba(15, 23, 42, 0.6); }
+.rp__phone-screen { flex: 1; min-height: 0; max-height: 560px; overflow: auto; display: flex; flex-direction: column; gap: 10px;
+  padding: 26px 10px 10px; border-radius: 27px; background: #eef2f5; color: #10213a;
+  font-family: "Atkinson Hyperlegible", system-ui, sans-serif; font-size: 13px; line-height: 1.45; }
+
+/* Inside the phone: the traveller app's own look (apps/traveller, styles.css), at phone scale. */
+.tv-sign { --tv-band: #0e6f86; overflow: hidden; border-radius: 14px; background: #fff;
+  box-shadow: 0 1px 0 #c9d3dd, 0 8px 24px -16px rgba(16, 33, 58, 0.45); }
+.tv-sign--bus { --tv-band: #17673a; }
+.tv-sign--train { --tv-band: #6b21a8; }
+.tv-sign__band { display: flex; align-items: center; gap: 8px; padding: 10px 12px; background: var(--tv-band); color: #fff; }
+.tv-sign__mode { font-size: 1.4em; font-weight: 700; }
+.tv-sign__count { margin-left: auto; font-size: 0.85em; opacity: 0.9; }
+.tv-sign__progress { display: flex; gap: 3px; margin: 0; padding: 0 12px; list-style: none; background: var(--tv-band); }
+.tv-sign__progress li { flex: 1; height: 4px; border-radius: 2px 2px 0 0; background: rgba(255, 255, 255, 0.28); }
+.tv-sign__progress li.done { background: rgba(255, 255, 255, 0.7); }
+.tv-sign__progress li.now { background: #fff; }
+.tv-sign__body { display: flex; flex-direction: column; gap: 10px; padding: 14px 12px 8px; }
+.tv-sign__photo { width: 100%; aspect-ratio: 16 / 10; object-fit: contain; border-radius: 9px; background: #eef2f5; }
+.tv-sign__text { margin: 0; font-size: 1.45em; line-height: 1.28; font-weight: 700; }
+.tv-sign__text--auto { font-size: 1em; font-weight: 400; font-style: italic; color: #3d4f68; }
+.tv-sign__backup { margin: 0; padding: 7px 9px; border-radius: 8px; background: #eef2f5; color: #3d4f68; font-size: 0.9em; }
+.tv-btn { display: flex; align-items: center; justify-content: center; min-height: 40px; border-radius: 12px;
+  font-weight: 700; font-size: 1.05em; user-select: none; }
+.tv-btn--primary { background: #1d4ed8; color: #fff; }
+.tv-btn--quiet { justify-content: flex-start; min-height: 0; color: #1d4ed8; font-size: 0.95em; }
+.tv-btn--help { background: #c81e1e; color: #fff; min-height: 48px; font-size: 1.2em; }
+.rp__phone-help { margin-top: auto; padding-top: 10px; border-top: 1px solid #c9d3dd; }
+
+/* Narrow room (a phone, or a small slot in a dashboard): map on top, panel below. A container query can't
+   restyle .rp itself (it is the container), so the two wrap onto their own lines and swap order instead. */
 @container (max-width: 700px) {
-  .rp { flex-direction: column-reverse; }
-  .rp__panel { width: 100%; max-width: none; border-right: 0; border-top: 1px solid var(--rp-line); max-height: 55%; }
-  .rp__map { flex: 1 1 280px; }
+  .rp__stage { order: 1; flex: 0 0 100%; height: 45%; }
+  .rp__panel { order: 2; flex: 0 0 100%; width: 100%; max-width: none; height: 55%; border-right: 0;
+    border-top: 1px solid var(--rp-line); }
+  /* The map is a strip here: the phone goes under it instead of on top, and the two scroll together. */
+  .rp__stage { flex-direction: column; overflow: auto; }
+  .rp__stage > .rp__map { flex: none; height: 100%; min-height: 220px; }
+  .rp__preview-slot { position: static; align-items: center; padding: 12px; }
+  .rp__preview-slot:empty { display: none; }
+  .rp__phone { width: 240px; }
 }

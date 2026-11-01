@@ -3,13 +3,28 @@
 // the planner saves a route) and hands the result to <SavedRoutes> and <RoutePlanner viewing>.
 import { useEffect, useRef, useState } from "react";
 import { ApiError, type SavedRoutesApi } from "../journey/api";
-import type { RouteUpdate, SavedRoute } from "../journey/types";
+import type { EasyReadSuggestion, Landmark, RouteUpdate, SavedRoute, UploadedPhoto } from "../journey/types";
 import { failure, info, message, type Status } from "./status";
 
-/** What the editor can change. `easyRead[i]`: undefined keeps step i as it is, null clears it (the service fills in its own wording). */
+/**
+ * What the editor can change. `easyRead[i]`: undefined keeps step i as it is, null clears it (the service fills in
+ * its own wording). `photoKey[i]`: undefined keeps the photo, a key (from uploadPhoto) replaces it, null clears it
+ * (the service adds a Street View photo again when there is one). `landmarks[i]`: undefined keeps them, a list
+ * replaces them (e.g. the AI's, with their photos).
+ */
 export interface RouteChanges {
   name: string;
   easyRead: (string | null | undefined)[];
+  photoKey?: (string | null | undefined)[];
+  landmarks?: (Landmark[] | undefined)[];
+}
+
+/** The editor's limit for one step's wording until the service says (GET /api/easy-read/limits). */
+const FALLBACK_MAX_EASY_READ = 300;
+
+/** AI wording for the open route, waiting in the editor for the caregiver to check. */
+export interface PendingSuggestion extends EasyReadSuggestion {
+  routeId: string;
 }
 
 /**
@@ -34,6 +49,9 @@ export function useSavedRoutes(api: SavedRoutesApi, travellerId: string, reloadK
   const [loaded, setLoaded] = useState(false);
   /** Someone saved the open route since it was opened, so saving over it was refused. Reload it. */
   const [outOfDate, setOutOfDate] = useState(false);
+  /** The route the AI is rewording right now, and its answer once it comes (cleared by opening, closing or saving). */
+  const [suggestingId, setSuggestingId] = useState<string | null>(null);
+  const [suggestion, setSuggestion] = useState<PendingSuggestion | null>(null);
 
   const listSeq = useRef(0);   // an answer for an older request (or another traveller) is dropped
   const openSeq = useRef(0);
@@ -59,6 +77,12 @@ export function useSavedRoutes(api: SavedRoutesApi, travellerId: string, reloadK
     }
   }
 
+  // The longest wording a step may have, as the service says (until it answers, or if it can't, its usual 300).
+  const [maxEasyRead, setMaxEasyRead] = useState(FALLBACK_MAX_EASY_READ);
+  useEffect(() => {
+    latestApi.current.getEasyReadLimits?.().then((l) => setMaxEasyRead(l.maxChars), () => undefined);
+  }, [reloadKey]);
+
   // A different traveller (or a different login, via reloadKey) is a different list.
   useEffect(() => {
     openSeq.current++;
@@ -70,16 +94,19 @@ export function useSavedRoutes(api: SavedRoutesApi, travellerId: string, reloadK
     void refresh();
   }, [traveller, reloadKey]);
 
-  async function open(routeId: string) {
+  async function open(routeId: string): Promise<boolean> {
     const mine = ++openSeq.current;
+    setSuggestion(null);
     try {
       const route = await latestApi.current.getRoute(routeId);
-      if (openSeq.current !== mine) return;
+      if (openSeq.current !== mine) return false;
       setOpened({ ...route });   // always a new object: <RoutePlanner viewing> shows each new one, even the same route again
       setOutOfDate(false);
       setStatus(info(""));   // the opened route is on screen; no need to say so as well
+      return true;
     } catch (e) {
       if (openSeq.current === mine) setStatus(failure(message(e)));
+      return false;
     }
   }
 
@@ -87,6 +114,44 @@ export function useSavedRoutes(api: SavedRoutesApi, travellerId: string, reloadK
     openSeq.current++;
     setOpened(null);
     setOutOfDate(false);
+    setSuggestion(null);
+  }
+
+  /**
+   * Opens the route and asks the AI for simpler wording. The answer waits in `suggestion` for the editor; nothing
+   * is saved until the caregiver saves it there. If the AI isn't available (the service answers with its standard
+   * wording, provider "template"), the editor doesn't open: the caregiver is told to try again instead.
+   */
+  async function suggest(routeId: string) {
+    setSuggestingId(routeId);
+    try {
+      if (!(await open(routeId))) return;
+      setStatus(info("Simplifying the wording with AI. This can take up to a minute..."));
+      const mine = openSeq.current;     // another route opened meanwhile: drop this answer
+      const answer = await latestApi.current.suggestEasyRead(routeId);
+      if (openSeq.current !== mine) return;
+      if (answer.provider === "template") {
+        setStatus(failure("Simplify with AI didn't work: the AI isn't available right now. Nothing has changed. Try again in a minute."));
+        return;
+      }
+      setSuggestion({ ...answer, routeId });
+      setStatus(info("Check the AI's wording for each step, change anything you like, then save."));
+    } catch (e) {
+      setStatus(failure(message(e)));
+    } finally {
+      setSuggestingId(null);
+    }
+  }
+
+  /** Stores a photo for a step of the open route; null (with the reason in `status`) if it was refused. */
+  async function uploadPhoto(photo: File): Promise<UploadedPhoto | null> {
+    if (!opened) return null;
+    try {
+      return await latestApi.current.uploadStepPhoto(opened.routeId, photo);
+    } catch (e) {
+      setStatus(failure(message(e)));
+      return null;
+    }
   }
 
   /**
@@ -102,7 +167,12 @@ export function useSavedRoutes(api: SavedRoutesApi, travellerId: string, reloadK
       name: changes.name.trim() || base.name,
       origin: base.origin,
       destination: base.destination,
-      steps: base.steps.map((step, i) => ({ ...step, easyRead: changes.easyRead[i] === undefined ? step.easyRead : changes.easyRead[i] })),
+      steps: base.steps.map((step, i) => ({
+        ...step,
+        easyRead: changes.easyRead[i] === undefined ? step.easyRead : changes.easyRead[i],
+        photoKey: changes.photoKey?.[i] === undefined ? step.photoKey : changes.photoKey[i],
+        landmarks: changes.landmarks?.[i] === undefined ? step.landmarks : changes.landmarks[i],
+      })),
       path: base.path,
       version: base.version,
     };
@@ -110,6 +180,7 @@ export function useSavedRoutes(api: SavedRoutesApi, travellerId: string, reloadK
     try {
       const route = await latestApi.current.updateRoute(base.routeId, body);
       setOpened({ ...route });
+      setSuggestion(null);
       setOutOfDate(false);
       setRoutes((rs) => rs.map((r) => (r.routeId === route.routeId ? route : r)));
       setStatus(info(`Saved version ${route.version} of ${route.name}. It needs approving again.`));
@@ -155,7 +226,11 @@ export function useSavedRoutes(api: SavedRoutesApi, travellerId: string, reloadK
     }
   }
 
-  return { traveller, routes, loaded, loading, status, opened, approvingId, deletingId, saving, outOfDate, refresh, open, close, approve, update, remove };
+  return {
+    traveller, routes, loaded, loading, status, opened, approvingId, deletingId, saving, outOfDate, suggestingId, suggestion,
+    maxEasyRead,
+    refresh, open, close, approve, update, remove, suggest, uploadPhoto,
+  };
 }
 
 export type SavedRoutesState = ReturnType<typeof useSavedRoutes>;

@@ -29,6 +29,16 @@ export interface AlertEvent {
   sentAt: string;
 }
 
+/** arrival-event.json: also sent by GET /api/stream, when a traveller presses "I've arrived". */
+export interface ArrivalEvent {
+  event: "trip.arrived";
+  travellerId: string;
+  travellerName: string;
+  tripId: string;
+  arrivedAt: string;
+  sentAt: string;
+}
+
 export type IncidentMap = Record<string, Incident>;
 
 const PROBLEM_TITLES: Record<string, string> = {
@@ -44,6 +54,15 @@ const PROBLEM_TITLES: Record<string, string> = {
 
 export function problemTitle(problemType: string): string {
   return PROBLEM_TITLES[problemType] ?? PROBLEM_TITLES.unknown;
+}
+
+/** The time today, or the day and time for an older alert. */
+export function formatTime(iso: string): string {
+  const d = new Date(iso);
+  const sameDay = d.toDateString() === new Date().toDateString();
+  return sameDay
+    ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    : d.toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 }
 
 /** Incidents loaded with GET /api/incidents. */

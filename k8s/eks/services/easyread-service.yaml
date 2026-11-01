@@ -1,0 +1,111 @@
+# Easy-read Service (Member 6) and the Ollama server it calls, for the caregiver app's "Simplify with AI" button.
+# Deploy with `deploy.ps1 -Service easyread-service` / `deploy.sh --service easyread-service`: it builds
+# services/easyread-service, fills in the __PLACEHOLDERS__ (scripts/README.md) and applies both Deployments.
+# Only the easyread-service Deployment is restarted on each deploy (it has the service's name), so Ollama keeps its
+# downloaded model.
+#
+# journey-service calls http://easyread-service:8000 (EASYREAD_URL). Nothing waits for Ollama: while it is still
+# downloading the model (several minutes on a new pod), the button gives the standard wording.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: easyread-service
+  namespace: __NAMESPACE__
+  labels: { app: easyread-service, app.kubernetes.io/part-of: easyread-service }
+spec:
+  replicas: 1   # only a caregiver's button calls it, and the real work happens in Ollama
+  selector:
+    matchLabels: { app: easyread-service }
+  template:
+    metadata:
+      labels: { app: easyread-service, app.kubernetes.io/part-of: easyread-service }
+    spec:
+      serviceAccountName: cloud-fastapi   # same service account as the other services (no AWS calls are made)
+      containers:
+        - name: easyread-service
+          image: __IMAGE__
+          ports: [{ containerPort: 8000 }]
+          env:
+            - { name: OLLAMA_URL, value: "http://ollama:11434" }
+            - { name: OLLAMA_MODEL, value: "qwen2.5:1.5b" }
+          # Fargate sizes the pod from requests (minimum 0.25 vCPU / 0.5 GB).
+          resources:
+            requests: { cpu: 250m, memory: 512Mi }
+            limits: { cpu: 250m, memory: 512Mi }
+          # Ready = the process answers. Not /ready (which also needs Ollama's model): /internal/easyread always
+          # answers with usable wording, and the deploy script's rollout wait must not hang on the model download.
+          readinessProbe:
+            httpGet: { path: /health, port: 8000 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /health, port: 8000 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: easyread-service
+  namespace: __NAMESPACE__
+spec:
+  type: ClusterIP
+  selector: { app: easyread-service }
+  ports: [{ port: 8000, targetPort: 8000 }]
+---
+# Ollama on CPU (no GPU nodes). About 2 vCPU / 4 GB on Fargate (~USD 0.12/hour while it runs). The model is pulled
+# into an emptyDir when the pod starts, so a new pod downloads it again (~1 GB).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ollama
+  namespace: __NAMESPACE__
+  labels: { app: ollama, app.kubernetes.io/part-of: easyread-service }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: ollama }
+  template:
+    metadata:
+      labels: { app: ollama, app.kubernetes.io/part-of: easyread-service }
+    spec:
+      containers:
+        - name: ollama
+          image: ollama/ollama:0.35.1
+          command: ["/bin/sh", "-c", "ollama serve & sleep 3 && ollama pull \"$OLLAMA_MODEL\" && wait"]
+          ports: [{ containerPort: 11434 }]
+          env:
+            - { name: OLLAMA_MODEL, value: "qwen2.5:1.5b" }
+            - { name: OLLAMA_KEEP_ALIVE, value: "30m" }   # keep the model loaded between requests
+          resources:
+            requests: { cpu: "2", memory: 4Gi }
+            limits: { cpu: "2", memory: 4Gi }
+          volumeMounts:
+            - { name: models, mountPath: /root/.ollama }
+          # Up to 10 minutes to download the model before Kubernetes gives up on the pod.
+          startupProbe:
+            exec: { command: ["/bin/sh", "-c", "ollama list | grep -q \"$OLLAMA_MODEL\""] }
+            periodSeconds: 10
+            failureThreshold: 60
+          readinessProbe:
+            exec: { command: ["/bin/sh", "-c", "ollama list | grep -q \"$OLLAMA_MODEL\""] }
+            periodSeconds: 15
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet: { path: /, port: 11434 }   # "Ollama is running"
+            periodSeconds: 20
+            timeoutSeconds: 5
+      volumes:
+        - name: models
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama
+  namespace: __NAMESPACE__
+spec:
+  type: ClusterIP
+  selector: { app: ollama }
+  ports: [{ port: 11434, targetPort: 11434 }]

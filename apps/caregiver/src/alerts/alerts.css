@@ -1,5 +1,5 @@
-/* Alerts page (issues 5.1, 5.3). Every class starts with "al" so nothing clashes with the planner (rp…),
-   the travellers page (pf…) or the shell (shell…). */
+/* A traveller's alerts on the dashboard (issues 5.1, 5.3). Every class starts with "al" so nothing clashes
+   with the planner (rp…), the dashboard and travellers pages (pf…) or the shell (shell…). */
 .al {
   --al-text: #0f172a;
   --al-muted: #64748b;
@@ -19,6 +19,19 @@
   background: var(--al-bg);
   color: var(--al-text);
   font-size: 15px;
+}
+
+/* Inside the dashboard, which does the scrolling and the background. */
+.al--embedded {
+  height: auto;
+  overflow: visible;
+  background: none;
+}
+
+.al__list-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 650;
 }
 
 .al__inner {

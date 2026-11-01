@@ -183,7 +183,7 @@ the other options to compare.
 
 **Point out:**
 - Walking is a dashed grey line, buses blue, trains red. Click a step marker on the map for its instruction.
-- Each step is in plain words ("Get on and tap your card. Get off at ... after 5 stops").
+- Each step is in plain words, as a checklist ("Wait for bus number 45. Tap your card. Count 5 stops. Get off at ...").
 - Under bus steps, the next bus times from LTA (`Next bus 22 at stop 54009: 10 min (SEA), 25 min`). With saved
   data these were recorded earlier and shifted to now.
 - **Sort by** (*Least walking*, *Least crowded*, *Fastest*) and **Travel by** (*Bus only*, *Train only*):
@@ -272,6 +272,21 @@ will see.
    them anyway: a trip is pinned to the version it was made with, so a journey already under way can never change
    under the traveller.)
 5. **Approve** version 2 and press **New trip** again. Start it. This is the trip Demo D needs.
+
+**Simpler wording with AI and step photos** (needs the `ollama` container to have finished pulling its model:
+`docker compose -f services/journey-service/compose.journey.yaml logs ollama`; photos need `GOOGLE_MAPS_API_KEY` in
+`.env`):
+
+6. On the **Saved routes** tab, press **Simplify with AI** on the route. It says *Simplifying...* for a few seconds
+   to a minute, then the editor opens with shorter sentences, e.g. *Wait for bus number 45. Get on the bus. Tap your
+   card.* Bus numbers, stop names and stop counts are always kept: a step the AI got wrong shows the standard wording
+   instead, marked as such. Change any step by hand, then **Save changes** (a new version, approve it again).
+7. Each walk and bus step shows a Street View photo of where it ends. In the editor press **Replace photo** on one
+   step and pick your own picture; save, and the route shows it. **Use Street View photo** brings the automatic one
+   back on the next save.
+8. To show it fails safely: `docker compose -f services/journey-service/compose.journey.yaml stop ollama`, then
+   press **Simplify with AI** again. *You should see:* "The AI isn't available right now, so the editor shows the
+   standard wording." Planning, saving and trips carry on as normal.
 
 **Two caregivers at once.** Open **http://localhost:5174** in a second browser tab. In both tabs open the same
 saved route and press **Edit**. Save a change in tab 1. Now save a different change in tab 2:
@@ -547,10 +562,10 @@ branch**, so it is not part of this demo. To show it, check that branch out in a
 `npm run dev` (port 5173), and open the **traveller link** from step 6 of Demo B. Its dev server forwards
 `/api/trips` to port 8006, so it reads the same pack. Be ready for two honest caveats:
 
-- The pack builder is partly done: the pack has every step's easy-read wording, the path and the standard messages,
-  but the traveller and caregiver **names and phone are null**, and **photos and audio are not produced yet**
-  (`photoUrl` / `audioUrl` are null). Check that the traveller app accepts this before
-  promising it works.
+- The pack builder is partly done: the pack has every step's easy-read wording, photo link (`photoUrl`, valid for
+  7 days; null for train steps and where Street View has nothing), the path and the standard messages, but the
+  traveller and caregiver **names and phone are null**, and **audio is not produced yet** (`audioUrl` is null). Check
+  that the traveller app accepts this before promising it works.
 - Starting the trip from the traveller's phone calls the same Start endpoint the caregiver's **Start** button
   does, and is safe to repeat.
 
@@ -595,5 +610,7 @@ laptop and the service has no public address. That needs the Ingress the team ha
 - **A public AWS address:** on AWS the service is reached through a port-forward (section 2b). There is no Ingress or
   HTTPS yet, so the traveller's phone and an Amplify-hosted app can't reach it.
 - **AI wording:** the plain-language steps come from fixed rules, not an AI, so they can't make facts up. The caregiver can rewrite any step by hand (Demo C).
-- **Replacing a route's steps with a new plan**, and a **live dashboard of travellers**: not built yet. Today a different journey is a new route.
+- **Replacing a route's steps with a new plan**: not built yet. Today a different journey is a new route.
+- **The Dashboard and Travellers tabs:** these need the Alert Service, which this demo doesn't start
+  (`services/alert-service/README.md`).
 - **Names in the route pack** (traveller, caregiver) are empty until the Profiles service exists.

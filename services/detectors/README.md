@@ -44,7 +44,7 @@ One image for all four detectors; `DETECTOR_ID` picks which one runs. Deployment
 HPA 2-4 replicas at 60% CPU, preferred pod anti-affinity across nodes and zones) and one tiny
 kustomization per detector that names it and sets `DETECTOR_ID`. The Services are
 `detector-route`, `-heading`, `-dwell` and `-progress`. They are not part of
-`kubectl apply -k k8s/local` (so teammates without the image aren't affected, like `alert-service`); apply them
+`kubectl apply -k k8s/local` (so teammates without the image aren't affected); apply them
 with `kubectl apply -k k8s/local/detectors`. They read Redis from `cloud-redis`, so apply `k8s/local` first.
 
 ```bash

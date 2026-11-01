@@ -6,7 +6,9 @@ they're linked to (caregiver-links). Anyone else gets "not found", so they can't
 With AUTH_MODE=off nothing is checked, except that profiles need to know which caregiver is asking.
 """
 import logging
+import secrets
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
 import boto3
 import redis
@@ -22,8 +24,9 @@ from app.config import settings
 from app.disruptions import DisruptionConsumer
 from app.errors import ApiError
 from app.events import EVENT_FOR_OUTCOME, AlertPublisher
-from app.incidents import IncidentStore
-from app.models import NewLink, NewSafeLocation, NewTraveller, ProblemReport
+from app.incidents import IncidentStore, now_iso
+from app.live import ARRIVED_TTL_S, LiveTrips, arrived_key
+from app.models import ArrivalRequest, HelpRequest, Location, NewLink, NewSafeLocation, NewTraveller, ProblemReport
 from app.profiles import ProfileStore
 from app.stream import event_stream
 
@@ -36,6 +39,7 @@ dynamodb = boto3.client("dynamodb", region_name=settings.aws_region, endpoint_ur
 sqs = boto3.client("sqs", region_name=settings.aws_region, endpoint_url=settings.aws_endpoint_url)
 incidents = IncidentStore(dynamodb)
 profiles = ProfileStore(dynamodb)
+live = LiveTrips(r, settings.live_window_s)
 publisher = AlertPublisher(r, dynamodb, settings.travellers_table)
 authenticator = Authenticator(settings)  # a bad AUTH_MODE / Cognito setting fails here, at startup
 
@@ -151,6 +155,67 @@ def receive_problem(report: ProblemReport):
     return {"incidentId": incident["incidentId"], "created": outcome == "created"}
 
 
+def _trip_context(trip_id: str) -> dict:
+    """What the Check-in Service last saw of this trip (contracts/redis-keys.md). Empty if there's been no
+    check-in yet or Redis is down, which must not stop a request for help."""
+    try:
+        return {k.decode(): v.decode() for k, v in r.hgetall(f"trip:{trip_id}:context").items()}
+    except redis.RedisError as e:
+        log.warning("can't read the context of trip %s: %s", trip_id, e)
+        return {}
+
+
+def _traveller_on_trip(body: ArrivalRequest, request: Request) -> tuple[str, dict]:
+    """Whose trip a request from a phone is about, and the trip's context.
+
+    Travellers have no login until issue 1.5, and a phone treats a refusal as final and drops the request, so
+    only Cognito checks who is asking."""
+    who = authenticator.authenticate(request.headers) if settings.auth_mode == "cognito" else None
+    context = _trip_context(body.tripId)
+    traveller_id = context.get("travellerId") or body.travellerId  # the context comes from the trip's own check-ins
+    if not traveller_id:
+        raise ApiError(404, "not_found", f"Trip {body.tripId} not found")
+    if who and (who.is_caregiver or who.id != traveller_id):
+        raise Forbidden("Only the traveller on this trip can do that.")
+    return traveller_id, context
+
+
+@app.post("/api/arrived")
+def traveller_arrived(body: ArrivalRequest, request: Request):
+    """The traveller pressed "I've arrived". Not an incident: nothing is wrong. Safe to retry: only the first call
+    tells caregivers, and a dashboard that wasn't open still sees it through /api/travellers/live."""
+    traveller_id, _ = _traveller_on_trip(body, request)
+    key, now = arrived_key(body.tripId), now_iso()
+    try:
+        first = r.set(key, now, nx=True, ex=ARRIVED_TTL_S)
+        arrived_at = now if first else r.get(key).decode()
+    except redis.RedisError as e:
+        log.warning("can't record the arrival of trip %s: %s", body.tripId, e)
+        raise ApiError(503, "unavailable", "Can't record the arrival right now")  # a 5xx makes the phone try again
+    if first:
+        log.info("%s arrived (trip %s)", traveller_id, body.tripId)
+        publisher.publish_arrival(traveller_id, body.tripId, arrived_at)
+    return {"tripId": body.tripId, "arrivedAt": arrived_at}
+
+
+@app.post("/api/help")
+def ask_for_help(body: HelpRequest, request: Request):
+    """The traveller pressed Help: an urgent incident, one per trip and step however often they press it.
+    A refused request for help is worse than a false alarm: see _traveller_on_trip."""
+    traveller_id, context = _traveller_on_trip(body, request)
+
+    step = body.stepIndex
+    if step is None:
+        step = context.get("stepIndex") or None  # stored as "" when the check-in didn't say
+    report = ProblemReport(reportId=f"help-{secrets.token_hex(4)}", source="traveller", travellerId=traveller_id,
+                           tripId=body.tripId, stepIndex=step, problemType="help_requested",
+                           location=Location(lat=body.lat, lng=body.lng), timestamp=datetime.now(timezone.utc))
+    incident, outcome = incidents.record_problem(report)
+    log.info("%s %s (help pressed)", outcome, incident["incidentId"])
+    publisher.publish(EVENT_FOR_OUTCOME[outcome], incident)
+    return {"incidentId": incident["incidentId"]}
+
+
 @app.get("/api/incidents")
 def list_incidents(travellerId: str, limit: int = Query(50, ge=1, le=200), who: Caller | None = Depends(caller)):
     """A traveller's incidents, newest first."""
@@ -214,6 +279,17 @@ def my_travellers(who: Caller | None = Depends(caller)):
     return profiles.linked_travellers(require_caregiver(who, "list travellers").id)
 
 
+@app.get("/api/travellers/live")
+def live_locations(who: Caller | None = Depends(caller)):
+    """Where the calling caregiver's travellers are now: {travellerId: trip}, for those with a recent check-in."""
+    me = require_caregiver(who, "see where travellers are")
+    try:
+        return live.for_travellers(profiles.linked_traveller_ids(me.id))
+    except redis.RedisError as e:
+        log.warning("can't read live locations: %s", e)
+        raise ApiError(503, "unavailable", "Can't read live locations right now")
+
+
 @app.post("/api/travellers", status_code=201)
 def add_traveller(body: NewTraveller, who: Caller | None = Depends(caller)):
     """A new traveller, linked to the caregiver who adds them."""
@@ -237,6 +313,13 @@ def add_link(body: NewLink, who: Caller | None = Depends(caller)):
     """Add another caregiver to a traveller. The caller must already be linked to that traveller."""
     me = require_caregiver(who, "link caregivers")
     return profiles.add_link(me.id, body.travellerId, body.caregiverId)
+
+
+@app.get("/api/travellers/{travellerId}/caregivers")
+def list_caregivers(travellerId: str, who: Caller | None = Depends(caller)):
+    """Who looks after this traveller. Only a caregiver who is linked to them can ask."""
+    check_access(who, travellerId)
+    return sorted(profiles.caregivers_of(travellerId))
 
 
 @app.get("/api/travellers/{travellerId}/safe-locations")

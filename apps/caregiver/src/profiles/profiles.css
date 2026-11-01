@@ -1,5 +1,5 @@
-/* Travellers page (issue 5.1). Every class starts with "pf" so nothing clashes with the planner (rp…),
-   the alerts (al…) or the shell (shell…). Colours match the alerts page. */
+/* Dashboard and Travellers pages (issue 5.1). Every class starts with "pf" so nothing clashes with the
+   planner (rp…), the alerts (al…) or the shell (shell…). Colours match the alerts. */
 .pf {
   --pf-text: #0f172a;
   --pf-muted: #64748b;
@@ -393,8 +393,281 @@
   color: var(--pf-text);
 }
 
+.pf__placeholder-action {
+  margin-top: 16px;
+}
+
 .pf code {
   padding: 1px 6px;
   border-radius: 4px;
   background: #f1f5f9;
+}
+
+.pf__caregivers {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0 0;
+  padding: 0;
+}
+
+.pf__caregivers .pf__chip {
+  padding: 2px 10px;
+}
+
+/* --- dashboard ---------------------------------------------------------------------- */
+.pf__head--split {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.pf__msg--top {
+  margin: 0 0 16px;
+}
+
+.pf__arrival {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.pf__live {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border: 1px solid #fde68a;
+  border-radius: 999px;
+  background: #fffbeb;
+  color: #b45309;
+  font-size: 0.85rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.pf__live--live {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  color: #15803d;
+}
+
+.pf__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.pf__tiles {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0 0 20px;
+}
+
+.pf__tile {
+  display: flex;
+  flex-direction: column-reverse;
+  justify-content: flex-end;
+  padding: 12px 16px;
+  border: 1px solid var(--pf-border);
+  border-radius: 12px;
+  background: var(--pf-surface);
+}
+
+.pf__tile dt {
+  color: var(--pf-muted);
+  font-size: 0.85rem;
+}
+
+.pf__tile dd {
+  margin: 0;
+  font-size: 1.75rem;
+  font-weight: 700;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+
+.pf__tile--urgent {
+  border-color: #fecaca;
+  background: #fef2f2;
+}
+
+.pf__tile--urgent dd {
+  color: #b91c1c;
+}
+
+.pf__tile--attention {
+  border-color: #fde68a;
+  background: #fffbeb;
+}
+
+.pf__tile--attention dd {
+  color: #b45309;
+}
+
+.pf__board {
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr));
+  gap: 14px;
+  margin: 0;
+  padding: 0;
+}
+
+.pf__tcard {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 18px;
+  border: 1px solid var(--pf-border);
+  border-radius: 14px;
+  background: var(--pf-surface);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.pf__tcard--urgent {
+  border-color: #fca5a5;
+}
+
+.pf__tcard--attention {
+  border-color: #fde68a;
+}
+
+.pf__tcard-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.pf__tcard-open {
+  width: 100%;
+  padding: 6px;
+  margin: -6px;
+  box-sizing: content-box;
+  border: none;
+  border-radius: 10px;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+.pf__tcard-open:hover {
+  background: #f8fafc;
+}
+
+.pf__back {
+  margin-bottom: 12px;
+  padding: 4px 0;
+  border: none;
+  background: none;
+  color: var(--pf-accent);
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.pf__back:hover {
+  text-decoration: underline;
+}
+
+.pf__open {
+  margin-bottom: 20px;
+}
+
+.pf__map {
+  height: 280px;
+  border-radius: 10px;
+  z-index: 0; /* keep Leaflet's panes under the shell's header */
+}
+
+.pf__tcard-top .pf__person-text {
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+
+.pf__health {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.pf__health--urgent { background: #fef2f2; color: #b91c1c; }
+.pf__health--attention { background: #fffbeb; color: #b45309; }
+.pf__health--unknown { background: #f1f5f9; color: #475569; }
+.pf__health--clear { background: #f0fdf4; color: #15803d; }
+
+/* Same height with or without an alert, so the cards in a row line up. */
+.pf__tcard-alert {
+  min-height: 44px;
+}
+
+.pf__tcard-alert p {
+  margin: 0;
+}
+
+.pf__tcard-alert p:first-child:not(.pf__muted) {
+  font-weight: 600;
+}
+
+.pf__facts {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-top: 12px;
+  border-top: 1px solid #f1f5f9;
+  font-size: 0.875rem;
+}
+
+.pf__facts div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.pf__facts dt {
+  color: var(--pf-muted);
+}
+
+.pf__facts dd {
+  margin: 0;
+  text-align: right;
+}
+
+.pf__tcard-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: auto;
+}
+
+@media (max-width: 760px) {
+  .pf__tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 600px) {
+  .pf__head--split { flex-direction: column; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .pf__live--live .pf__dot { animation: pf-pulse 2s ease-in-out infinite; }
+}
+
+@keyframes pf-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(21, 128, 61, 0.45); }
+  50% { box-shadow: 0 0 0 5px rgba(21, 128, 61, 0); }
 }

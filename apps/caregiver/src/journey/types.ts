@@ -1,5 +1,4 @@
-// Shapes from the Journey Service (services/journey-service/app/models.py and the plan
-// output in journey_client.py) and contracts/examples/route.json. Keep in step with those.
+// Typing for the Journey Planner service (the backend). The service is in apps/journey-service.
 
 export type StepMode = "walk" | "bus" | "train";
 export type TravelMode = "any" | "bus" | "train";
@@ -28,6 +27,23 @@ export interface Stop {
   lng: number | null;
 }
 
+/** A building the step's wording tells the traveller to look out for ("Simplify with AI"), with a photo of it. */
+export interface Landmark {
+  name: string;
+  /** "mall", "station", "hawker centre", ... or "building". */
+  kind?: string | null;
+  lat: number;
+  lng: number;
+  /** [lat, lng] of the traveller's spot on the route it is seen from (and photographed from). */
+  seenFrom?: [number, number] | null;
+  /** A Street View photo of it, taken from the street, in S3. */
+  photoKey?: string | null;
+  /** A temporary link to that photo, made by the service for each answer (never saved). */
+  photoUrl?: string | null;
+  /** No photo of its own, as it would look the same as the step's photo ("step") or another landmark's (its name). */
+  sameView?: string | null;
+}
+
 export interface RouteStep {
   stepIndex: number;
   mode: StepMode;
@@ -38,11 +54,16 @@ export interface RouteStep {
   line?: string | null;
   expectedDurationS?: number | null;
   underground?: boolean | null;
+  /** The step's photo in S3: a Street View photo of where it ends, or one the caregiver uploaded. */
   photoKey?: string | null;
+  /** A temporary link to that photo, made by the service for each answer (never saved). */
+  photoUrl?: string | null;
   audioKey?: string | null;
   backup?: { instruction: string; line?: string | null } | null;
   /** Train steps: every station on the leg, so a disruption between the two ends is noticed. */
   stops?: { code: string | null; name: string | null }[];
+  /** What the wording tells the traveller to look out for. The service keeps only those the wording still names. */
+  landmarks?: Landmark[] | null;
 }
 
 export interface PlanRequest {
@@ -151,6 +172,20 @@ export interface SavedRoute extends RouteDraft {
   approved: boolean;
   /** ISO 8601; set by the service. */
   updatedAt?: string;
+}
+
+/** POST /api/routes/{id}/easy-read: AI wording for each step, for the caregiver to check before saving. */
+export interface EasyReadSuggestion {
+  /** `fallback`: the AI's text didn't pass the checks (or the AI was unavailable), so this is the standard wording. */
+  steps: { stepIndex: number; easyRead: string; fallback: boolean; landmarks?: Landmark[] }[];
+  /** "template": the AI was unavailable, so every step has the standard wording. */
+  provider: "ollama" | "template" | string;
+}
+
+/** POST /api/routes/{id}/photos: the uploaded photo, to put in a step's photoKey and save. */
+export interface UploadedPhoto {
+  photoKey: string;
+  photoUrl: string | null;
 }
 
 /** "recorded" = the saved API responses (app/saved_data in the service), "live" = the real OneMap and LTA. */

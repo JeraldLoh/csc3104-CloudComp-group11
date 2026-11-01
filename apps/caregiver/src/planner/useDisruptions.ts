@@ -6,22 +6,19 @@ import { useEffect, useRef, useState } from "react";
 import type { DisruptionsApi } from "../journey/api";
 import type { DisruptionCheck, PlanWarning, RouteStep } from "../journey/types";
 
-/** LTA's train alerts are cached for about a minute by the service, so checking more often shows nothing new. */
+// How often to re-check the selected option's steps for new disruption warnings. The service caches the result for a minute, so no need to check more often.
 export const RECHECK_MS = 60_000;
 
-/** The warning types a re-check replaces (the others, like long walks, don't change after planning). */
+// The disruption types that are checked for new warnings. Others (e.g. "bus_delay") are only known at the moment of planning, so they are not re-checked.
 const DISRUPTION_TYPES = new Set(["train_disruption", "bus_notice", "live_data_unavailable"]);
 
-/** A plan's own warnings, with its disruption warnings swapped for the latest check (when there is one). */
+// Add the latest check's warnings to the plan's original ones, replacing any of the same type (e.g. a new train disruption replaces the old one).
 export function withLatest(warnings: PlanWarning[], check: DisruptionCheck | undefined): PlanWarning[] {
   if (!check) return warnings;
   return [...warnings.filter((w) => !DISRUPTION_TYPES.has(w.type)), ...check.warnings];
 }
 
-/**
- * The latest check for each set of steps, by the same key (e.g. a route id). A set that fails to check keeps its
- * last answer, so a short outage doesn't hide a known disruption. `enabled: false` stops checking.
- */
+// Keep the latest disruption check for each set of steps, re-checking every minute. The service caches the result for a minute, so no need to check more often.
 export function useDisruptions(
   api: DisruptionsApi,
   sets: Record<string, RouteStep[]>,

@@ -1,4 +1,4 @@
-// The logged-in caregiver's travellers, shared by the Alerts and Travellers pages.
+// The logged-in caregiver's travellers, shared by the Dashboard and Travellers pages.
 import { useCallback, useEffect, useState } from "react";
 import { listTravellers, type Traveller } from "./api";
 

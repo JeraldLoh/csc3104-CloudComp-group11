@@ -1,6 +1,4 @@
-// The map: OneMap tiles, the two pins, and the selected option drawn step by step.
-// Wraps Leaflet directly (no react-leaflet), so the map is created once and the props only
-// change what is drawn on it.
+// A map view of a planned route, using Leaflet and OneMap tiles
 import { useEffect, useRef } from "react";
 import * as L from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -10,14 +8,15 @@ import shadowUrl from "leaflet/dist/images/marker-shadow.png";
 import type { PlanOption, SavedRoute, StepMode } from "../journey/types";
 import type { Focus, Point } from "./usePlanner";
 
-// Leaflet works out its marker image paths from the CSS file name, which a bundler breaks.
+// Leaflet's default icon URLs are wrong in a Webpack build, so fix them. See https://github.com/Leaflet/Leaflet/issues/4835
 delete (L.Icon.Default.prototype as unknown as { _getIconUrl?: unknown })._getIconUrl;
 L.Icon.Default.mergeOptions({ iconUrl, iconRetinaUrl, shadowUrl });
 
+// The colors used for the different modes of travel, and the default map view (Singapore).
 export const MODE_COLORS: Record<StepMode, string> = { walk: "#6b7280", bus: "#1d6fd6", train: "#d6331d" };
 const SINGAPORE: L.LatLngTuple = [1.3521, 103.8198];
 
-/** Leaflet reads a string tooltip/popup as HTML. Place names and LTA notices are not trusted, so pass text nodes. */
+// Create a div with text content, for Leaflet's popups and tooltips. 
 function text(content: string): HTMLElement {
   const node = document.createElement("div");
   node.textContent = content;
@@ -27,21 +26,22 @@ function text(content: string): HTMLElement {
 export interface MapViewProps {
   from: Point | null;
   to: Point | null;
-  /** A planned option to draw, step by step... */
   option: PlanOption | null;
-  /** ...or a saved route (shown instead of the option if both are given). */
   saved?: SavedRoute | null;
   focus: Focus | null;
   onMapClick: (lat: number, lng: number) => void;
 }
 
+// A map view of a planned route, using Leaflet and OneMap tiles. 
+// The route is either a saved one (with one joined path) or a plan option (with one path per step). 
+// The map shows the "from" and "to" points, the route, and any warnings on it. 
+// The caregiver can click on the map to set a point.
 export function MapView({ from, to, option, saved = null, focus, onMapClick }: MapViewProps) {
   const host = useRef<HTMLDivElement>(null);
   const layers = useRef<{ map: L.Map; pins: L.LayerGroup; route: L.LayerGroup } | null>(null);
   const clicked = useRef(onMapClick);
   useEffect(() => { clicked.current = onMapClick; });
 
-  // Create the map once.
   useEffect(() => {
     if (!host.current) return;
     const map = L.map(host.current).setView(SINGAPORE, 12);
