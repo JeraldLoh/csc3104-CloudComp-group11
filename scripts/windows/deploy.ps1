@@ -77,6 +77,19 @@ function Invoke-Quiet([scriptblock]$Command) {
   try { & $Command 2>$null } finally { $ErrorActionPreference = $prev }
 }
 
+# Logs Docker in to ECR. Not `aws ecr get-login-password | docker login --password-stdin`: Windows
+# PowerShell 5.1 re-encodes what it pipes into a native command, and ECR rejects the token (400 Bad Request).
+# cmd's `<` hands docker the file's bytes unchanged. The file is deleted straight after.
+function Connect-Ecr([string]$Registry) {
+  $password = aws ecr get-login-password --region $Region
+  if ($LASTEXITCODE -ne 0) { throw "Command failed (exit code $LASTEXITCODE): aws ecr get-login-password" }
+  $file = [IO.Path]::GetTempFileName()
+  try {
+    [IO.File]::WriteAllText($file, $password)
+    Invoke-Checked { cmd /c "docker login --username AWS --password-stdin $Registry < `"$file`"" }
+  } finally { Remove-Item $file -Force -ErrorAction SilentlyContinue }
+}
+
 # Stack outputs as a hashtable (OutputKey -> OutputValue).
 function Get-StackOutputs {
   $json = Invoke-Checked { aws cloudformation describe-stacks --stack-name $StackName --region $Region --query 'Stacks[0].Outputs' --output json }
@@ -129,7 +142,7 @@ function Publish-Service([string]$Name, [hashtable]$Outputs) {
   }
 
   Write-Step "[$Name] Building and pushing image $image"
-  Invoke-Checked { aws ecr get-login-password --region $Region | docker login --username AWS --password-stdin $registry }
+  Connect-Ecr $registry
   Invoke-Checked { docker build --platform linux/amd64 -t $image $serviceDir }
   Invoke-Checked { docker push $image }
 
@@ -294,6 +307,8 @@ try {
       --approve
   }
 
+  Invoke-Quiet { helm status aws-load-balancer-controller -n kube-system } | Out-Null
+  $LbcExisted = ($LASTEXITCODE -eq 0)
   Invoke-Checked {
     helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller `
       -n kube-system `
@@ -304,6 +319,12 @@ try {
       --set vpcId=$VpcId `
       --version $ChartVersion
   }
+  # Every upgrade makes the chart generate a new webhook certificate, but the running pods keep the old one
+  # until they restart, and until then every Service/Ingress apply fails with "x509: certificate signed by
+  # unknown authority". So on a re-run, restart them.
+  if ($LbcExisted) {
+    Invoke-Checked { kubectl rollout restart deployment/aws-load-balancer-controller -n kube-system }
+  }
 
   Write-Info 'Waiting for the controller to become ready (Fargate pods take 1-2 minutes)'
   Invoke-Checked { kubectl rollout status deployment/aws-load-balancer-controller -n kube-system --timeout=10m }
@@ -311,7 +332,7 @@ try {
   # ---------------------------------------------------------------------------
   Write-Step "Building and pushing image ${EcrUri}:$ImageTag"
   $EcrRegistry = $EcrUri.Split('/')[0]
-  Invoke-Checked { aws ecr get-login-password --region $Region | docker login --username AWS --password-stdin $EcrRegistry }
+  Connect-Ecr $EcrRegistry
   Invoke-Checked { docker build --platform linux/amd64 -t "${EcrUri}:$ImageTag" $RepoRoot }
   Invoke-Checked { docker push "${EcrUri}:$ImageTag" }
 
