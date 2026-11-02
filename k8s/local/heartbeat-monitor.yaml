@@ -1,0 +1,51 @@
+# Heartbeat Monitor (Member 1, issue 1.4) on the local kind cluster.
+# Uses the Redis pod and calls the Alert Service by name.
+# Build and load the image first:
+#   docker build -t heartbeat-monitor:local services/heartbeat-monitor
+#   kind load docker-image heartbeat-monitor:local --name csc3104-local
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: heartbeat-monitor
+  namespace: csc3104
+  labels: { app: heartbeat-monitor }
+spec:
+  replicas: 2   # one checks the trips (leader lease); the other takes over if it dies
+  selector:
+    matchLabels: { app: heartbeat-monitor }
+  template:
+    metadata:
+      labels: { app: heartbeat-monitor }
+    spec:
+      containers:
+        - name: heartbeat-monitor
+          image: heartbeat-monitor:local
+          imagePullPolicy: IfNotPresent   # kind: use the image loaded with `kind load`
+          ports: [{ containerPort: 8000 }]
+          env:
+            - { name: REDIS_URL, value: "redis://cloud-redis:6379/0" }
+            - { name: ALERT_SERVICE_URL, value: "http://alert-service:8000" }
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { cpu: 250m, memory: 128Mi }
+          # Ready = Redis reachable. Not ready -> no traffic, but not restarted.
+          readinessProbe:
+            httpGet: { path: /ready, port: 8000 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          # Alive = process responds. Deliberately doesn't check Redis, so a Redis outage
+          # doesn't make Kubernetes restart every replica at once.
+          livenessProbe:
+            httpGet: { path: /health, port: 8000 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: heartbeat-monitor
+  namespace: csc3104
+spec:
+  type: ClusterIP
+  selector: { app: heartbeat-monitor }
+  ports: [{ port: 8000, targetPort: 8000 }]

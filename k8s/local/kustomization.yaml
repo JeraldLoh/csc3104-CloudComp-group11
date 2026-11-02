@@ -6,5 +6,6 @@ resources:
   - fastapi.yaml
   - checkin-service.yaml
   - alert-service.yaml
+  - heartbeat-monitor.yaml
   - journey-service.yaml
   - easyread-service.yaml
