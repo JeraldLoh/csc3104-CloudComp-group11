@@ -1,0 +1,327 @@
+# Tests, builds and deploys the backend services (issue 1.3, automatic deployment).
+#
+#   pull request  -> test + docker build each changed service
+#   merge to main -> the same, then push the image to ECR and roll it out on EKS
+#   manual run    -> Actions > Services > Run workflow, for one service or "all"
+#
+# A service is deployable when it has services/NAME/Dockerfile and
+# k8s/eks/services/NAME.yaml, with the same __PLACEHOLDERS__ as `deploy --service`.
+# Images are tagged with the commit SHA, so every merge rolls out new pods.
+# The platform stack is torn down between sessions: while it's down, deploys are
+# skipped with a notice instead of failing. Run the workflow manually once it's up.
+#
+# One-time setup: README, "Automatic deployment (GitHub Actions)".
+
+name: Services
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - services/**
+      - k8s/eks/services/**
+      - .github/workflows/services.yml
+      - "!**/*.md"
+  pull_request:
+    paths:
+      - services/**
+      - k8s/eks/services/**
+      - .github/workflows/services.yml
+      - "!**/*.md"
+  workflow_dispatch:
+    inputs:
+      service:
+        description: Service to deploy (folder name under services/), or "all"
+        required: true
+        default: all
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: ap-southeast-1
+  STACK_NAME: careroute-stack-1
+  APP_NAMESPACE: careroute
+
+jobs:
+  changes:
+    name: Pick services
+    runs-on: ubuntu-latest
+    outputs:
+      services: ${{ steps.pick.outputs.services }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - id: pick
+        env:
+          EVENT: ${{ github.event_name }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          REQUESTED: ${{ inputs.service }}
+        run: |
+          deployable="$(for f in k8s/eks/services/*.yaml; do
+            n="$(basename "$f" .yaml)"
+            [ -f "services/$n/Dockerfile" ] && echo "$n"
+          done)"
+
+          if [ "$EVENT" = workflow_dispatch ]; then
+            if [ "$REQUESTED" = all ]; then
+              picked="$deployable"
+            elif printf '%s\n' "$deployable" | grep -qx -- "$REQUESTED"; then
+              picked="$REQUESTED"
+            else
+              echo "::error::'$REQUESTED' needs services/$REQUESTED/Dockerfile and k8s/eks/services/$REQUESTED.yaml"
+              exit 1
+            fi
+          else
+            base="$PR_BASE"
+            [ "$EVENT" = push ] && base="$PUSH_BEFORE"
+            if git cat-file -e "$base^{commit}" 2>/dev/null; then
+              changed="$(git diff --name-only "$base" "$GITHUB_SHA")"
+            else
+              # First push of a branch, or a force push: no base to diff against
+              changed=".github/workflows/services.yml"
+            fi
+            if printf '%s\n' "$changed" | grep -qx '.github/workflows/services.yml'; then
+              picked="$deployable"
+            else
+              # Docs-only changes don't need a redeploy
+              touched="$(printf '%s\n' "$changed" | grep -v '\.md$' | sed -n \
+                -e 's|^services/\([^/]*\)/.*|\1|p' \
+                -e 's|^k8s/eks/services/\([^/]*\)\.yaml$|\1|p' | sort -u)"
+              picked="$(printf '%s\n' "$deployable" | grep -Fx -f <(printf '%s\n' "$touched") || true)"
+            fi
+          fi
+
+          json="$(printf '%s\n' "$picked" | jq -R 'select(length > 0)' | jq -cs .)"
+          echo "services=$json" >> "$GITHUB_OUTPUT"
+          echo "Services: $json" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  service:
+    name: ${{ matrix.service }}
+    needs: changes
+    if: needs.changes.outputs.services != '[]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # OIDC token, exchanged for the AWS deploy role
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJSON(needs.changes.outputs.services) }}
+    # One deploy per service at a time, so two quick merges can't race each other's rollout.
+    # Pull requests only test, so a newer push cancels the older run.
+    concurrency:
+      group: ${{ github.event_name == 'pull_request' && format('pr-{0}-{1}', github.event.pull_request.number, matrix.service) || format('deploy-{0}', matrix.service) }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    # Tests for these services talk to LocalStack and Redis on localhost (the port-forwards
+    # their conftest.py describes). An empty image means the container isn't started.
+    services:
+      localstack:
+        image: ${{ contains(fromJSON('["alert-service"]'), matrix.service) && 'localstack/localstack:latest' || '' }}
+        ports: ["4566:4566"]
+        env:
+          LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_AUTH_TOKEN }}
+          SERVICES: s3,sqs,dynamodb
+          AWS_DEFAULT_REGION: ap-southeast-1
+        options: >-
+          --health-cmd "curl -fs http://localhost:4566/_localstack/health"
+          --health-interval 5s --health-timeout 3s --health-retries 30
+      redis:
+        image: ${{ contains(fromJSON('["alert-service"]'), matrix.service) && 'redis:7' || '' }}
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      SERVICE: ${{ matrix.service }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"   # the services' images use python:3.12-slim
+          cache: pip
+          cache-dependency-path: services/${{ matrix.service }}/requirements*.txt
+
+      - name: Test
+        working-directory: services/${{ matrix.service }}
+        run: |
+          if [ ! -d tests ]; then
+            echo "No tests/ folder, skipping"
+            exit 0
+          fi
+          if [ -f requirements-dev.txt ]; then
+            pip install -r requirements-dev.txt
+          else
+            pip install -r requirements.txt pytest
+          fi
+          python -m pytest -p no:cacheprovider
+
+      - name: Build image
+        run: docker build --platform linux/amd64 -t "careroute-$SERVICE:$GITHUB_SHA" "services/$SERVICE"
+
+      # ---------------------------------------------------------------------
+      # Everything below runs only on main (merge or manual run).
+
+      - name: Check deploy setup
+        id: setup
+        if: github.event_name != 'pull_request'
+        env:
+          ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+        run: |
+          if [ -z "$ROLE_ARN" ]; then
+            echo "::warning::Repository variable AWS_DEPLOY_ROLE_ARN isn't set, so $SERVICE was tested and built but not deployed. See the README."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: aws-actions/configure-aws-credentials@v5
+        if: steps.setup.outputs.ready == 'true'
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Read platform stack
+        id: stack
+        if: steps.setup.outputs.ready == 'true'
+        run: |
+          status="$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
+            --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo NONE)"
+          # UPDATE_ROLLBACK_COMPLETE: a failed update was rolled back, so the previous stack is intact
+          case "$status" in
+            CREATE_COMPLETE|UPDATE_COMPLETE|UPDATE_ROLLBACK_COMPLETE) ;;
+            *)
+              echo "::notice::Stack $STACK_NAME is $status, so $SERVICE was not deployed. Once the stack is up, run this workflow manually."
+              echo "up=false" >> "$GITHUB_OUTPUT"
+              exit 0 ;;
+          esac
+
+          output() {
+            aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
+              --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text
+          }
+          account_id="$(aws sts get-caller-identity --query Account --output text)"
+          {
+            echo "ACCOUNT_ID=$account_id"
+            echo "CLUSTER_NAME=$(output EksClusterName)"
+            echo "REDIS_ENDPOINT=$(output RedisEndpoint)"
+            echo "CHECKINS_QUEUE_URL=$(output CheckinsQueueUrl)"
+            echo "DISRUPTIONS_QUEUE_URL=$(output DisruptionsQueueUrl)"
+            echo "ALB_SG_ID=$(output AlbSecurityGroupId)"
+            echo "FILES_BUCKET=careroute-files-$account_id"
+          } >> "$GITHUB_ENV"
+          echo "up=true" >> "$GITHUB_OUTPUT"
+
+      - name: Connect kubectl
+        if: steps.stack.outputs.up == 'true'
+        env:
+          ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+        run: |
+          # Teardown deletes the cluster along with its access entries, so on a new cluster this
+          # role adds its own: edit rights in the app namespace only. Several services may run
+          # this at once, so a failed create is fine as long as the entry exists afterwards.
+          if ! aws eks describe-access-entry --cluster-name "$CLUSTER_NAME" --principal-arn "$ROLE_ARN" >/dev/null 2>&1; then
+            aws eks create-access-entry --cluster-name "$CLUSTER_NAME" --principal-arn "$ROLE_ARN" >/dev/null \
+              || aws eks describe-access-entry --cluster-name "$CLUSTER_NAME" --principal-arn "$ROLE_ARN" >/dev/null
+          fi
+          aws eks associate-access-policy --cluster-name "$CLUSTER_NAME" --principal-arn "$ROLE_ARN" \
+            --policy-arn arn:aws:eks::aws:cluster-access-policy/AmazonEKSEditPolicy \
+            --access-scope "type=namespace,namespaces=$APP_NAMESPACE" >/dev/null
+
+          aws eks update-kubeconfig --name "$CLUSTER_NAME"
+          # A new access entry takes a few seconds to apply
+          for _ in $(seq 1 12); do
+            [ "$(kubectl auth can-i create deployments -n "$APP_NAMESPACE" 2>/dev/null)" = yes ] && exit 0
+            sleep 5
+          done
+          echo "::error::$ROLE_ARN can't create Deployments in $APP_NAMESPACE on $CLUSTER_NAME"
+          exit 1
+
+      - name: Push image to ECR
+        if: steps.stack.outputs.up == 'true'
+        run: |
+          repo="careroute-$SERVICE"
+          registry="$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
+          # Teardown deletes the careroute-* repositories, so create it when missing
+          aws ecr describe-repositories --repository-names "$repo" >/dev/null 2>&1 \
+            || aws ecr create-repository --repository-name "$repo" >/dev/null
+          aws ecr get-login-password | docker login --username AWS --password-stdin "$registry"
+          docker tag "careroute-$SERVICE:$GITHUB_SHA" "$registry/$repo:$GITHUB_SHA"
+          docker push "$registry/$repo:$GITHUB_SHA"
+          echo "IMAGE=$registry/$repo:$GITHUB_SHA" >> "$GITHUB_ENV"
+
+      - name: Deploy to EKS
+        id: deploy
+        if: steps.stack.outputs.up == 'true'
+        run: |
+          manifest="k8s/eks/services/$SERVICE.yaml"
+          rendered="$RUNNER_TEMP/$SERVICE.yaml"
+
+          # A service's own IAM role comes from the stack output <Name>RoleArn, in any stack
+          # in the region (checkin-service -> CheckinServiceRoleArn)
+          role_arn=""
+          if grep -q '__ROLE_ARN__' "$manifest"; then
+            key="$(printf '%s' "$SERVICE" | awk -F- '{ for (i = 1; i <= NF; i++) printf "%s%s", toupper(substr($i, 1, 1)), substr($i, 2) }')RoleArn"
+            role_arn="$(aws cloudformation describe-stacks \
+              --query "Stacks[].Outputs[?OutputKey=='$key'].OutputValue | []" --output text)"
+            if [ "$(printf '%s' "$role_arn" | wc -w)" -ne 1 ]; then
+              echo "::error::$manifest uses __ROLE_ARN__, so exactly one stack needs an output named $key (found: ${role_arn:-none})"
+              exit 1
+            fi
+          fi
+
+          # Escapes a value for the right-hand side of sed s|...|...|
+          esc() { printf '%s' "$1" | sed -e 's/[\\|&]/\\&/g'; }
+          sed -e "s|__IMAGE__|$(esc "$IMAGE")|g" \
+              -e "s|__NAMESPACE__|$(esc "$APP_NAMESPACE")|g" \
+              -e "s|__REGION__|$(esc "$AWS_REGION")|g" \
+              -e "s|__REDIS_ENDPOINT__|$(esc "$REDIS_ENDPOINT")|g" \
+              -e "s|__CHECKINS_QUEUE_URL__|$(esc "$CHECKINS_QUEUE_URL")|g" \
+              -e "s|__DISRUPTIONS_QUEUE_URL__|$(esc "$DISRUPTIONS_QUEUE_URL")|g" \
+              -e "s|__FILES_BUCKET__|$(esc "$FILES_BUCKET")|g" \
+              -e "s|__ALB_SG_ID__|$(esc "$ALB_SG_ID")|g" \
+              -e "s|__ROLE_ARN__|$(esc "$role_arn")|g" \
+              "$manifest" > "$rendered"
+          # A misspelled placeholder would otherwise reach the cluster as literal text.
+          # YAML comments are skipped, since they may mention placeholders.
+          left="$(sed -e 's/^#.*//' -e 's/[[:space:]]#.*//' "$rendered" \
+            | grep -Eo '__[A-Z][A-Z0-9_]*__' | sort -u | tr '\n' ' ' || true)"
+          if [ -n "$left" ]; then
+            echo "::error::$manifest has unknown placeholders: $left"
+            exit 1
+          fi
+
+          kubectl apply -f "$rendered"
+
+          # A Deployment named after the service, or (one image run as several Deployments,
+          # e.g. detectors) every Deployment labelled app.kubernetes.io/part-of: <service>
+          if kubectl get deployment "$SERVICE" -n "$APP_NAMESPACE" >/dev/null 2>&1; then
+            targets="deployment.apps/$SERVICE"
+          else
+            targets="$(kubectl get deployment -n "$APP_NAMESPACE" -l "app.kubernetes.io/part-of=$SERVICE" -o name | tr '\n' ' ')"
+          fi
+          if [ -z "$targets" ]; then
+            echo "::error::$manifest has no Deployment named $SERVICE or labelled app.kubernetes.io/part-of: $SERVICE"
+            exit 1
+          fi
+          echo "TARGETS=$targets" >> "$GITHUB_ENV"
+          echo "applied=true" >> "$GITHUB_OUTPUT"
+
+          for t in $targets; do
+            kubectl rollout status "$t" -n "$APP_NAMESPACE" --timeout=10m
+          done
+          echo "Deployed \`$IMAGE\` to $targets" >> "$GITHUB_STEP_SUMMARY"
+
+      # The old pods keep serving during a rolling update, so a rollout that never becomes
+      # ready is put back to the previous version rather than left half-done.
+      - name: Roll back failed rollout
+        if: failure() && steps.deploy.outputs.applied == 'true'
+        run: |
+          for t in $TARGETS; do
+            kubectl rollout undo "$t" -n "$APP_NAMESPACE" || echo "::warning::No earlier revision of $t to roll back to"
+          done
+          echo "Rollout of \`$IMAGE\` failed and was rolled back. Logs: \`kubectl logs -n $APP_NAMESPACE deploy/<name>\`" >> "$GITHUB_STEP_SUMMARY"

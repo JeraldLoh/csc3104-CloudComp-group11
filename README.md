@@ -33,6 +33,48 @@ Options: `-ImageTag` / `--tag` (default `v1`), `-StackName` / `--stack-name`,
 The deploy scripts fill in the `k8s/eks` placeholders in a temporary copy, so
 the committed manifests stay unchanged.
 
+## Automatic deployment (GitHub Actions)
+
+[`.github/workflows/services.yml`](.github/workflows/services.yml) runs for every change under
+`services/` or `k8s/eks/services/`, and only for the services that changed:
+
+- **Pull request:** runs the service's tests and builds its Docker image.
+- **Merge to `main`:** does the same, then pushes the image to ECR (tagged with the commit SHA) and
+  rolls it out on EKS. If the new pods never become ready, it rolls back to the previous version.
+- **Manual run:** Actions > Services > Run workflow, with one service name or `all`. Use it after
+  creating the stack, since merges made while the stack was torn down skip the deploy.
+
+A service is picked up when it has both `services/<name>/Dockerfile` and `k8s/eks/services/<name>.yaml`,
+with the same placeholders as `deploy --service` (see [scripts/README.md](scripts/README.md)).
+The frontends are not part of this workflow: Amplify builds them from `amplify.yml`.
+
+### One-time setup
+
+The workflow signs in to AWS through GitHub's OIDC provider, so no access keys are stored in GitHub.
+
+1. Create the deploy role, once per AWS account. It lives in its own stack, so teardown leaves it
+   in place, and it costs nothing:
+
+   ```bash
+   aws cloudformation deploy --stack-name careroute-github-deploy \
+     --template-file cloudformation/github-actions-deploy-role.yaml \
+     --capabilities CAPABILITY_NAMED_IAM --region ap-southeast-1
+   aws cloudformation describe-stacks --stack-name careroute-github-deploy --region ap-southeast-1 \
+     --query "Stacks[0].Outputs[?OutputKey=='DeployRoleArn'].OutputValue" --output text
+   ```
+
+   If the account already has a `token.actions.githubusercontent.com` identity provider, add
+   `--parameter-overrides CreateOidcProvider=false`.
+2. In GitHub, go to Settings > Secrets and variables > Actions:
+   - **Variables:** `AWS_DEPLOY_ROLE_ARN` = the ARN printed above. Without it, merges still test and
+     build but don't deploy.
+   - **Secrets:** `LOCALSTACK_AUTH_TOKEN` = the same token as in `.env`. The alert-service tests
+     run against LocalStack.
+
+The role can only push to `careroute-*` ECR repositories and deploy into the `careroute` namespace.
+On each new cluster it adds itself as an EKS access entry with namespace-scoped edit rights, so
+nothing needs to be re-run after a teardown.
+
 ## Deploy the infrastructure
 
 ### 1. Deploy the CloudFormation stack
