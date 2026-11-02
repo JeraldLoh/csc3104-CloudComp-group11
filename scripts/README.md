@@ -8,14 +8,15 @@ Always run teardown when you finish.
 
 ## The three commands
 
-| What you want | Mac | Windows (PowerShell) |
+| What you want | macOS / Linux (bash) | Windows (PowerShell) |
 |---|---|---|
 | **1. Create the environment** (first time in a session) | `bash scripts/macos/deploy.sh --email you@gmail.com` | `.\scripts\windows\deploy.ps1 -BudgetEmail you@gmail.com` |
 | **2. Deploy your service** (as often as you like) | `bash scripts/macos/deploy.sh --service coordinator` | `.\scripts\windows\deploy.ps1 -Service coordinator` |
 | **3. Delete everything** (end of session) | `bash scripts/macos/teardown.sh` | `.\scripts\windows\teardown.ps1` |
 | **Create the environment and every service** (e.g. before integration tests or the demo) | `bash scripts/macos/deploy.sh --all-services` | `.\scripts\windows\deploy.ps1 -AllServices` |
 
-Run them from the repo root. On Windows, if scripts are blocked, run them as
+Run them from the repo root. The `scripts/macos/` scripts also run unchanged on Linux (and in WSL): they use only portable `sed`/`awk`/`grep` and the bash 3.2 that macOS ships.
+On Windows, if scripts are blocked, run them as
 `powershell -ExecutionPolicy Bypass -File scripts\windows\deploy.ps1 ...`.
 
 A typical session:
