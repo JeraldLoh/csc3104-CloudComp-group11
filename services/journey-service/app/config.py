@@ -96,6 +96,11 @@ class Settings:
     disruption_min_status: int = field(default_factory=lambda: int(os.getenv("DISRUPTION_MIN_STATUS", "2")))
     # Don't re-send the same disruption for the same trip within this window.
     disruption_dedupe_ttl_s: int = field(default_factory=lambda: int(os.getenv("DISRUPTION_DEDUPE_TTL_S", "21600")))
+    # Bridging buses (journey_client.watch_bridges): how often the API looks for active trips riding into a train
+    # breakdown that LTA has free buses for (0 = never), and how long a proposal waits for the caregiver before it
+    # is sent to the traveller by itself.
+    bridge_watch_s: int = field(default_factory=lambda: int(os.getenv("BRIDGE_WATCH_S", "30")))
+    bridge_auto_send_s: int = field(default_factory=lambda: int(os.getenv("BRIDGE_AUTO_SEND_S", "180")))
     # Create the routes table and queue on startup. For local development only; in AWS they are created once.
     create_resources: bool = field(default_factory=lambda: _bool("CREATE_RESOURCES", False))
 

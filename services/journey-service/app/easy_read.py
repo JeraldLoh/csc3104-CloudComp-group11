@@ -114,7 +114,7 @@ def _line_signs(code: str | None, line: str | None = None) -> str:
     return f"the {colour} signs for the {name}" if colour else f"the signs for the {name}"
 
 
-def _going_to(step: dict) -> str | None:
+def going_to(step: dict) -> str | None:
     """The end of the line the train is heading for, from the first and last station codes of the ride."""
     codes = [s.get("code") or "" for s in step.get("stops") or []]
     if not codes:
@@ -142,6 +142,8 @@ def easy_read(step: dict, prev: dict | None = None, last: bool = False, destinat
     """Short plain-language wording for a step. `prev`: the step before (a train after a change of line needs no
     gantry); `last` and `destination`: the last step of a route ends at its destination, by name."""
     mode = step.get("mode")
+    if step.get("bridge"):
+        return _bridge(step, prev)
     if mode == "bus" and step.get("line"):
         return _bus(step)
     if mode == "train":
@@ -187,9 +189,29 @@ def _bus(step: dict) -> str:
     return _fit(parts)
 
 
+def _bridge(step: dict, prev: dict | None) -> str:
+    """A free bus past a train breakdown (bridge.py): the bridging bus from the station's signs, or an ordinary bus
+    that is free today. After the train ride up to the breakdown (`prev`), the traveller is already off the train."""
+    how = step["bridge"]
+    target = plain((step.get("to") or {}).get("name")) or "the next station"
+    colour, name = _line_colour_name(_line_key((step.get("from") or {}).get("code")) or how.get("line") or "")
+    text = [f"The {colour} line is not running here." if colour else f"The {name} is not running here.",
+            "Leave the station." if prev and prev.get("mode") == "train" else "Do not take the train."]
+    if how["kind"] == "shuttle":
+        text += ["Follow the signs for the free bridging bus.", f"Take it to {target}.", "You do not need to pay.",
+                 f"Get off at {target}."]
+    else:
+        board, alight = how.get("board") or {}, how.get("alight") or {}
+        text += [f"Find bus stop {board['code']} at {plain(board.get('name'))}." if board.get("code") else "",
+                 f"Raise your hand for bus {how['serviceNo']}.", "It is free today. You do not need to tap your card.",
+                 f"Get off at {plain(alight.get('name'))}." if alight.get("name") else f"Get off near {target}.",
+                 f"Walk to {target}."]
+    return " ".join(t for t in text if t)
+
+
 def _train(step: dict, prev: dict | None) -> str:
     end = plain((step.get("to") or {}).get("name")) or "your station"
-    going, count = _going_to(step), stop_count(step)
+    going, count = going_to(step), stop_count(step)
     text = [] if prev and changes_line(prev) else ["Tap your card at the gantry."]  # changed lines: already inside
     text.append(f"Follow {_line_signs((step.get('from') or {}).get('code'), step.get('line'))}.")
     stops = step.get("stops") or []

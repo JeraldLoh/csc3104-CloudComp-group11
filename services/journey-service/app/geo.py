@@ -12,6 +12,17 @@ def distance_m(a: tuple[float, float], b: tuple[float, float]) -> float:
     return math.hypot(dx, dy)
 
 
+def path_between(path: list, a: tuple[float, float], b: tuple[float, float], near_m: float = 400) -> list[list[float]]:
+    """The part of `path` from the point nearest `a` to the point nearest `b` after it (a step's piece of a route's
+    joined path); just [a, b] when either end is more than `near_m` from the path."""
+    if path:
+        i = min(range(len(path)), key=lambda k: distance_m(a, path[k]))
+        j = min(range(i, len(path)), key=lambda k: distance_m(b, path[k]))
+        if j > i and distance_m(a, path[i]) <= near_m and distance_m(b, path[j]) <= near_m:
+            return [list(p) for p in path[i:j + 1]]
+    return [list(a), list(b)]
+
+
 def _to_xy(lat: float, lng: float, ref_lat: float) -> tuple[float, float]:
     """Local flat-earth projection in metres; accurate enough over a few kilometres."""
     return (math.radians(lng) * EARTH_RADIUS_M * math.cos(math.radians(ref_lat)),

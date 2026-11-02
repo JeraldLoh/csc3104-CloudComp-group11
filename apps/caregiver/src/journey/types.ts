@@ -116,6 +116,30 @@ export interface PlanOption {
   stepPaths: LatLngTuple[][];
   live: LiveEntry[];
   warnings: PlanWarning[];
+  /** Where it rides with no trains running (a breakdown now), to draw over it. */
+  affected?: Affected[];
+  /** The free bus past each of those, to show the caregiver; never saved with the route. */
+  bridges?: PlanBridge[];
+}
+
+/** A part of a route with no trains running: from the station before the broken stretch to the one after it. */
+export interface Affected {
+  stepIndex: number;
+  line: string | null;
+  from: string | null;
+  to: string | null;
+  path: LatLngTuple[];
+  message: string;
+}
+
+/** LTA's free bus past a breakdown for one train step: the train to `leaveAt`, the bus to `target`, the train on. */
+export interface PlanBridge {
+  stepIndex: number;
+  kind: "shuttle" | "bus";
+  busNo: string | null;
+  leaveAt: string | null;
+  target: string | null;
+  steps: { mode: StepMode; instruction: string }[];
 }
 
 export interface RoutePlace extends LatLng {
@@ -133,6 +157,8 @@ export interface RouteDraft {
   destination: RoutePlace;
   steps: RouteStep[];
   path: LatLngTuple[];
+  /** A new route for a trip under way (planned from where the traveller is), to send to it once approved. */
+  forTripId?: string | null;
 }
 
 /** Body of PUT /api/routes/{id}: the route as you last saw it, with your changes. `version` is the one you edited. */
@@ -155,8 +181,81 @@ export interface Trip {
   startedAt: string | null;
   endedAt: string | null;
   currentStepIndex: number;
+  /** 1, then +1 each time the trip's steps are changed under way (a bridging bus, a new route). */
   planVersion: number;
-  override: unknown;
+  /** The latest change to the trip under way, or a bridging bus waiting to be sent. */
+  override: TripChange | null;
+}
+
+/**
+ * A change to a trip under way. "bridge": a free bus past a train breakdown, from LTA's arrangements, sent to the
+ * traveller by itself at `sendAt` unless the caregiver sends it sooner or dismisses it. "replan": a new route the
+ * caregiver chose. The `steps` replace the trip's steps `replacesFrom`..`replacesTo`.
+ */
+export interface TripChange {
+  kind: "bridge" | "replan";
+  status: "pending" | "sent" | "dismissed" | "withdrawn";
+  line?: string | null;
+  bridgeKind?: "shuttle" | "bus";
+  busNo?: string | null;
+  leaveAt?: string | null;
+  target?: string | null;
+  replacesFrom: number;
+  replacesTo: number;
+  steps: RouteStep[];
+  /** A new route sent from Saved routes: which route it was. */
+  fromRoute?: string | null;
+  createdAt: string;
+  sendAt: string | null;
+  sentAt: string | null;
+  sentBy: "caregiver" | "auto" | null;
+}
+
+/** POST /api/trips/{id}/replan: new routes from where the traveller is. */
+export interface Replan {
+  from: { lat: number; lng: number; source: "checkin" | "step"; at: string | null; label: string };
+  options: PlanOption[];
+}
+
+/** GET /api/trips/{id}/location: where the traveller of a trip under way is, from their phone's check-ins. */
+export interface TripLocation {
+  tripId: string;
+  /** null when there is no check-in yet and their step's start isn't known either. */
+  lat: number | null;
+  lng: number | null;
+  /** When they last checked in ("checkin"); null for "step": no check-in yet, so where their step starts. */
+  at: string | null;
+  source: "checkin" | "step";
+  /** Their last few positions, oldest first. */
+  trail: [number, number][];
+  /** Where a new route for them starts: a recent check-in, else where their step starts. */
+  replanFrom: { lat: number | null; lng: number | null; source: "checkin" | "step"; label: string } | null;
+  /** The step they are on, counted from 0, of `stepCount` (the trip's steps, with any change sent). */
+  stepIndex: number;
+  stepCount: number;
+  step: { mode: StepMode; instruction: string } | null;
+}
+
+/** GET /api/trips/{id}/plan: the steps the traveller of a trip under way follows now, with their lines on the map. */
+export interface TripPlan {
+  tripId: string;
+  planVersion: number;
+  /** The route's steps, or what a bridging bus or new route changed them to. */
+  steps: RouteStep[];
+  /** `stepPaths[i]` is steps[i]'s [lat, lng] line ([] if not known). */
+  stepPaths: LatLngTuple[][];
+  /** Where those steps ride with no trains running (LTA's broken stretches): a line to draw over each. */
+  affected: Affected[];
+}
+
+/** GET /api/trips/{id}/bridge/preview: what using the free bus past a breakdown would change the trip's steps to. */
+export interface BridgePreview {
+  kind: "shuttle" | "bus";
+  busNo: string | null;
+  leaveAt: string | null;
+  target: string | null;
+  /** Worded, with photos: the train to `leaveAt` (if any), the free bus to `target`, the train on (if any). */
+  steps: RouteStep[];
 }
 
 /** GET /api/trips/{id}/pack: a temporary link to the offline pack the traveller's phone downloads. */

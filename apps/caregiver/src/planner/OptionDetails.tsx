@@ -1,6 +1,6 @@
 // List of planned options, and the details of the selected one, with live info and notices.
 import type { PlanOption } from "../journey/types";
-import { DisruptedStep, splitDisruptions, warningClass } from "./DisruptionWarnings";
+import { DisruptedStep, ON_THE_STEP, splitDisruptions, warningClass } from "./DisruptionWarnings";
 import { liveText, minutes, optionLabel } from "./format";
 
 interface ListProps {
@@ -9,6 +9,9 @@ interface ListProps {
   onSelect: (index: number) => void;
 }
 
+/** Rides where trains aren't running, or has an LTA disruption notice on one of its steps. */
+const disrupted = (o: PlanOption) => Boolean(o.affected?.length) || o.warnings.some((w) => ON_THE_STEP.has(w.type));
+
 export function OptionList({ options, activeIndex, onSelect }: ListProps) {
   return (
     <div className="rp__options">
@@ -16,10 +19,11 @@ export function OptionList({ options, activeIndex, onSelect }: ListProps) {
         <button
           key={o.option}
           type="button"
-          className={"rp__option" + (i === activeIndex ? " rp__option--active" : "")}
+          className={"rp__option" + (i === activeIndex ? " rp__option--active" : "") + (disrupted(o) ? " rp__option--disrupted" : "")}
           aria-pressed={i === activeIndex}
           onClick={() => onSelect(i)}
         >
+          {disrupted(o) && <span className="rp__option-flag">{o.affected?.length ? "Trains not running" : "Disruption"}</span>}
           {optionLabel(o)}
         </button>
       ))}
@@ -46,6 +50,23 @@ export function OptionDetails({ option }: { option: PlanOption }) {
         })}
       </ol>
       {rest.map((w, i) => <div key={i} className={warningClass(w)}>{w.message}</div>)}
+      {option.affected?.map((a, i) => {
+        const bridge = option.bridges?.find((b) => b.stepIndex === a.stepIndex);
+        return (
+          <div key={i} className="rp__bridge-note" role="note">
+            <strong>{a.message}.</strong>
+            {bridge ? (
+              <>
+                {` While the breakdown lasts, the traveller would take ${bridge.kind === "shuttle" ? "the free bridging bus" : `free bus ${bridge.busNo}`}:`}
+                <ol className="rp__steps">
+                  {bridge.steps.map((s, j) => <li key={j} className={`rp__step rp__step--${s.mode}`}>{s.instruction}</li>)}
+                </ol>
+                <span className="rp__meta">Not saved with the route: a trip under way gets it only if trains are still not running.</span>
+              </>
+            ) : " There is no free bus past it, so another option may be better."}
+          </div>
+        );
+      })}
     </>
   );
 }

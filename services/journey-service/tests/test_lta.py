@@ -37,14 +37,16 @@ def test_train_alerts_disruption():
     respx.get(f"{LTA}/TrainServiceAlerts").mock(return_value=httpx.Response(200, json={"value": {
         "Status": 2,
         "AffectedSegments": [{"Line": "NEL", "Direction": "HarbourFront", "Stations": "NE9,NE8,NE7,NE6",
-                              "FreePublicBus": "", "FreeMRTShuttle": "", "MRTShuttleDirection": ""}],
+                              "FreePublicBus": "NE9,NE8, NE7,NE6", "FreeMRTShuttle": "NE9,NE8,NE7,NE6",
+                              "MRTShuttleDirection": "Both"}],
         "Message": [{"Content": "1710hrs: NEL - No train service ...", "CreatedDate": "2017-12-01 17:54:21"}],
     }}))
     out = make().train_alerts()
     assert out["status"] == 2
     assert out["segments"][0] == {"line": "NEL", "direction": "HarbourFront",
                                   "stations": ["NE9", "NE8", "NE7", "NE6"],
-                                  "freePublicBus": None, "freeMrtShuttle": None}
+                                  "freePublicBus": ["NE9", "NE8", "NE7", "NE6"],
+                                  "freeMrtShuttle": ["NE9", "NE8", "NE7", "NE6"], "shuttleDirection": "Both"}
     assert out["messages"][0]["createdDate"] == "2017-12-01 17:54:21"
 
 

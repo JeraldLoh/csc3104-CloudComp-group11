@@ -67,6 +67,7 @@ export function SavedRoutes({ saved, trips, disruptions }: Props) {
                       onClick={() => void saved.open(r.routeId)}
                     >
                       <span className="rp__name">{r.name}</span>
+                      {r.forTripId && <span className="rp__pill rp__pill--warn">{`Re-route for ${r.forTripId}`}</span>}
                       <span className="rp__meta">
                         <code>{r.routeId}</code>{`, version ${r.version}`}
                       </span>

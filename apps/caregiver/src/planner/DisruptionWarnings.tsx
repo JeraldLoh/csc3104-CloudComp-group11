@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import type { DisruptionCheck, PlanWarning } from "../journey/types";
 
 /** Warning types that belong to one step and are shown over it. */
-const ON_THE_STEP = new Set(["train_disruption", "bus_notice"]);
+export const ON_THE_STEP = new Set(["train_disruption", "bus_notice"]);
 
 const time = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 export const warningClass = (w: PlanWarning) => "rp__warning" + (w.severity === "high" ? " rp__warning--high" : "");

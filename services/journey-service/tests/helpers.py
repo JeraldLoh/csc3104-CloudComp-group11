@@ -60,6 +60,11 @@ def mock_lta(arrival=None, alerts=None, incidents=None, crowd=None, forecast=Non
     respx.get(f"{LTA}/TrafficIncidents").mock(return_value=httpx.Response(200, json=incidents or {"value": []}))
 
 
+def mock_station_search():
+    """OneMap's search for a station's exits finds nothing (a plan through a breakdown asks, to draw it)."""
+    return respx.get(SEARCH).mock(return_value=httpx.Response(200, json={"found": 0, "totalNumPages": 1, "results": []}))
+
+
 def plan(**kw):
     return make().plan((1.37, 103.8486), (1.3326, 103.8474), NOW, **kw)["options"]
 

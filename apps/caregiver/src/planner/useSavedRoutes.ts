@@ -174,6 +174,7 @@ export function useSavedRoutes(api: SavedRoutesApi, travellerId: string, reloadK
         landmarks: changes.landmarks?.[i] === undefined ? step.landmarks : changes.landmarks[i],
       })),
       path: base.path,
+      forTripId: base.forTripId ?? null,
       version: base.version,
     };
     setSaving(true);

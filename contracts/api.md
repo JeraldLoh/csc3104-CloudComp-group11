@@ -100,14 +100,29 @@ own safe locations.
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
-| POST | `/api/routes/plan` | `{"from": {lat,lng}, "to": {lat,lng}}` | route options from OneMap |
+| POST | `/api/routes/plan` | `{"from": {lat,lng}, "to": {lat,lng}}` | route options from OneMap; during a breakdown each says where it rides with no trains (`affected`) and LTA's free bus past it (`bridges`, shown, never saved), and those go last |
 | POST | `/api/routes` | route without `routeId` | `route.json` |
 | GET / PUT | `/api/routes/{routeId}` | `route.json` | `route.json` (version +1 on every change) |
 | POST | `/api/routes/{routeId}/approve` | — | `route.json` with `approved: true` |
 | POST | `/api/trips` | `{"routeId": "R-007", "date": "2026-10-12"}` | `trip.json` |
 | POST | `/api/trips/{tripId}/start` | — | `trip.json` (`status: active`) |
 | POST | `/api/trips/{tripId}/end` | — | `trip.json` (`status: completed`) |
-| GET | `/api/trips/{tripId}/pack` | — | `{"packUrl": "<temporary S3 link>", "packVersion": "R-007-v3"}` |
+| POST | `/api/trips/{tripId}/bridge/send` | — | `trip.json`: the proposed free bridging bus sent to the traveller now |
+| POST | `/api/trips/{tripId}/bridge/dismiss` | — | `trip.json`: not sent (not by itself later either; `/bridge/send` still can, while the breakdown lasts) |
+| GET | `/api/trips/{tripId}/bridge/preview` | — | `{kind, busNo, leaveAt, target, steps}`: what `/bridge/use` would change the trip's steps to (worded, with photos), nothing changed |
+| POST | `/api/trips/{tripId}/bridge/use` | — | `trip.json`: the free bus past a breakdown, worked out and used now (also for a trip not started yet) |
+| POST | `/api/trips/{tripId}/replan` | — | `{"from": {lat, lng, source: "checkin"\|"step", at, label}, "options": [...], "sortedBy"}`: new routes from where the traveller is |
+| POST | `/api/trips/{tripId}/replan/apply` | `{"routeId": "R-…"}` (a saved, approved route made for the trip: `forTripId`) or `{"steps": [...], "stepPaths"?: [...]}` (one option's) | `trip.json`: sent, replacing the steps from the current one on (`override.fromRoute`: the route) |
+| GET | `/api/trips/{tripId}/location` | — | `{lat, lng, at, source: "checkin"\|"step", trail: [[lat, lng], ...] (oldest first), stepIndex, stepCount, step}`: where the traveller of a trip under way is (409 if it isn't under way) |
+| GET | `/api/trips/{tripId}/plan` | — | `{planVersion, steps, stepPaths, affected: [{stepIndex, line, from, to, path, message}]}`: the steps the traveller follows now, their lines on the map, and where trains aren't running on them (409 if it isn't under way) |
+| GET | `/api/trips/{tripId}/pack` | — | `{"packUrl": "<temporary S3 link>", "packVersion": "R-007-v3"}` (`R-007-v3-b2` once the trip's plan changed) |
+
+A trip under way can be changed without changing its route: `planVersion` goes up by one and the pack follows the new
+plan. `override` is the latest change or proposal: `{"kind": "bridge"|"replan", "status": "pending"|"sent"|
+"dismissed"|"withdrawn", "replacesFrom", "replacesTo", "steps", "leaveAt", "target", "sendAt", "sentAt", "sentBy":
+"caregiver"|"auto"}`. A bridging bus is `pending` until `sendAt` (3 minutes), then sent by itself. The caregiver is
+also told on the `careroute-disruptions` queue (disruption.json, `source: "journey-service"`, the message saying what
+was proposed or sent).
 
 ## Easy-read Service (Member 6)
 

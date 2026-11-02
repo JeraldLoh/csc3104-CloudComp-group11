@@ -5,9 +5,9 @@
 // Shareable link: /?from=1.4043,103.9021&to=1.3040,103.8318&mode=bus plans straight away.
 import { useEffect, useMemo, useState } from "react";
 import { DashboardPage, TravellersPage, useMyTravellers } from "./profiles";
-import { JourneyApi, RoutePlanner, SavedRoutes, Trips, tripProblem, useDisruptions, useSavedRoutes, useTrips } from "./planner";
+import { JourneyApi, RoutePlanner, SavedRoutes, TripMap, Trips, tripProblem, useDisruptions, useSavedRoutes, useTrips } from "./planner";
 import type { Point } from "./planner/usePlanner";
-import type { DataModeInfo, DataSource, RouteStep, TravelMode } from "./journey/types";
+import type { DataModeInfo, DataSource, RouteStep, TravelMode, Trip } from "./journey/types";
 import "./app.css";
 
 // Local demos only: switch the service between saved and live data. Hidden when the service can't switch
@@ -89,6 +89,23 @@ export default function App() {
   const caregiverId = actAs.startsWith("G-") ? actAs : "G-DEMO";
   const saved = useSavedRoutes(api, travellerId, actAs);
   const trips = useTrips(api, travellerId, actAs);
+  // A new route for a trip under way is planned on the Plan tab, from where the traveller is to the trip's destination.
+  const [reroute, setReroute] = useState<{ tripId: string; from: Point; to: Point } | null>(null);
+  const [goTo, setGoTo] = useState<{ tab: string } | null>(null);
+  async function planReroute(trip: Trip) {
+    const end = saved.routes.find((r) => r.routeId === trip.routeId)?.destination;
+    const start = saved.routes.find((r) => r.routeId === trip.routeId)?.origin;
+    const from = trip.status === "planned" && start ? { ...start, label: start.name }
+      : (trips.locations[trip.tripId] ?? await api.tripLocation(trip.tripId).catch(() => null))?.replanFrom;
+    if (from?.lat == null || from.lng == null || end?.lat == null || end.lng == null) return;
+    setReroute({ tripId: trip.tripId,
+      from: { lat: from.lat, lng: from.lng, label: trip.status === "planned" ? from.label ?? "Start" : "Where the traveller is" },
+      to: { lat: end.lat, lng: end.lng, label: end.name ?? "Destination" } });
+  }
+  function openRoute(routeId: string) {
+    void saved.open(routeId);
+    setGoTo({ tab: "saved" });
+  }
 
   // Re-check against LTA, every minute: the opened saved route and the route of every trip that hasn't finished.
   const watched: Record<string, RouteStep[]> = {};
@@ -97,6 +114,7 @@ export default function App() {
     if (route && t.status !== "completed" && !tripProblem(t, saved.routes, saved.loaded)) watched[route.routeId] = route.steps;
   }
   if (saved.opened) watched[saved.opened.routeId] = saved.opened.steps;
+  for (const r of saved.routes) if (r.approved && !r.forTripId) watched[r.routeId] = r.steps;   // for "New trip"
   const disruptions = useDisruptions(api, watched);
   // The "Act as" caregiver's own travellers (Alert Service, issue 5.1), for the Dashboard and Travellers pages.
   const me = actAs.trim();
@@ -125,13 +143,14 @@ export default function App() {
           : page === "travellers" ? <TravellersPage key={me} caregiverId={me} my={myTravellers} initialTravellerId={focusId} />
           : <RoutePlanner
           api={api} travellerId={travellerId} caregiverId={caregiverId} initial={initial}
-          viewing={saved.opened} onSaved={() => void saved.refresh()}
+          viewing={saved.opened} reroute={reroute} goTo={goTo} onSaved={() => void saved.refresh()}
           sections={[
             { id: "saved", label: "Saved routes", count: saved.routes.length,
               content: <SavedRoutes saved={saved} trips={trips} disruptions={disruptions} /> },
             { id: "trips", label: "Trips", count: trips.trips.length,
               content: <Trips trips={trips} routes={saved.routes} routesLoaded={saved.loaded} travellerAppUrl={TRAVELLER_APP_URL}
-                disruptions={disruptions} /> },
+                disruptions={disruptions} onReroute={(t) => void planReroute(t)} onOpenRoute={openRoute} />,
+              stage: <TripMap trips={trips} routes={saved.routes} /> },
           ]}
         />}
       </main>
