@@ -289,8 +289,6 @@ eksctl create iamserviceaccount \
   --region "$REGION" \
   --approve
 
-LBC_EXISTED=false
-helm status aws-load-balancer-controller -n kube-system >/dev/null 2>&1 && LBC_EXISTED=true
 helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
   -n kube-system \
   --set clusterName="$CLUSTER_NAME" \
@@ -299,12 +297,6 @@ helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-contro
   --set region="$REGION" \
   --set vpcId="$VPC_ID" \
   --version "$CHART_VERSION"
-# Every upgrade makes the chart generate a new webhook certificate, but the running pods keep the old one
-# until they restart, and until then every Service/Ingress apply fails with "x509: certificate signed by
-# unknown authority". So on a re-run, restart them.
-if [ "$LBC_EXISTED" = true ]; then
-  kubectl rollout restart deployment/aws-load-balancer-controller -n kube-system
-fi
 
 info "Waiting for the controller to become ready (Fargate pods take 1-2 minutes)"
 kubectl rollout status deployment/aws-load-balancer-controller -n kube-system --timeout=10m

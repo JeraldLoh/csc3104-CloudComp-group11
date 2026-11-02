@@ -60,18 +60,6 @@ function Invoke-Quiet([scriptblock]$Command) {
   $ErrorActionPreference = 'SilentlyContinue'
   try { & $Command 2>$null } finally { $ErrorActionPreference = $prev }
 }
-# Logs Docker in to ECR. Not `aws ecr get-login-password | docker login --password-stdin`: Windows PowerShell 5.1
-# re-encodes what it pipes into a native command, and ECR rejects the token (400 Bad Request). cmd's `<` hands
-# docker the file's bytes unchanged. The file is deleted straight after.
-function Connect-Ecr([string]$Registry) {
-  $password = aws ecr get-login-password --region $Region
-  if ($LASTEXITCODE -ne 0) { throw "Command failed (exit code $LASTEXITCODE): aws ecr get-login-password" }
-  $file = [IO.Path]::GetTempFileName()
-  try {
-    [IO.File]::WriteAllText($file, $password)
-    Invoke-Checked { cmd /c "docker login --username AWS --password-stdin $Registry < `"$file`"" }
-  } finally { Remove-Item $file -Force -ErrorAction SilentlyContinue }
-}
 
 # The committed manifest keeps its placeholders; this fills them in and refuses to continue if any is left.
 function Get-RenderedManifest([string]$Img, [string]$Redis, [string]$Bkt, [string]$Prefix) {
@@ -179,7 +167,7 @@ try {
   # ---------------------------------------------------------------------------
   Write-Step "Building and pushing $Image"
   $EcrRegistry = $EcrUri.Split('/')[0]
-  Connect-Ecr $EcrRegistry
+  Invoke-Checked { aws ecr get-login-password --region $Region | docker login --username AWS --password-stdin $EcrRegistry }
   Invoke-Checked { docker build --platform linux/amd64 -t $Image $ServiceDir }
   Invoke-Checked { docker push $Image }
 

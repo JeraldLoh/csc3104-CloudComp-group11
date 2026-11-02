@@ -1,3 +1,0 @@
-# Shell scripts must keep LF line endings, even in a Windows checkout with core.autocrlf=true:
-# bash fails on CRLF ("syntax error near unexpected token `$'in\r''"), e.g. when run from WSL.
-*.sh text eol=lf
