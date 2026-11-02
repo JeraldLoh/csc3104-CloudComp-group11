@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Pictogram } from "./Pictogram";
 import { mediaUrl, type LoadedPack } from "../lib/pack";
 import { storedMediaUrl } from "../lib/offline";
+import { easyReadPoints, landmarkCaption } from "../lib/easyRead";
 import type { RoutePackStep } from "../types";
 
 const MODE_NAME: Record<string, string> = { walk: "Walk", bus: "Bus", train: "Train" };
@@ -61,14 +62,20 @@ function useListen(text: string, audioSrc: string | null) {
   return { play, speaking, canListen };
 }
 
+/** A photo from the pack: the stored copy if there is one; hidden if it can't be shown (the words still guide). */
+function Photo({ tripId, loaded, path, className }: { tripId: string; loaded: LoadedPack; path: string | null; className: string }) {
+  const src = useStoredMedia(tripId, mediaUrl(loaded, path), loaded.pack.packVersion);
+  const [ok, setOk] = useState(true);
+  useEffect(() => setOk(true), [src]);
+  return src && ok ? <img className={className} src={src} alt="" onError={() => setOk(false)} /> : null;
+}
+
 export function StepCard({ step, loaded, index, total, tripId }: { step: RoutePackStep; loaded: LoadedPack; index: number; total: number; tripId: string }) {
-  const v = loaded.pack.packVersion;
-  const photo = useStoredMedia(tripId, mediaUrl(loaded, step.photoUrl), v);
-  const audio = useStoredMedia(tripId, mediaUrl(loaded, step.audioUrl), v);
-  const [photoOk, setPhotoOk] = useState(true);
-  useEffect(() => setPhotoOk(true), [photo]);
+  const audio = useStoredMedia(tripId, mediaUrl(loaded, step.audioUrl), loaded.pack.packVersion);
   const { play, speaking, canListen } = useListen(step.easyRead, audio);
   const mode = MODE_NAME[step.mode] ? step.mode : "walk";
+  const points = easyReadPoints(step.easyRead);
+  const landmarks = step.landmarks ?? [];
 
   return (
     <article className={`sign sign--${mode}`} aria-labelledby="step-text">
@@ -83,8 +90,31 @@ export function StepCard({ step, loaded, index, total, tripId }: { step: RoutePa
         ))}
       </ol>
       <div className="sign__body">
-        {photo && photoOk && <img className="sign__photo" src={photo} alt="" onError={() => setPhotoOk(false)} />}
-        <p id="step-text" className="sign__text">{step.easyRead}</p>
+        <Photo tripId={tripId} loaded={loaded} path={step.photoUrl} className="sign__photo" />
+        {/* One action per line, the same points the caregiver saw in the editor. A single sentence stays a sentence. */}
+        {points.length > 1 ? (
+          <ul id="step-text" className="sign__text sign__points">
+            {points.map((p, i) => <li key={i}>{p}</li>)}
+          </ul>
+        ) : (
+          <p id="step-text" className="sign__text">{step.easyRead}</p>
+        )}
+        {/* Landmarks with a photo side by side; one already shown in another photo gets a line saying which. */}
+        {landmarks.some((m) => m.photoUrl) && (
+          <ul className="sign__landmarks" aria-label="Things to look out for">
+            {landmarks.filter((m) => m.photoUrl).map((m, i) => (
+              <li key={`${m.name}-${i}`}>
+                <figure className="sign__landmark">
+                  <Photo tripId={tripId} loaded={loaded} path={m.photoUrl} className="sign__landmark-photo" />
+                  <figcaption>{landmarkCaption(m, !!step.photoUrl)}</figcaption>
+                </figure>
+              </li>
+            ))}
+          </ul>
+        )}
+        {landmarks.filter((m) => !m.photoUrl).map((m, i) => (
+          <p key={`${m.name}-${i}`} className="sign__landmark-note">{landmarkCaption(m, !!step.photoUrl)}</p>
+        ))}
         {step.backup && <p className="sign__backup">{step.backup}</p>}
         {canListen && (
           <button className="btn btn--quiet" onClick={play} aria-pressed={speaking}>
