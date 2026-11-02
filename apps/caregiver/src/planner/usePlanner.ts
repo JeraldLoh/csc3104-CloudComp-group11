@@ -66,6 +66,10 @@ export function usePlanner(api: PlannerApi, opts: PlannerOptions) {
   // The ends that were used to make the current options, or null if they have changed since the last plan.
   const [planned, setPlanned] = useState<Pair<Point> | null>(null);
   const [routeName, setRouteName] = useState("");
+  /** Planning a new route for this trip under way: saving links the route to it (and names it so). */
+  const [forTrip, setForTrip] = useState<string | null>(null);
+  const forTripRef = useRef<string | null>(null);
+  const linkTrip = (tripId: string | null) => { forTripRef.current = tripId; setForTrip(tripId); };
   const [status, setStatus] = useState<Status>(info(""));
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -149,6 +153,16 @@ export function usePlanner(api: PlannerApi, opts: PlannerOptions) {
     setRouteName("");
     setStatus(info(""));
     setBusy(false);
+    linkTrip(null);
+  }
+
+  /** Plan a new route for a trip under way, from where the traveller is to its destination. */
+  function reroute(tripId: string, from: Point, to: Point) {
+    clear();
+    linkTrip(tripId);
+    setPoint("from", from);
+    setPoint("to", to);
+    void plan();
   }
 
   // Plan a route for the pinned points. The host can show a message if it fails or finds nothing.
@@ -184,7 +198,8 @@ export function usePlanner(api: PlannerApi, opts: PlannerOptions) {
         return;
       }
       setPlanned(ends);
-      setRouteName(`${placeName(ends.from) ?? FALLBACK_NAMES.from} to ${placeName(ends.to) ?? FALLBACK_NAMES.to}`);
+      const name = `${placeName(ends.from) ?? FALLBACK_NAMES.from} to ${placeName(ends.to) ?? FALLBACK_NAMES.to}`;
+      setRouteName((forTripRef.current ? `Re-route (${forTripRef.current}): ${name}` : name).slice(0, 100));
       setStatus(info(`${found.length} option${found.length > 1 ? "s" : ""} found. Click one to see it on the map.`));
     } catch (e) {
       if (!stale() && !(e instanceof Superseded)) setStatus(failure(message(e)));
@@ -215,11 +230,14 @@ export function usePlanner(api: PlannerApi, opts: PlannerOptions) {
       destination: place(planned.to),
       steps: option.steps,
       path: option.path,
+      forTripId: forTripRef.current,
     };
     setSaving(true);
     try {
       const route = await api.createRoute(draft);
-      setStatus(info(`Saved as ${route.routeId} (version ${route.version}, not approved yet).`));
+      setStatus(info(forTripRef.current
+        ? `Saved as ${route.routeId}. Check its wording and photos on Saved routes, approve it, then send it from the Trips tab.`
+        : `Saved as ${route.routeId} (version ${route.version}, not approved yet).`));
       opts.onSaved?.(route);
       return route;
     } catch (e) {
@@ -239,9 +257,9 @@ export function usePlanner(api: PlannerApi, opts: PlannerOptions) {
   }, []);
 
   return {
-    points, queries, candidates, mode, sortBy, options, activeIndex, planned, routeName, status, busy, saving, focus,
+    points, queries, candidates, mode, sortBy, options, activeIndex, planned, routeName, status, busy, saving, focus, forTrip,
     activeOption: options[activeIndex] ?? null,
-    setQuery, lookUp, choosePlace, clickMap, clear, plan, save,
+    setQuery, lookUp, choosePlace, clickMap, clear, plan, save, reroute, unlinkTrip: () => linkTrip(null),
     setMode, setSortBy, setRouteName,
     selectOption: setActiveIndex,
   };

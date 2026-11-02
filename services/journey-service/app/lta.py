@@ -53,6 +53,11 @@ def _float(value: Any) -> float | None:
     return f if f != 0.0 else None          # buses with no GPS fix report 0.0/0.0
 
 
+def _codes(value: str | None) -> list[str]:
+    """LTA's "NE10,NE11, NE12" -> ["NE10", "NE11", "NE12"]; blank -> []."""
+    return [c.strip() for c in (value or "").split(",") if c.strip()]
+
+
 def every(freq: str | None) -> list[int] | None:
     """LTA's frequency "08-12" (minutes between buses) -> [8, 12]; "-", "" or zeros (no service then) -> None."""
     try:
@@ -223,6 +228,24 @@ class LtaClient:
                 return {"towards": towards, "every": info.get("every")}
         return None
 
+    def services_between(self, board_codes: set[str], alight_codes: set[str]) -> list[tuple[str, str, str, int]]:
+        """[(service, board stop, alight stop, stops ridden)] for every bus service that stops at one of
+        `board_codes` and later at one of `alight_codes`, fewest stops first. [] when the lists aren't to hand."""
+        lists = self._bus_lists()
+        if lists is None:
+            return []
+        found = []
+        for service, directions in lists[0].items():
+            for stops in directions.values():
+                for i, board in enumerate(stops):
+                    if board not in board_codes:
+                        continue
+                    alight = next((j for j in range(i + 1, len(stops)) if stops[j] in alight_codes), None)
+                    if alight is not None:
+                        found.append((service, board, stops[alight], alight - i))
+                        break
+        return sorted(found, key=lambda f: (f[3], f[0]))
+
     def warm_bus_services(self) -> None:
         """Fetch the lists ahead of the first plan that needs them (call it in a background thread)."""
         self._bus_lists()
@@ -318,9 +341,13 @@ class LtaClient:
             "status": value.get("Status", 1),
             "segments": [
                 {"line": seg.get("Line"), "direction": seg.get("Direction"),
-                 "stations": [s for s in (seg.get("Stations") or "").split(",") if s],
-                 "freePublicBus": seg.get("FreePublicBus") or None,
-                 "freeMrtShuttle": seg.get("FreeMRTShuttle") or None}
+                 "stations": _codes(seg.get("Stations")),
+                 # Where the free buses can be taken during the breakdown (bridge.py): ordinary buses that are free
+                 # at these stations, and the bridging buses ("shuttles") that call at these, going this way
+                 # ("Both", or the station a direction ends at).
+                 "freePublicBus": _codes(seg.get("FreePublicBus")),
+                 "freeMrtShuttle": _codes(seg.get("FreeMRTShuttle")),
+                 "shuttleDirection": (seg.get("MRTShuttleDirection") or "").strip() or None}
                 for seg in value.get("AffectedSegments", [])],
             "messages": [{"content": m.get("Content"), "createdDate": m.get("CreatedDate")}
                          for m in value.get("Message", [])],

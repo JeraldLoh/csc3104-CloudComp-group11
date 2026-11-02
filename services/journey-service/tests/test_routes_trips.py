@@ -10,7 +10,7 @@ from app.disruption import DisruptionChecker
 from app.models import RouteIn
 from app.route_store import RouteConflict, RouteNotFound
 from app.trip_store import TripConflict
-from helpers import (DISRUPTION_NOW, NEL_ALERT, SETTINGS, approved_route, mock_lta, mock_onemap, plan, route_data,
+from helpers import (DISRUPTION_NOW, NEL_ALERT, SETTINGS, approved_route, mock_lta, mock_onemap, mock_station_search, plan, route_data,
                      routes_client, trip_client)
 
 
@@ -163,6 +163,7 @@ def test_end_trip_removes_the_redis_keys_and_is_idempotent():
 def test_a_started_trip_is_watched_by_the_disruption_checker_end_to_end():
     """Plan a real MRT route, save, approve, start the trip, then an MRT outage hits its stations."""
     mock_onemap("route_pt_bus_mrt.json")
+    mock_station_search()
     mock_lta(alerts=NEL_ALERT)
     option = plan()[0]
     client, r = trip_client(clock=DISRUPTION_NOW)

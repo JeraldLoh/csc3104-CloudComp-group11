@@ -141,8 +141,9 @@ if the signing keys can't be fetched it is `503`, not `401`.
 
 Not done yet: checking that a caregiver is really *linked* to the traveller, which needs the Profiles service
 (it would call Profiles' `GET /api/travellers` with the caller's token). Until then a caregiver can save a route for any
-traveller id; they just can't see other caregivers' routes. Try it locally: `$env:AUTH_MODE = "dev"` before
-`docker compose ... up`, then `curl.exe -H "X-Dev-User: G-DEMO" ...` (the caregiver app has an "Act as" box).
+traveller id; they just can't see other caregivers' routes. Try it locally: `$env:AUTH_MODE = "dev"` (bash:
+`export AUTH_MODE=dev`) before `docker compose ... up`, then `curl.exe -H "X-Dev-User: G-DEMO" ...` (bash: `curl`)
+(the caregiver app has an "Act as" box).
 
 ## Saved-data mode (demos without the live APIs)
 
@@ -416,6 +417,9 @@ Real MRT outages are rare (and the saved data is a normal day), so for a demo yo
 read LTA's train alerts through a Redis cache; this writes a pretend "major disruption" response into it, for live and
 saved data alike.
 
+Each block below is PowerShell (Windows) first, then bash (macOS/Linux). Blocks with only `docker`, `kubectl`, `pip`,
+`pytest` and `cd` lines are the same in both.
+
 ```powershell
 $t = "docker exec careroute-journey-service-1 python -m app.demo_tools"
 # 1. in the caregiver app: plan a route that uses the MRT, save it, approve it, create a trip and start it
@@ -428,8 +432,89 @@ iex "$t off"                     # back to the normal LTA feed
 iex "$t crowd on --stations NE17"   # pretend Punggol's platform is very crowded; `crowd off` removes it
 ```
 
+```bash
+t="docker exec careroute-journey-service-1 python -m app.demo_tools"
+# 1. in the caregiver app: plan a route that uses the MRT, save it, approve it, create a trip and start it
+$t on                            # pretend the whole North East Line is down (or: $t on --line NEL --stations NE10,NE11,NE12)
+# 2. plan the route again: the MRT step gets a red warning and an orange marker on the map
+$t check                         # sends a disruption message for each active trip on those stations
+$t check                         # run again: nothing new is sent (already told); `$t check --again` sends it once more
+$t check --dry-run               # show what would be sent without putting it on the queue
+$t off                           # back to the normal LTA feed
+$t crowd on --stations NE17      # pretend Punggol's platform is very crowded; `$t crowd off` removes it
+```
+
 `on` lasts 30 minutes unless you pass `--minutes`. A normal-day `check` finds nothing, because the checker does
 nothing until LTA reports a disruption. Trips on a different line, or already past the affected stretch, are not reported.
+
+## Changing a trip under way: bridging buses and re-routing
+
+A trip keeps its route version (a disruption never changes the planned route); what changes is the trip's own plan:
+`planSteps` (kept on the trip, not returned) and `planVersion` (+1 per change). The pack then follows the plan
+(`packVersion` `R-007-v3-b2`, S3 `packs/R-007/v3-b2.json`), so the traveller app, which looks for a new pack every
+minute, shows "Your trip has changed"; and `trip:{id}:route` is rewritten, so the detectors and the disruption
+checker follow it. `override` on the trip is the latest change or proposal.
+
+- **Free bridging buses** (`app/bridge.py`, wording in `easy_read.py`): during a breakdown LTA's TrainServiceAlerts
+  lists, per broken stretch, the stations the free bridging buses call at (`FreeMRTShuttle`, going
+  `MRTShuttleDirection`) and where ordinary buses are free (`FreePublicBus`). For a trip still to ride through the
+  stretch, the train step is replaced by: the train to the station before the stretch (if the bridging bus calls
+  there), the free bridging bus to the station after it (or the traveller's own stop, if inside), and the train on.
+  No bridging bus that way: an ordinary free bus between stops within 300 m of the two stations (LTA's BusRoutes).
+  Neither: nothing is proposed, and the caregiver can plan a new route.
+- **Held, then sent by itself**: the API looks every `BRIDGE_WATCH_S` (30; a Redis lock means one replica does each
+  pass) and stores a `pending` proposal with `sendAt` = now + `BRIDGE_AUTO_SEND_S` (180). The caregiver can
+  **Send now** (`POST /api/trips/{id}/bridge/send`) or **Don't send** (`/bridge/dismiss`, not sent later either);
+  if they do neither, it is sent at `sendAt` (`sentBy: "auto"`). It is withdrawn if the breakdown ends first.
+- **Choosing it yourself**: `POST /api/trips/{id}/bridge/use` works the bridging bus out and uses it at once, also for
+  a trip not started yet (its plan changes; start_trip publishes it). A bridging bus the caregiver chose not to send
+  can still be sent (`/bridge/send`) while its breakdown lasts; the watcher withdraws it when the breakdown ends. A
+  route saved for a planned trip can be used for it too. The caregiver app asks before starting or making a trip on a
+  route with a disruption, and before sending a bridging bus.
+- **A whole new route** (`POST /api/trips/{id}/replan` -> options, `/replan/apply {steps}` -> sent): from the
+  traveller's newest check-in (`trip:{id}:recent`) if under 5 minutes old, else the start of their current step,
+  to the route's destination. It replaces their steps from the current one on. Only ever the caregiver's choice.
+  OneMap doesn't know about breakdowns, so options that ride through a broken stretch are left out (else the same
+  ride comes back, and a bridging bus is proposed for it again). In the caregiver app the new route is planned on the
+  Plan tab instead (from `location`'s `replanFrom` to the trip's destination) and saved like any route, with
+  `forTripId` and a name starting "Re-route (T-…)", so its wording and photos are checked on Saved routes; once
+  approved, `/replan/apply {routeId}` sends its own steps (wording, photos, landmarks: they go in the pack).
+- **Planning during a breakdown**: every plan option says where it rides with no trains (`affected`, as for a trip)
+  and LTA's free bus past it (`bridges`: the train to the station where the bus calls, the bus, the train on). They
+  are shown, never saved: a trip gets a bridging bus only while trains are still not running. Those options are
+  sorted last, and when the breakdown hits every option, bus-only routes are planned as well.
+- **Following the traveller**: `GET /api/trips/{id}/location` gives their newest check-in (however old; `at` says
+  when) and the last few as a trail, or before the first check-in where their step starts, with the step they are on.
+  `GET /api/trips/{id}/plan` gives the steps they follow now (with a bridging bus or new route sent), each with its
+  line on the map (`planPaths` on the trip: a re-route's own from OneMap, a bridging bus's cut from the train line it
+  stands in for), and `affected`: where those steps ride with no trains running, from the station before the broken
+  stretch to the one after it. The caregiver app's Trips tab polls the location every 5 s and the plan every 30 s
+  (and when `planVersion` changes) and draws the trip on its own map: the current route with the affected part in
+  amber, the traveller, their next stop, and a header naming the trip; a new route being looked at can be switched
+  to and back. Clicks there don't change the planner's From and To.
+- **The caregiver is told** at each step: on the Trips tab (a card with the countdown, the new steps, the buttons and
+  "Plan a new route from where the traveller is", whose options are drawn on the planner's map from the
+  traveller's position, with a switch over the map to the route the trip was planned on and back; trips are looked at every 15 s while one is under way), and as a
+  message on the `careroute-disruptions` queue ("…will be sent to them at 08:03…", "…has been sent the free bridging
+  bus (automatically…)"), which the Alert Service shows as the trip's disruption alert: the first message opens
+  it, later ones for the same trip and step update its text (checked against alert-service).
+
+Demo (live or saved data):
+```powershell
+iex "$t on --stations NE13,NE14,NE15 --shuttle NE12,NE13,NE14,NE15,NE16 --shuttle-dir Both"   # or --bus ... for free buses
+iex "$t bridge"                  # look for bridges now (the API also does, every 30 s); `bridge --send-now` sends at once
+```
+
+```bash
+t="docker exec careroute-journey-service-1 python -m app.demo_tools"
+$t on --stations NE13,NE14,NE15 --shuttle NE12,NE13,NE14,NE15,NE16 --shuttle-dir Both   # or --bus ... for free buses
+$t bridge                        # look for bridges now (the API also does, every 30 s); `$t bridge --send-now` sends at once
+```
+
+Then in the caregiver app (Trips tab): a trip under way that rides through NE13-NE15 gets the bridging bus proposed
+(sent by itself after 3 minutes); a trip not started yet offers **Use the free bridging bus** (its new steps shown
+first) or **Plan a new route**. To follow a traveller without a phone, run a simulated trip
+(`tools/simulator`, see the root README's "Everything in one command, with a simulated trip").
 
 ## Configuration
 
@@ -479,6 +564,12 @@ curl.exe http://localhost:8006/health
 curl.exe http://localhost:8006/internal/lta/bus-arrival/83139
 ```
 
+```bash
+docker compose --env-file .env -f services/journey-service/compose.journey.yaml up --build -d
+curl http://localhost:8006/health
+curl http://localhost:8006/internal/lta/bus-arrival/83139
+```
+
 kind:
 
 ```powershell
@@ -494,4 +585,9 @@ kubectl port-forward svc/journey-service 8006:8000 -n csc3104
 ```powershell
 $env:LTA_API_KEY = "<your key>"
 python scripts/capture_data.py --target tests  # writes app/saved_data/fixtures/lta_*.json and onemap_*.json
+```
+
+```bash
+export LTA_API_KEY="<your key>"
+python3 scripts/capture_data.py --target tests  # writes app/saved_data/fixtures/lta_*.json and onemap_*.json
 ```

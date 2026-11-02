@@ -60,7 +60,37 @@
 .rp__card > .rp__heading { margin-bottom: 10px; }
 .rp__pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .rp__stage { position: relative; flex: 1; min-width: 0; max-height: 100%; display: flex; }
+/* The side panel's edge: drag it (or arrow keys) to make the panel wider or narrower. */
+.rp__resize { position: relative; z-index: 1001; flex: none; width: 10px; margin: 0 -5px; cursor: col-resize; touch-action: none; }
+.rp__resize::after { content: ""; position: absolute; top: 0; bottom: 0; left: 4px; width: 2px; background: transparent;
+  transition: background-color 0.15s; }
+.rp__resize:hover::after, .rp__resize:focus-visible::after, .rp__resize:active::after { background: var(--rp-accent); }
+.rp__resize:focus-visible { outline: none; }
 .rp__map { flex: 1; min-width: 0; min-height: 280px; }
+/* Over the Trips tab's map: which trip it follows, and (while a new route is shown) the new route or the
+   one the trip was planned on. */
+.rp__trip-head { position: absolute; top: 12px; left: 56px; z-index: 1000; max-width: min(440px, calc(100% - 72px));
+  padding: 10px 14px; border: 1px solid var(--rp-line); border-radius: 12px; background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 6px 20px -8px rgba(15, 23, 42, 0.35); }
+.rp__trip-head-top { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 4px; }
+.rp__trip-head-name { font-weight: 650; line-height: 1.3; }
+.rp__legend { display: flex; align-items: center; gap: 6px; margin-top: 4px; font-size: 12px; font-weight: 600; color: #92400e; }
+.rp__swatch { flex: none; width: 18px; height: 6px; border-radius: 3px; background: #f59e0b;
+  box-shadow: inset 0 0 0 1px rgba(146, 64, 14, 0.25); }
+.rp__map-switch { display: inline-flex; margin-top: 8px; padding: 3px; border-radius: 9px; background: var(--rp-subtle); }
+.rp__map-switch button { padding: 4px 12px; font: inherit; font-size: 12px; font-weight: 600; color: var(--rp-label);
+  background: none; border: 0; border-radius: 7px; cursor: pointer; }
+.rp__map-switch button[aria-pressed="true"] { color: var(--rp-accent-hover); background: var(--rp-bg);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12); }
+
+/* Pills: a trip's state. "live" pulses while the trip is under way. */
+.rp__pill { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px; font-size: 11px;
+  font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; color: var(--rp-label); background: var(--rp-subtle); }
+.rp__pill--live { color: var(--rp-ok); background: #dcfce7; }
+.rp__pill--warn { color: #92400e; background: #fef3c7; }
+.rp__pulse { width: 7px; height: 7px; border-radius: 50%; background: currentColor; animation: rp-pulse 1.6s ease-out infinite; }
+@keyframes rp-pulse { 0% { box-shadow: 0 0 0 0 rgba(21, 128, 61, 0.5); } 100% { box-shadow: 0 0 0 7px rgba(21, 128, 61, 0); } }
+@media (prefers-reduced-motion: reduce) { .rp__pulse { animation: none; } }
 
 .rp__hint { color: var(--rp-muted); margin: 0 0 12px; font-size: 13px; }
 .rp__field { margin-top: 10px; }
@@ -92,6 +122,12 @@
 .rp__option { margin-top: 8px; }
 .rp__option:hover, .rp__open:hover { background: var(--rp-surface); }
 .rp__option--active, .rp__open[aria-current="true"] { background: var(--rp-selected); border-color: var(--rp-selected-line); }
+/* An option with a disruption on it: amber, as where trains aren't running is drawn on the map. */
+.rp__option--disrupted { background: #fffbeb; border-color: #fcd34d; border-left: 4px solid #f59e0b; }
+.rp__option--disrupted:hover { background: #fef3c7; }
+.rp__option--disrupted.rp__option--active { background: #fef3c7; border-color: #f59e0b; box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.2); }
+.rp__option-flag { display: inline-block; margin-bottom: 3px; padding: 1px 7px; border-radius: 999px; font-size: 10px;
+  font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; color: #92400e; background: #fde68a; }
 
 .rp__steps { padding: 0; list-style: none; margin: 12px 0; }
 .rp__step { border-left: 4px solid var(--rp-walk); padding: 4px 0 8px 12px; margin-bottom: 6px; }
@@ -161,11 +197,80 @@
 .rp__file { display: inline-block; }
 .rp__file input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 .rp__file:focus-within { outline: 2px solid var(--rp-accent); outline-offset: 2px; }
+/* The Trips tab: trips under way first, each its own card; then making a trip, coming up, and finished. */
+.rp__notice { margin-bottom: 14px; padding: 10px 12px; border: 1px solid var(--rp-selected-line); border-radius: 10px;
+  background: var(--rp-selected); color: var(--rp-fg); font-size: 13px; }
+.rp__notice--error { border-color: #fecaca; background: #fef2f2; color: #991b1b; }
+.rp__live-card { border-left: 4px solid var(--rp-ok); }
+.rp__live-card--shown { box-shadow: 0 0 0 3px rgba(21, 128, 61, 0.12); }
+.rp__live-top, .rp__live-actions { display: flex; align-items: center; gap: 8px; }
+.rp__live-top > *, .rp__pill { white-space: nowrap; }
+.rp__live-actions { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--rp-line); }
+.rp__push { margin-left: auto; }
+.rp__trip-title { margin-top: 10px; font-size: 15px; font-weight: 650; line-height: 1.3; }
+.rp__progress { display: flex; gap: 3px; margin: 12px 0 8px; padding: 0; list-style: none; }
+.rp__progress li { flex: 1; height: 6px; border-radius: 3px; background: var(--rp-line); }
+.rp__progress li.done { background: #86efac; }
+.rp__progress li.now { background: var(--rp-ok); }
+/* The trip's steps, one at a time: click a segment, or use the arrows. */
+.rp__progress--pick li { position: relative; height: 8px; }
+.rp__progress--pick li button { position: absolute; inset: -6px 0; width: 100%; padding: 0; background: none; border: 0; cursor: pointer; }
+.rp__progress--pick li.broken { background: #fcd34d; }
+.rp__progress--pick li.shown { outline: 2px solid var(--rp-accent); outline-offset: 2px; }
+.rp__browse-nav { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.rp__browse-nav .rp__btn { min-width: 30px; }
+.rp__link-btn { margin-left: auto; padding: 0; font: inherit; font-size: 12px; font-weight: 600; color: var(--rp-accent);
+  background: none; border: 0; cursor: pointer; }
+.rp__now { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 4px; font-weight: 600; line-height: 1.35; }
+.rp__details { margin-top: 8px; font-size: 12px; }
+.rp__details > summary { cursor: pointer; color: var(--rp-label); font-weight: 600; }
+.rp__inline { display: flex; gap: 8px; align-items: stretch; }
+.rp__inline > input { flex: 1; }
+.rp__inline > .rp__btn { width: auto; flex: none; }
+.rp__trip-row { display: flex; align-items: center; gap: 8px; }
+.rp__finished > summary { cursor: pointer; list-style: none; display: flex; align-items: center; }
+.rp__finished > summary::-webkit-details-marker { display: none; }
+.rp__finished > summary::after { content: "▾"; margin-left: auto; color: var(--rp-muted); }
+.rp__finished[open] > summary { margin-bottom: 4px; }
+.rp__finished .rp__trip-row { padding: 8px 0; border-bottom: 1px solid var(--rp-line); }
+.rp__finished .rp__trip-row:last-child { border-bottom: 0; }
 .rp__trip { margin-top: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--rp-line); }
 .rp__trip:last-child { border-bottom: 0; }
 .rp__trip .rp__item { margin-top: 0; }
 .rp__trip-text { flex: 1; min-width: 0; }
 .rp__trip-text > span { display: block; }
+.rp__change { margin-top: 6px; }
+.rp__replan { padding: 8px 10px; border: 1px solid transparent; border-radius: 10px; }
+.rp__replan--shown { border-color: var(--rp-selected-line); background: var(--rp-selected); }
+.rp__replan > .rp__btn { margin-top: 4px; }
+/* An option's name: pick it to draw it on the map. */
+.rp__replan-pick { display: block; width: 100%; padding: 0; text-align: left; font: inherit; font-weight: 600; color: inherit;
+  background: none; border: 0; cursor: pointer; }
+.rp__replan:not(.rp__replan--shown):hover { background: var(--rp-surface); border-color: var(--rp-line); }
+.rp__replan { cursor: pointer; }
+.rp__change .rp__steps { margin: 8px 0 0; }
+.rp__reroutes { margin-top: 8px; }
+.rp__change-actions { flex-wrap: wrap; margin-top: 8px; }
+.rp__change-actions > * { flex: none; }
+.rp__trip-row { flex-wrap: wrap; }
+.rp__confirm--inline { flex-basis: 100%; }
+/* A bridging bus the caregiver chose not to send: one line, opened to send it after all. */
+.rp__dismissed { margin: 6px 0; padding: 6px 10px; border: 1px solid var(--rp-line); border-radius: 8px;
+  background: var(--rp-surface); font-size: 12px; }
+.rp__bridge-preview .rp__steps { margin: 8px 0; }
+.rp__bridge-preview .rp__photo, .rp__dismissed .rp__photo, .rp__change .rp__photo { max-width: 220px; }
+.rp__dismissed > summary { cursor: pointer; font-weight: 600; color: var(--rp-label); }
+.rp__dismissed[open] > summary { margin-bottom: 6px; }
+.rp__reroute { padding: 8px 10px; border: 1px solid var(--rp-selected-line); border-radius: 10px; background: var(--rp-selected); }
+.rp__reroute + .rp__reroute { margin-top: 6px; }
+.rp__reroute .rp__row { margin-top: 6px; }
+.rp__reroute .rp__row > * { flex: none; }
+/* Under a plan option riding through a breakdown: the free bus past it (shown, never saved). */
+.rp__bridge-note { margin: 8px 0; padding: 8px 10px; border: 1px solid #fde68a; border-left: 4px solid #f59e0b;
+  border-radius: 8px; background: #fffbeb; color: #78350f; font-size: 12px; }
+.rp__bridge-note .rp__steps { margin: 6px 0; }
+.rp__open .rp__pill { margin: 3px 0; }
+.rp__change .rp__row { margin-top: 8px; }
 .rp__link { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
 .rp__link input { margin-top: 0; font-size: 12px; }
 
@@ -233,8 +338,9 @@
    restyle .rp itself (it is the container), so the two wrap onto their own lines and swap order instead. */
 @container (max-width: 700px) {
   .rp__stage { order: 1; flex: 0 0 100%; height: 45%; }
-  .rp__panel { order: 2; flex: 0 0 100%; width: 100%; max-width: none; height: 55%; border-right: 0;
+  .rp__panel { order: 2; flex: 0 0 100%; width: 100% !important; max-width: none !important; height: 55%; border-right: 0;
     border-top: 1px solid var(--rp-line); }
+  .rp__resize { display: none; }
   /* The map is a strip here: the phone goes under it instead of on top, and the two scroll together. */
   .rp__stage { flex-direction: column; overflow: auto; }
   .rp__stage > .rp__map { flex: none; height: 100%; min-height: 220px; }

@@ -1,6 +1,8 @@
 """Demo helper: pretend LTA reports an MRT disruption (or a crowded platform), then see what the system does.
 
     docker exec careroute-journey-service-1 python -m app.demo_tools on [--line NEL] [--stations NE10,NE11,NE12]
+                                          [--shuttle NE9,NE10,NE11,NE12,NE13] [--shuttle-dir Both] [--bus NE10,...]
+    docker exec careroute-journey-service-1 python -m app.demo_tools bridge [--send-now]
     docker exec careroute-journey-service-1 python -m app.demo_tools check [--dry-run] [--again]
     docker exec careroute-journey-service-1 python -m app.demo_tools off
     docker exec careroute-journey-service-1 python -m app.demo_tools crowd on [--line NEL] [--stations NE17] [--level high]
@@ -13,7 +15,10 @@ read it from there. `on` writes a pretend "major disruption" response into both 
 so whichever data is in use:
   * planning a route over those stations shows a red `train_disruption` warning on its MRT step, and
   * `check` (the disruption Lambda's job) sends a disruption message for every active trip on those stations.
-`off` removes it and the real (or saved) LTA feed is used again. `crowd on` does the same for platform crowding: it
+With `--shuttle` (stations the free bridging buses call at, `--shuttle-dir` the way they go) or `--bus` (stations
+where ordinary buses are free), active trips riding into the stretch get a bridging bus proposed for their caregiver
+(the API looks every BRIDGE_WATCH_S); `bridge` looks now, and `--send-now` also sends it as if the caregiver had
+waited BRIDGE_AUTO_SEND_S. `off` removes it and the real (or saved) LTA feed is used again. `crowd on` does the same for platform crowding: it
 writes a pretend LTA response into the keys the planner reads (`platform-crowd:<line>`), so a route boarding at those
 stations shows a `crowded` warning; `crowd off` removes every pretend crowd. `mode` shows or switches live/saved data
 (the same switch as the caregiver app's header). Only runs when DEMO_UI=true, so it can't be used by accident on a
@@ -41,14 +46,15 @@ MODE_NAMES = {"live": "live", "saved": "recorded"}
 NEL_STATIONS = ",".join(f"NE{n}" for n in range(1, 18) if n != 2)
 
 
-def pretend_response(line: str, stations: str, now: datetime) -> dict:
+def pretend_response(line: str, stations: str, now: datetime, shuttle: str = "", shuttle_dir: str = "",
+                     bus: str = "") -> dict:
     """What LTA's TrainServiceAlerts returns during a major disruption (contracts: Status 2 = disrupted)."""
     return {
         "odata.metadata": "https://datamall2.mytransport.sg/ltaodataservice/$metadata#TrainServicesAlerts",
         "value": {
             "Status": 2,
-            "AffectedSegments": [{"Line": line, "Direction": "Both", "Stations": stations, "FreePublicBus": "",
-                                  "FreeMRTShuttle": "", "MRTShuttleDirection": ""}],
+            "AffectedSegments": [{"Line": line, "Direction": "Both", "Stations": stations, "FreePublicBus": bus,
+                                  "FreeMRTShuttle": shuttle, "MRTShuttleDirection": shuttle_dir}],
             "Message": [{"Content": f"DEMO: no train service on the {line} between {stations.split(',')[0]} and "
                                     f"{stations.split(',')[-1]} due to a signalling fault.",
                          "CreatedDate": now.astimezone(SST).strftime("%Y-%m-%d %H:%M:%S")}],
@@ -61,8 +67,9 @@ def _put(r, key: str, response: dict, minutes: int) -> None:
         r.set(prefix + key, json.dumps(response), ex=minutes * 60)
 
 
-def simulate(r, line: str, stations: str, minutes: int, now: datetime | None = None) -> dict:
-    response = pretend_response(line, stations, now or datetime.now(SST))
+def simulate(r, line: str, stations: str, minutes: int, now: datetime | None = None, **free) -> dict:
+    """`free`: shuttle, shuttle_dir, bus (see pretend_response)."""
+    response = pretend_response(line, stations, now or datetime.now(SST), **free)
     _put(r, ALERTS_KEY, response, minutes)
     return response
 
@@ -110,6 +117,11 @@ def main(argv: list[str] | None = None) -> int:
     on.add_argument("--line", default="NEL", help="LTA line code, e.g. NEL, NSL, EWL, CCL, DTL, TEL (default NEL)")
     on.add_argument("--stations", default=NEL_STATIONS, help="affected station codes, comma separated (default: the whole NEL)")
     on.add_argument("--minutes", type=int, default=30, help="how long the pretend disruption lasts (default 30)")
+    on.add_argument("--shuttle", default="", help="stations the free bridging buses call at, comma separated")
+    on.add_argument("--shuttle-dir", default="Both", help="the way they go: Both, or the station that way ends at")
+    on.add_argument("--bus", default="", help="stations where ordinary buses are free, comma separated")
+    bridge = sub.add_parser("bridge", help="look for bridging buses for active trips now (as the API does)")
+    bridge.add_argument("--send-now", action="store_true", help="also send them, as if the caregiver had waited")
     sub.add_parser("off", help="go back to the real (or saved) LTA feed")
     crowd = sub.add_parser("crowd", help="pretend a platform is crowded (or remove it)")
     crowd.add_argument("action", choices=("on", "off"))
@@ -132,9 +144,22 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "on":
         stations = ",".join(x.strip().upper() for x in args.stations.split(",") if x.strip())
-        simulate(r, args.line.upper(), stations, args.minutes)
-        print(f"Pretending {args.line.upper()} is disrupted at {stations} for {args.minutes} min. "
-              "Plan a route over those stations to see the warning, or run `check`.")
+        codes = lambda v: ",".join(x.strip().upper() for x in v.split(",") if x.strip())      # noqa: E731
+        simulate(r, args.line.upper(), stations, args.minutes, shuttle=codes(args.shuttle),
+                 shuttle_dir=args.shuttle_dir if args.shuttle else "", bus=codes(args.bus))
+        print(f"Pretending {args.line.upper()} is disrupted at {stations} for {args.minutes} min"
+              + (f", bridging buses at {codes(args.shuttle)}" if args.shuttle else "")
+              + (f", free buses at {codes(args.bus)}" if args.bus else "")
+              + ". Plan a route over those stations to see the warning, or run `check` / `bridge`.")
+    elif args.command == "bridge":
+        from .main import build_journey                    # the API's client: trips, routes, packs, the queue
+        journey = build_journey(s, r, DataMode(s, r))
+        now = datetime.now(SST)
+        summary = journey.watch_bridges(now)
+        if args.send_now:
+            later = journey.watch_bridges(now + timedelta(seconds=s.bridge_auto_send_s))
+            summary = {k: summary[k] + later[k] for k in summary}
+        print(f"Bridging buses: {summary}")
     elif args.command == "crowd":
         if args.action == "off":
             print(f"Removed {clear_crowd(r)} pretend crowd(s); using the real platform crowding again.")

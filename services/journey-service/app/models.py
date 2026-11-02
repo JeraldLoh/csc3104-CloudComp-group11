@@ -98,6 +98,8 @@ class RouteIn(BaseModel):
     destination: Place
     steps: list[Step] = Field(min_length=1, max_length=50)
     path: list[tuple[float, float]] = Field(default_factory=list, max_length=5000)
+    # A new route for a trip under way (planned from where the traveller is), to send to it once approved.
+    forTripId: str | None = Field(default=None, pattern=r"^T-[0-9A-F]{6}$")
 
     @model_validator(mode="after")
     def _steps_in_order(self):
@@ -110,6 +112,21 @@ class TripIn(BaseModel):
     """Body of POST /api/trips."""
     routeId: str = Field(pattern=r"^R-[0-9A-F]{6}$")
     date: date_type                       # "2026-10-12"
+
+
+class ReplanIn(BaseModel):
+    """Body of POST /api/trips/{id}/replan/apply: a saved, approved route made for the trip (`routeId`: its own
+    wording and photos go to the traveller), or one option's steps from POST /api/trips/{id}/replan."""
+    routeId: str | None = Field(default=None, pattern=r"^R-[0-9A-F]{6}$")
+    steps: list[Step] | None = Field(default=None, min_length=1, max_length=50)
+    # The option's `stepPaths` ([lat, lng] lines, one per step), so the caregiver's map can draw the new route.
+    stepPaths: list[list[list[float]]] | None = Field(default=None, max_length=50)
+
+    @model_validator(mode="after")
+    def _one_of(self):
+        if (self.routeId is None) == (self.steps is None):
+            raise ValueError("send either routeId or steps")
+        return self
 
 
 class DisruptionCheckIn(BaseModel):

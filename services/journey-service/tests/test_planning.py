@@ -7,7 +7,7 @@ import respx
 
 from app.journey_client import decode_polyline, distance_to_path_m
 from app.lta import SST
-from helpers import (AMK, LTA, NOW, ROUTE, SEARCH, TOA_PAYOH, bus, first_leg, make, mock_lta, mock_onemap,
+from helpers import (AMK, LTA, NOW, ROUTE, SEARCH, TOA_PAYOH, bus, first_leg, make, mock_lta, mock_onemap, mock_station_search,
                      onemap_fixture, plan)
 
 
@@ -111,6 +111,7 @@ def test_bus_leg_gets_next_buses():
 @respx.mock
 def test_train_disruption_on_the_leg_is_flagged():
     mock_onemap("route_pt_bus_mrt.json")
+    mock_station_search()
     mock_lta(alerts={"value": {
         "Status": 2,
         "AffectedSegments": [{"Line": "NEL", "Direction": "HarbourFront", "Stations": "NE12,NE11,NE10",

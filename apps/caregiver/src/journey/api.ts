@@ -2,7 +2,7 @@
 // It is a REST API, and the types here match the JSON it sends and receives. 
 import type {
   DataModeInfo, DataSource, DisruptionCheck, EasyReadSuggestion, PackLink, PlaceResult, PlanOption, PlanRequest,
-  RouteDraft, RouteStep, RouteUpdate, SavedRoute, Trip, UploadedPhoto,
+  BridgePreview, LatLngTuple, Replan, RouteDraft, RouteStep, RouteUpdate, SavedRoute, Trip, TripLocation, TripPlan, UploadedPhoto,
 } from "./types";
 
 /** What the route planner needs from the backend. */
@@ -51,6 +51,22 @@ export interface TripsApi {
   startTrip(tripId: string): Promise<Trip>;
   endTrip(tripId: string): Promise<Trip>;
   tripPack(tripId: string): Promise<PackLink>;
+  /** Changing a trip under way (the route's caregiver only): send or dismiss the proposed bridging bus. */
+  sendBridge?(tripId: string): Promise<Trip>;
+  dismissBridge?(tripId: string): Promise<Trip>;
+  /** New routes from where the traveller is, and sending one of them to the traveller. */
+  replanTrip?(tripId: string): Promise<Replan>;
+  applyReplan?(tripId: string, steps: RouteStep[], stepPaths?: LatLngTuple[][]): Promise<Trip>;
+  /** What the free bus past a breakdown would change the trip's steps to (nothing is changed). */
+  previewBridge?(tripId: string): Promise<BridgePreview>;
+  /** Switch the trip (under way or not started) to the free bus past a breakdown now. */
+  applyBridge?(tripId: string): Promise<Trip>;
+  /** Send a route saved (and approved) for the trip: it replaces the traveller's steps from the current one on. */
+  sendRoute?(tripId: string, routeId: string): Promise<Trip>;
+  /** Where the traveller of a trip under way is (their check-ins). */
+  tripLocation?(tripId: string): Promise<TripLocation>;
+  /** The steps the traveller follows now, with their lines on the map and where trains aren't running. */
+  tripPlan?(tripId: string): Promise<TripPlan>;
 }
 
 /** Re-checking planned or saved steps against LTA's alerts (used by the plan tab, saved routes and trips). */
@@ -170,6 +186,44 @@ export class JourneyApi implements PlannerApi, SavedRoutesApi, TripsApi, Disrupt
 
   tripPack(tripId: string): Promise<PackLink> {
     return this.request<PackLink>(`/api/trips/${encodeURIComponent(tripId)}/pack`);
+  }
+
+  sendBridge(tripId: string): Promise<Trip> {
+    return this.request<Trip>(`/api/trips/${encodeURIComponent(tripId)}/bridge/send`, { method: "POST" });
+  }
+
+  dismissBridge(tripId: string): Promise<Trip> {
+    return this.request<Trip>(`/api/trips/${encodeURIComponent(tripId)}/bridge/dismiss`, { method: "POST" });
+  }
+
+  replanTrip(tripId: string): Promise<Replan> {
+    return this.request<Replan>(`/api/trips/${encodeURIComponent(tripId)}/replan`, { method: "POST" });
+  }
+
+  applyReplan(tripId: string, steps: RouteStep[], stepPaths?: LatLngTuple[][]): Promise<Trip> {
+    return this.request<Trip>(`/api/trips/${encodeURIComponent(tripId)}/replan/apply`,
+      { method: "POST", body: JSON.stringify({ steps, stepPaths }) });
+  }
+
+  previewBridge(tripId: string): Promise<BridgePreview> {
+    return this.request<BridgePreview>(`/api/trips/${encodeURIComponent(tripId)}/bridge/preview`);
+  }
+
+  applyBridge(tripId: string): Promise<Trip> {
+    return this.request<Trip>(`/api/trips/${encodeURIComponent(tripId)}/bridge/use`, { method: "POST" });
+  }
+
+  sendRoute(tripId: string, routeId: string): Promise<Trip> {
+    return this.request<Trip>(`/api/trips/${encodeURIComponent(tripId)}/replan/apply`,
+      { method: "POST", body: JSON.stringify({ routeId }) });
+  }
+
+  tripPlan(tripId: string): Promise<TripPlan> {
+    return this.request<TripPlan>(`/api/trips/${encodeURIComponent(tripId)}/plan`);
+  }
+
+  tripLocation(tripId: string): Promise<TripLocation> {
+    return this.request<TripLocation>(`/api/trips/${encodeURIComponent(tripId)}/location`);
   }
 
   checkDisruptions(steps: RouteStep[]): Promise<DisruptionCheck> {

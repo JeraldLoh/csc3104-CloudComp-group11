@@ -12,6 +12,12 @@ POST /api/routes/{routeId}/photos        upload the caregiver's own photo for a 
 POST /api/trips                          a trip on an approved route, on a date (planned)
 POST /api/trips/{tripId}/start           planned -> active; writes the Redis keys the detectors and checker read
 POST /api/trips/{tripId}/end             active -> completed; removes them
+POST /api/trips/{tripId}/bridge/send     send the proposed free bridging bus now (/dismiss: don't send it;
+                                         /use: work one out and use it now, also before the trip starts)
+POST /api/trips/{tripId}/replan          new routes from where the traveller is (/replan/apply {steps} or
+                                         {routeId}: send one, or a route saved for the trip)
+GET  /api/trips/{tripId}/location        where the traveller of a trip under way is (their check-ins)
+GET  /api/trips/{tripId}/plan            the steps they follow now, with map lines and where trains aren't running
 GET  /api/trips/{tripId}/pack            the offline route pack in S3: {packUrl, packVersion}
 GET  /api/trips/{tripId}, /api/trips?travellerId=   look trips up (not in the contract yet)
 GET  /api/places/search?q=               place/address search -> coordinates (OneMap)
@@ -29,6 +35,7 @@ Every /api/ endpoint knows who is calling (auth.py, AUTH_MODE) and JourneyClient
 a route belongs to its caregiver and its traveller, anyone else gets 404. /internal/, /health, /ready and
 /api/dev/ are not user endpoints and are not checked.
 """
+import json
 import logging
 import re
 import threading
@@ -52,7 +59,7 @@ from .easy_read import MAX_CHARS as EASY_READ_MAX_CHARS
 from .journey_client import (JourneyClient, OneMapAuthError, OneMapError, OneMapUnavailable, PhotoInvalid,
                              StorageNotReady)
 from .lta import LtaAuthError, LtaUnavailable
-from .models import DataModeIn, DisruptionCheckIn, PlanRequest, RouteIn, RouteUpdate, TripIn
+from .models import DataModeIn, DisruptionCheckIn, PlanRequest, ReplanIn, RouteIn, RouteUpdate, TripIn
 from .pack_store import PackUnavailable, S3PackStorage
 from .replay import RecordedDataMissing, load_manifest
 from .route_store import DynamoRouteStore, RouteConflict, RouteInvalid, RouteNotFound
@@ -91,7 +98,35 @@ def build_journey(s: Settings, redis_client, mode: DataMode | None = None) -> Jo
         if s.create_resources:
             aws_resources.ensure_packs_bucket(pack_store.client, s.packs_bucket, s.aws_region)
     return JourneyClient(s, redis_client=redis_client, route_store=route_store,
-                         trip_store=trip_store, pack_store=pack_store, mode=mode)
+                         trip_store=trip_store, pack_store=pack_store, mode=mode, notify=queue_sender(s))
+
+
+def queue_sender(s: Settings):
+    """Sends a message to the disruptions queue (the caregiver's alerts, through the Alert Service), finding the
+    queue on first use so the API starts even when SQS isn't up yet."""
+    sqs = boto3.client("sqs", region_name=s.aws_region, endpoint_url=s.aws_endpoint_url)
+    url: list[str] = []
+
+    def send(event: dict) -> None:
+        if not url:
+            url.append(aws_resources.ensure_disruptions_queue(sqs, s.disruptions_queue) if s.create_resources
+                       else sqs.get_queue_url(QueueName=s.disruptions_queue)["QueueUrl"])
+        sqs.send_message(QueueUrl=url[0], MessageBody=json.dumps(event))
+    return send
+
+
+def watch_bridges_forever(journey: JourneyClient, r, every_s: int) -> None:
+    """The bridging-bus watcher (journey_client.watch_bridges), every `every_s`. A short Redis lock means one API
+    replica does each pass."""
+    while True:
+        time.sleep(every_s)
+        try:
+            if r.set("journey:bridge-watch", "1", nx=True, ex=max(1, every_s - 1)):
+                summary = journey.watch_bridges()
+                if any(summary.values()):
+                    log.info("bridging buses: %s", summary)
+        except Exception:  # noqa: BLE001
+            log.exception("bridging-bus watch failed")
 
 
 def create_app(
@@ -115,6 +150,9 @@ def create_app(
             app.state.journey = build_journey(s, r, mode)
             # The bus route lists take ~9 s to fetch: get them now, not in the first plan that needs them.
             threading.Thread(target=app.state.journey.lta.warm_bus_services, daemon=True).start()
+            if s.bridge_watch_s > 0:
+                threading.Thread(target=watch_bridges_forever, args=(app.state.journey, r, s.bridge_watch_s),
+                                 daemon=True).start()
         else:
             app.state.journey = journey
         yield
@@ -333,6 +371,51 @@ def create_app(
     @app.post("/api/trips/{trip_id}/end")
     def end_trip(trip_id: str, request: Request, caller: Caller | None = Depends(current_caller)):
         return request.app.state.journey.end_trip(trip_id_or_404(trip_id), caller)
+
+    # Changing a trip under way (journey_client "trip changes"): the route's caregiver only.
+    @app.post("/api/trips/{trip_id}/bridge/send")
+    def send_bridge(trip_id: str, request: Request, caller: Caller | None = Depends(current_caller)):
+        """Send the proposed free bridging bus to the traveller now."""
+        return request.app.state.journey.send_bridge(trip_id_or_404(trip_id), caller)
+
+    @app.post("/api/trips/{trip_id}/bridge/dismiss")
+    def dismiss_bridge(trip_id: str, request: Request, caller: Caller | None = Depends(current_caller)):
+        """Don't send it (not by itself later either)."""
+        return request.app.state.journey.dismiss_bridge(trip_id_or_404(trip_id), caller)
+
+    @app.get("/api/trips/{trip_id}/location")
+    def trip_location(trip_id: str, request: Request, caller: Caller | None = Depends(current_caller)):
+        """Where the traveller is: {lat, lng, at, source, trail, stepIndex, stepCount, step}."""
+        return request.app.state.journey.trip_location(trip_id_or_404(trip_id), caller)
+
+    @app.get("/api/trips/{trip_id}/bridge/preview")
+    def preview_bridge(trip_id: str, request: Request, caller: Caller | None = Depends(current_caller)):
+        """The steps /bridge/use would give the trip, to read before choosing it (nothing is changed)."""
+        return request.app.state.journey.bridge_preview(trip_id_or_404(trip_id), caller)
+
+    @app.post("/api/trips/{trip_id}/bridge/use")
+    def use_bridge(trip_id: str, request: Request, caller: Caller | None = Depends(current_caller)):
+        """Switch the trip (under way or not started) to the free bus past a breakdown now."""
+        return request.app.state.journey.use_bridge(trip_id_or_404(trip_id), caller)
+
+    @app.post("/api/trips/{trip_id}/replan")
+    def replan_trip(trip_id: str, request: Request, caller: Caller | None = Depends(current_caller)):
+        """New routes from where the traveller is to the destination: {from, options, sortedBy}."""
+        return request.app.state.journey.replan_options(trip_id_or_404(trip_id), caller)
+
+    @app.post("/api/trips/{trip_id}/replan/apply")
+    def apply_replan(trip_id: str, body: ReplanIn, request: Request, caller: Caller | None = Depends(current_caller)):
+        """Send one of those routes to the traveller: its steps replace theirs from the current step on."""
+        journey = request.app.state.journey
+        if body.routeId:
+            return journey.send_route(trip_id_or_404(trip_id), body.routeId, caller)
+        steps = body.model_dump(by_alias=True)["steps"]
+        return journey.apply_replan(trip_id_or_404(trip_id), steps, caller, body.stepPaths)
+
+    @app.get("/api/trips/{trip_id}/plan")
+    def trip_plan(trip_id: str, request: Request, caller: Caller | None = Depends(current_caller)):
+        """The steps the traveller follows now: {planVersion, steps, stepPaths, affected}."""
+        return request.app.state.journey.trip_plan(trip_id_or_404(trip_id), caller)
 
     @app.get("/api/trips/{trip_id}/pack")
     def trip_pack(trip_id: str, request: Request, caller: Caller | None = Depends(current_caller)):
