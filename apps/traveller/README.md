@@ -83,13 +83,22 @@ GPS (watchPosition) ──► latest position
 | Caregiver asks "Where are you?" | While travelling the app checks every 5 s (`src/lib/where.ts`) and shows a sheet with **I'm OK** and **I need help**, vibrating where the phone can. The answer goes through the request queue like Help, with the location; **I need help** also sends Help. The app has to be open: push notifications would reach it when closed. |
 | Caregiver asks with the app closed | With `firebase-web-config.json` in the repo root, "Start my trip" also asks to show notifications (`src/lib/push.ts`). A push then reaches the phone with the app closed, and a tap opens it at the question. Push needs a secure page: `localhost` or HTTPS, so not a phone opening `http://192.168…`; on an iPhone the app must be added to the Home Screen. |
 
+## How a step is shown
+
+Each step is one sign: the step photo, then the wording, then the landmarks it names, then the backup plan.
+
+- **One action per line.** The Easy-read Service writes one short action per sentence, and the caregiver's editor shows each sentence as a bullet point. The app splits the wording by the same rule (`src/lib/easyRead.ts`, matching `easyReadPoints` in `apps/caregiver/src/planner/format.ts`), so the traveller reads exactly the points the caregiver checked. A one-sentence step stays a sentence.
+- **Landmarks.** The Journey Service sends `landmarks: [{name, photoUrl}]` per step (`contracts/examples/route-pack.json`): the buildings the wording tells them to look out for. Each one with a photo is shown under the wording as "Look for Oasis Terraces", side by side when there are two or more. One without a photo (it would look the same as the step photo or another landmark's) gets a line saying where to look: "Look for Block 221: it is in the step photo above." If the pack also sends `sameView`, the line names that photo.
+- **A bad landmark never breaks a trip.** `validatePack()` drops an entry with no name and treats a missing or broken list as none; the steps still work.
+- `tests/fixtures/journey-pack.json` is a pack made by the Journey Service's own `build_pack` (regenerate it with `python apps/traveller/tests/fixtures/journey_pack.py`), so the tests check the pack the phone really receives.
+
 ## Working with no signal (issue 2.4)
 
 | What | How it's kept on the phone |
 |---|---|
 | The app itself | A service worker (built by `vite-plugin-pwa`/Workbox) stores every built file. Opening the app with no signal shows the app, not the browser's offline page. Production builds only, so try it with `npm run build` then `npm run preview` (port 4173). |
 | The route pack | IndexedDB. Loaded network-first so a route the caregiver changed is picked up, but **only replaced by a pack that passes `validatePack()`**: a cut-off or broken download can never overwrite a good saved pack. |
-| Photos and audio | Downloaded into Cache Storage as soon as the trip opens, before the traveller sets off. Shown from there as `blob:` URLs, so they work with no signal. |
+| Photos and audio | Downloaded into Cache Storage as soon as the trip opens, before the traveller sets off: each step's photo and audio, and the photo of every landmark the step names. Shown from there as `blob:` URLs, so they work with no signal. |
 | Unsent check-ins | The outbox (see above). |
 
 Details that matter:
@@ -166,7 +175,8 @@ old version of the app) and lets the hashed files in `/assets` be cached for a y
 | `src/lib/requests.ts` | durable queue for help, trip start, trip end |
 | `src/lib/api.ts` | HTTP, timeouts, sorting responses into ok / invalid / unauthorized / retry |
 | `src/lib/pack.ts` | loads and saves the route pack |
-| `src/lib/offline.ts` | validates packs, downloads photos/audio, serves stored copies |
+| `src/lib/offline.ts` | validates packs, downloads photos (landmarks too)/audio, serves stored copies |
+| `src/lib/easyRead.ts` | one action per line, landmark captions |
 | `src/lib/sw-register.ts` | registers the service worker |
 | `src/lib/wakelock.ts` | keeps the screen on during a trip |
 | `src/config.ts` | API address (`VITE_API_BASE`) |

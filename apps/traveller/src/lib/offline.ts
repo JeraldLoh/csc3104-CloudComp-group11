@@ -6,7 +6,8 @@
 //   route pack (JSON)   kept in IndexedDB (pack.ts); only ever replaced by a pack that
 //                       passes validatePack(), so a cut-off or corrupt download can never
 //                       overwrite a good one
-//   photos and audio    downloaded into Cache Storage before the trip starts, one cache
+//   photos and audio    downloaded into Cache Storage before the trip starts (step photos
+//                       and the photos of the landmarks each step names), one cache
 //                       per trip, stored per route version: a photo is only ever shown
 //                       next to the instructions of the version it was downloaded for.
 //                       (If the caregiver changes the route, an old photo of bus 190 must
@@ -16,7 +17,7 @@
 //
 // Downloads happen in the background and never block "Start my trip": instructions are
 // text, so a missing photo only means the pictogram is shown instead.
-import type { RoutePack } from "../types";
+import type { Landmark, RoutePack } from "../types";
 
 export const mediaCacheName = (tripId: string) => `careroute-media-${tripId}`;
 
@@ -56,6 +57,7 @@ export function validatePack(x: unknown): RoutePack {
     if (!st || st.stepIndex !== i) fail(`step ${i}: stepIndex must be ${i}`);
     if (typeof st.easyRead !== "string" || !st.easyRead.trim()) fail(`step ${i}: no easyRead text`);
     if (typeof st.lat !== "number" || typeof st.lng !== "number") fail(`step ${i}: no location`);
+    st.landmarks = cleanLandmarks(st.landmarks);
   });
   if (!Array.isArray(p.path) || p.path.length < 2) fail("path needs at least 2 points");
   const c = p.caregiver as Record<string, unknown> | undefined;
@@ -66,11 +68,27 @@ export function validatePack(x: unknown): RoutePack {
   return x as RoutePack;
 }
 
-/** Every photo and audio file the pack refers to, as absolute URLs. */
+/**
+ * Landmarks are extra help, not something to fail a whole trip over: a bad entry is dropped (no name, not an
+ * object), a bad photo link becomes null, and anything other than a list counts as none.
+ */
+function cleanLandmarks(x: unknown): Landmark[] {
+  if (!Array.isArray(x)) return [];
+  const out: Landmark[] = [];
+  for (const m of x as Record<string, unknown>[]) {
+    if (!m || typeof m !== "object" || typeof m.name !== "string" || !m.name.trim()) continue;
+    const photoUrl = typeof m.photoUrl === "string" && m.photoUrl ? m.photoUrl : null;
+    const sameView = typeof m.sameView === "string" && m.sameView ? m.sameView : null;
+    out.push({ name: m.name.trim(), photoUrl, ...(sameView ? { sameView } : {}) });
+  }
+  return out;
+}
+
+/** Every photo and audio file the pack refers to, landmark photos included, as absolute URLs. */
 export function mediaUrls(pack: RoutePack, baseUrl: string): string[] {
   const out = new Set<string>();
   for (const s of pack.steps) {
-    for (const path of [s.photoUrl, s.audioUrl]) {
+    for (const path of [s.photoUrl, s.audioUrl, ...(s.landmarks ?? []).map((m) => m.photoUrl)]) {
       if (!path) continue;
       try {
         out.add(new URL(path, baseUrl).href);
