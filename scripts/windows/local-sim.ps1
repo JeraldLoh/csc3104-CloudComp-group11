@@ -1,4 +1,4 @@
-# local stack on kind plus the caregiver app and optionally one simulated trip
+# local stack on kind plus the caregiver and traveller apps and optionally one simulated trip
 #   .\scripts\windows\local-sim.ps1 -Setup                          first time and after code changes
 #   .\scripts\windows\local-sim.ps1 -Scenario off_route -Caregiver G-777
 param(
@@ -19,6 +19,8 @@ $Ns = "csc3104"
 $Config = "k8s/local/kind-config.yaml"
 $AppUrl = "http://localhost:5174"
 $AppLog = Join-Path $env:TEMP "careroute-caregiver.log"
+$TravellerUrl = "http://localhost:5173"
+$TravellerLog = Join-Path $env:TEMP "careroute-traveller.log"
 # image name and build folder
 $Images = [ordered]@{
   "cloud-fastapi"    = "."
@@ -63,11 +65,12 @@ if ($Podman) {
 }
 $Engine = if ($Podman) { "podman" } else { "docker" }
 
-# 0 ready, 1 missing, 2 made without the config so its ports do not reach localhost
+# 0 ready, 1 missing, 2 made without the current config so its ports do not reach localhost
+# (30566, LocalStack, is the newest port)
 function Get-ClusterState {
   $clusters = kind get clusters 2>$null
   if (-not ($clusters -contains $Cluster)) { return 1 }
-  & $Engine port "$Cluster-control-plane" 30001/tcp 2>$null | Out-Null
+  & $Engine port "$Cluster-control-plane" 30566/tcp 2>$null | Out-Null
   if ($LASTEXITCODE -ne 0) { return 2 }
   return 0
 }
@@ -167,6 +170,25 @@ function Start-App {
   return $app
 }
 
+# the traveller app, where the caregiver app's trip links lead
+function Start-TravellerApp {
+  if (Test-Url $TravellerUrl) {
+    Write-Host "traveller app already running"
+    return $null
+  }
+  if (-not (Test-Path apps/traveller/node_modules)) {
+    Push-Location apps/traveller
+    npm ci --no-audit --no-fund | Out-Host   # to the screen, so the function returns only the process
+    $code = $LASTEXITCODE
+    Pop-Location
+    if ($code -ne 0) { Fail "npm ci failed" }
+  }
+  $traveller = Start-Process -FilePath node -ArgumentList "node_modules/vite/bin/vite.js", "--strictPort" `
+    -WorkingDirectory apps/traveller -PassThru -NoNewWindow -RedirectStandardOutput $TravellerLog -RedirectStandardError "$TravellerLog.err"
+  Wait-Url $TravellerUrl "the traveller app (log in $TravellerLog)"
+  return $traveller
+}
+
 Initialize-Cluster
 Run kubectl @("config", "use-context", "kind-$Cluster")
 if ($Setup) { Build-Images }
@@ -174,6 +196,7 @@ Initialize-Secret
 Start-Stack
 foreach ($port in $Health.Keys) { Wait-Url "http://localhost:$port/health" $Health[$port] }
 $app = Start-App
+$traveller = Start-TravellerApp
 
 try {
   if ($Scenario) {
@@ -181,12 +204,17 @@ try {
   }
   Write-Host ""
   Write-Host "caregiver app: $AppUrl  act as $Caregiver"
+  Write-Host "traveller app: $TravellerUrl  open a trip's link from the caregiver app's Trips tab"
   Write-Host "aggregator dashboard: http://localhost:8002/dashboard"
   Write-Host "another trip: $Python -m tools.simulator live --scenario off_route --caregiver $Caregiver"
-  if ($app) {
-    Write-Host "press Ctrl+C to stop the app, the cluster keeps running"
-    Wait-Process -Id $app.Id
+  # keep running while either app started here runs, so stopping the script stops both
+  $started = @($app, $traveller) | Where-Object { $_ }
+  if ($started) {
+    Write-Host "press Ctrl+C to stop the apps, the cluster keeps running"
+    Wait-Process -Id ($started | ForEach-Object { $_.Id })
   }
 } finally {
-  if ($app -and -not $app.HasExited) { Stop-Process -Id $app.Id -Force }
+  foreach ($proc in @($app, $traveller)) {
+    if ($proc -and -not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
+  }
 }
