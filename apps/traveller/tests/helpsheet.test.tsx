@@ -26,5 +26,6 @@ describe("HelpSheet", () => {
     const done: RequestQueueState = { pending: [], lastError: null, lastDone: { label: "help", at: 5 } };
     render(<HelpSheet askedAt={0} requests={done} caregiver="your caregiver" phone={null} onClose={() => {}} />);
     expect(screen.getByRole("heading").textContent).toBe("Your caregiver has been told");
+    expect(screen.getByText("Stay where you are. Your caregiver will help you.")).toBeTruthy();
   });
 });
