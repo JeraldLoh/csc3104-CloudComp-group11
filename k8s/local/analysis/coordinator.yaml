@@ -7,7 +7,7 @@ metadata:
   namespace: csc3104
   labels: { app: coordinator }
 spec:
-  replicas: 2   # two, so killing one mid-analysis shows SQS redelivery
+  replicas: 2   # the HPA takes over from here; two, so killing one mid-analysis shows SQS redelivery
   selector:
     matchLabels: { app: coordinator }
   template:
@@ -53,3 +53,31 @@ spec:
   type: ClusterIP
   selector: { app: coordinator }
   ports: [{ port: 8000, targetPort: 8000 }]
+---
+# Same rule as the detectors (needs k8s/local/metrics-server). CPU is a stand-in: the Coordinator mostly
+# waits on SQS and the detectors, so queue depth would track its load better (needs KEDA; future work).
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: coordinator
+  namespace: csc3104
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: coordinator }
+  minReplicas: 2
+  maxReplicas: 4
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 60 }
+---
+# Keep at least one replica running during voluntary disruptions (e.g. a node being drained).
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: coordinator
+  namespace: csc3104
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app: coordinator }

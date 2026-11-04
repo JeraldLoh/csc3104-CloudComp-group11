@@ -8,7 +8,7 @@ metadata:
   namespace: csc3104
   labels: { app: aggregator }
 spec:
-  replicas: 2
+  replicas: 2   # the HPA takes over from here
   selector:
     matchLabels: { app: aggregator }
   template:
@@ -44,3 +44,30 @@ spec:
   type: ClusterIP
   selector: { app: aggregator }
   ports: [{ port: 8000, targetPort: 8000 }]
+---
+# Same rule as the detectors (needs k8s/local/metrics-server).
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: aggregator
+  namespace: csc3104
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: aggregator }
+  minReplicas: 2
+  maxReplicas: 4
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 60 }
+---
+# Keep at least one replica running during voluntary disruptions (e.g. a node being drained).
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: aggregator
+  namespace: csc3104
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app: aggregator }

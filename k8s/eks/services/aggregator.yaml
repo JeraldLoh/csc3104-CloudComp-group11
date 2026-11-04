@@ -9,7 +9,7 @@ metadata:
   namespace: __NAMESPACE__
   labels: { app: aggregator }
 spec:
-  replicas: 2
+  replicas: 2                       # the HPA takes over from here
   selector:
     matchLabels: { app: aggregator }
   template:
@@ -49,3 +49,30 @@ metadata:
 spec:
   selector: { app: aggregator }
   ports: [{ port: 8000, targetPort: 8000 }]
+---
+# Needs metrics-server in the cluster, like the detectors' HPAs.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: aggregator
+  namespace: __NAMESPACE__
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: aggregator }
+  minReplicas: 2
+  maxReplicas: 4
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 60 }
+---
+# Keep at least one replica running during voluntary disruptions (e.g. Fargate patching).
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: aggregator
+  namespace: __NAMESPACE__
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app: aggregator }
