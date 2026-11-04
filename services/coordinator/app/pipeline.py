@@ -1,26 +1,25 @@
 """What the Coordinator does with one check-in.
 
     1. Already decided (tripId + seq)?     SQS delivers at least once: skip repeats
-    2. Read risk:{travellerId}             normal / elevated (written by the Aggregator)
-    3. Choose detectors                    k = 2 or 4; at k = 2 the pair fits the journey
-                                           step, from trip:{tripId}:route (selection.py)
+    2. Read risk:{travellerId}             normal / elevated
+    3. Choose detectors                    fixed4: all 4. adaptive: k = 2 or 4; at k = 2 the
+                                           pair fits the journey step (selection.py)
     4. Call them in parallel               timeout or error = abstain (detectors.py)
     5. Too few real votes?                 ask the remaining detectors straight away
-    6. POST /internal/votes (Aggregator)   it decides, alerts and updates risk
-    7. Aggregator says needsMoreVotes?     a close call: ask the remaining detectors, resubmit
-    8. Remember tripId + seq as decided
+    6. Decide                              rule-based (decision.py, voting.py)
+    7. Still can't call it?                ask the remaining detectors, decide again
+    8. Record                              alert, risk, dashboard record, mark decided
 
-Redis or Aggregator failures raise. The caller (the SQS consumer) then doesn't delete the
+Redis or Alert Service failures raise. The caller (the SQS consumer) then doesn't delete the
 message, so it comes back after the visibility timeout and any replica retries it.
-Steps 4-7 are safe to repeat (the Alert Service deduplicates incidents), so a retry costs
-at most a repeated report, never a lost check-in.
+Steps 4-7 change nothing, and step 8 only writes after the alert went out, in one transaction
+(decision.py), so a retry costs at most a repeated report, never a lost check-in.
 """
 import logging
 from dataclasses import dataclass
 
-import httpx
-
 from .config import Settings
+from .decision import DecisionRecorder, decided_key
 from .detectors import DetectorClient
 from .selection import STRATEGIES, choose_detectors, needs_escalation, pair_for_step, remaining, step_mode
 
@@ -32,31 +31,16 @@ class Result:
     outcome: str                 # "decided" or "duplicate"
     k: int = 0                   # detectors asked
     escalated: bool = False      # asked more than the first choice
-    decision: dict | None = None # the Aggregator's answer
+    decision: dict | None = None # decision.summary(): decision, problemType, confidence, reason, riskLevel
     situation: str | None = None # why that pair: "walking", "waiting", "riding", ... (None = all asked)
 
 
-def decided_key(trip_id: str, seq: int) -> str:
-    return f"decided:{trip_id}:{seq}"
-
-
 class Pipeline:
-    def __init__(self, redis, http: httpx.AsyncClient, detectors: DetectorClient, s: Settings):
+    def __init__(self, redis, detectors: DetectorClient, decisions: DecisionRecorder, s: Settings):
         self.redis = redis
-        self.http = http
         self.detectors = detectors
+        self.decisions = decisions
         self.s = s
-
-    async def _aggregate(self, request_id: str, checkin: dict, votes: list[dict],
-                         risk_level: str, escalated: bool, situation: str | None = None) -> dict:
-        resp = await self.http.post(
-            f"{self.s.aggregator_url}/internal/votes",
-            json={"requestId": request_id, "checkin": checkin, "votes": votes,
-                  "riskLevel": risk_level, "escalated": escalated, "situation": situation},
-            timeout=self.s.aggregator_timeout_s,
-        )
-        resp.raise_for_status()
-        return resp.json()
 
     async def _pair_for(self, checkin: dict) -> tuple[tuple[str, ...], str]:
         """The pair to ask at normal risk, and why (PAIR_STRATEGY)."""
@@ -90,7 +74,7 @@ class Pipeline:
         votes = await self.detectors.call_many(asked, request)
         escalated = False
 
-        # Too few real votes: no point asking the Aggregator yet.
+        # Too few real votes: no point deciding yet.
         if needs_escalation(votes, self.s.quorum):
             extra = remaining(asked)
             log.info("escalating %s: too few real votes, asking %s", request_id, extra)
@@ -98,20 +82,20 @@ class Pipeline:
             asked += extra
             escalated = True
 
-        decision = await self._aggregate(request_id, checkin, votes, risk_level, escalated, situation)
+        d = await self.decisions.decide(votes)
 
-        # A close call: more evidence instead of a coin flip.
+        # Still can't call it (e.g. the answers carry no weight): more evidence instead of a guess.
         extra = remaining(asked)
-        if decision.get("needsMoreVotes") and extra:
-            log.info("escalating %s: %s, asking %s", request_id, decision.get("reason"), extra)
+        if d.needs_more_votes and extra:
+            log.info("escalating %s: %s, asking %s", request_id, d.reason, extra)
             votes += await self.detectors.call_many(extra, request)
             asked += extra
             escalated = True
-            decision = await self._aggregate(request_id, checkin, votes, risk_level, escalated, situation)
+            d = await self.decisions.decide(votes)
 
-        await self.redis.set(decided_key(trip_id, seq), "1", ex=self.s.decided_ttl_s)
+        decision = await self.decisions.record(request_id, checkin, votes, d, escalated, situation)
         # k is logged for every decision: the experiment and the dashboard depend on it.
         log.info("decided %s k=%d escalated=%s risk=%s step=%s -> %s", request_id, len(votes), escalated,
-                 risk_level, situation or "-", decision.get("decision"))
+                 risk_level, situation or "-", decision["decision"])
         return Result(outcome="decided", k=len(votes), escalated=escalated, decision=decision,
                       situation=situation)

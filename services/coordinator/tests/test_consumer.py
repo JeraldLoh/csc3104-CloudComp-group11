@@ -44,7 +44,7 @@ class FakePipeline:
     async def process(self, checkin):
         b = self.behaviour.get(checkin["seq"], "ok")
         if b == "fail":
-            raise RuntimeError("aggregator down")
+            raise RuntimeError("alert service down")
         if isinstance(b, (int, float)):
             await asyncio.sleep(b)
         self.processed.append(checkin["seq"])

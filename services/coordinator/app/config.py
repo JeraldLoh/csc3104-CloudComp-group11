@@ -2,11 +2,16 @@
 import os
 from dataclasses import dataclass, field
 
+from .risk import RiskPolicy
 from .selection import DEFAULT_PAIR, parse_urls
 
 
 def _bool(name: str, default: bool) -> bool:
     return os.getenv(name, str(default)).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _float(name: str, default: str) -> float:
+    return float(os.getenv(name, default))
 
 
 @dataclass(frozen=True)
@@ -33,14 +38,29 @@ class Settings:
     detector_urls: dict = field(default_factory=lambda: parse_urls(os.getenv("DETECTOR_URLS", "")))
     # contracts/api.md: detectors must answer within 500 ms.
     detector_timeout_s: float = field(default_factory=lambda: float(os.getenv("DETECTOR_TIMEOUT_MS", "500")) / 1000)
-    # Fewer real (non-abstain) votes than this -> ask the remaining detectors too.
+    # Real (non-abstain) votes needed to call a check-in normal (one is enough for a problem);
+    # fewer -> ask the remaining detectors too.
     quorum: int = field(default_factory=lambda: int(os.getenv("QUORUM", "2")))
 
-    aggregator_url: str = field(default_factory=lambda: os.getenv("AGGREGATOR_URL", "http://aggregator:8000").rstrip("/"))
-    aggregator_timeout_s: float = field(default_factory=lambda: float(os.getenv("AGGREGATOR_TIMEOUT_S", "5")))
+    # contracts/api.md: http://alert-service:8000 inside the cluster.
+    alert_url: str = field(default_factory=lambda: os.getenv("ALERT_SERVICE_URL", "http://alert-service:8000").rstrip("/"))
+    alert_timeout_s: float = field(default_factory=lambda: _float("ALERT_TIMEOUT_S", "3"))
+
+    # Risk (risk.py): 2 or 4 detectors next, in adaptive mode.
+    risk: RiskPolicy = field(default_factory=lambda: RiskPolicy(
+        alpha=_float("RISK_ALPHA", "0.5"),
+        escalate_at=_float("RISK_ESCALATE_AT", "0.4"),
+        deescalate_below=_float("RISK_DEESCALATE_BELOW", "0.15"),
+        calm_checkins=int(os.getenv("RISK_CALM_CHECKINS", "3")),
+    ))
 
     # How long a decided tripId+seq is remembered for dedup (journey keys live 24 h).
     decided_ttl_s: int = field(default_factory=lambda: int(os.getenv("DECIDED_TTL_S", "86400")))
+    # Journey keys expire 24 h after their last update (contracts/redis-keys.md).
+    key_ttl_s: int = field(default_factory=lambda: int(os.getenv("KEY_TTL_S", "86400")))
+    # Decision records kept for the dashboard.
+    decisions_per_traveller: int = field(default_factory=lambda: int(os.getenv("DECISIONS_PER_TRAVELLER", "50")))
+    decisions_recent: int = field(default_factory=lambda: int(os.getenv("DECISIONS_RECENT", "200")))
     max_messages: int = field(default_factory=lambda: int(os.getenv("MAX_MESSAGES", "10")))
     consumer_enabled: bool = field(default_factory=lambda: _bool("CONSUMER_ENABLED", True))
 
