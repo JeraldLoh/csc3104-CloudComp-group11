@@ -15,7 +15,7 @@ A detector's `normal` vote is evidence only about the types in its row.
 |---|---|---|---|
 | `route-corridor` | `detector-route` | `off_route` | Last 3 check-ins all further than 100 m + GPS accuracy from the planned path |
 | `heading-speed` | `detector-heading` | `wrong_direction` | Median direction of travel is over 120° from the path direction |
-| `dwell-time` | `detector-dwell` | `long_dwell` | Stationary longer than 5 min walking / 20 min waiting for a bus or train |
+| `dwell-time` | `detector-dwell` | `long_dwell` | Stationary longer than 5 min walking / 20 min waiting for a bus or train, including at the stop before the app moves on to the bus step |
 | `route-progress` | `detector-progress` | `off_route`, `wrong_direction`, `missed_stop` | Distance left to the end measured along the route: off the corridor and not getting closer, going back along the route, or riding over 150 m past the step's end stop |
 
 So `off_route` and `wrong_direction` each have two detectors that judge them; `long_dwell` and
@@ -30,7 +30,7 @@ changed through an environment variable without a rebuild; the simulator will be
 |---|---|---|
 | `off_route` | Further from the planned path than allowed, for several check-ins in a row. The allowance grows with GPS accuracy, so a fuzzy fix can't trigger it. route-progress also requires not getting closer to the end. | `CORRIDOR_M` 100 m + the check-in's `accuracyM`; `CORRIDOR_CONSECUTIVE` 3 check-ins (about 30 s); progress smaller than `PROGRESS_MIN_M` 20 m + GPS accuracy doesn't count as progress |
 | `wrong_direction` | Moving against the route: the median direction differs from the route's direction too much (heading-speed), or the traveller is going back along the route (route-progress). | `WRONG_DIR_DEG` 120°; at least 3 moving check-ins; moving means at least `MIN_MOVING_SPEED_MPS` 0.5 m/s |
-| `long_dwell` | Staying in one place longer than expected for the current step. | Within `DWELL_RADIUS_M` 30 m for more than `DWELL_WALK_S` 300 s (walking step) or `DWELL_TRANSIT_S` 1200 s (bus/train step) |
+| `long_dwell` | Staying in one place longer than expected for the current step. | Within `DWELL_RADIUS_M` 30 m for more than `DWELL_WALK_S` 300 s (walking step) or `DWELL_TRANSIT_S` 1200 s (bus/train step, or within `DWELL_STOP_M` 50 m + GPS accuracy of the walk's end stop when a bus/train boards there next) |
 | `missed_stop` | On a bus/train step, carried past the stop where the traveller should get off. | Past the step's end stop along the route and more than `MISSED_STOP_M` 150 m (+ GPS accuracy) from it, for the last 3 check-ins |
 
 ### When a detector abstains ("can't decide")
@@ -41,8 +41,9 @@ Abstaining is never counted as "normal". Every detector abstains when:
 - there's too little usable history (route-corridor: fewer than 3 usable check-ins; heading-speed:
   fewer than 3 moving check-ins, since standing still says nothing about direction).
 
-dwell-time also abstains when the whole history window is stationary and already a quarter of the way
-to the limit: it can't tell how much longer the traveller has been there (open question 1).
+dwell-time also abstains when the whole history window is stationary, already a quarter of the way
+to the limit, and Redis has no saved start for the stop (`trip:{tripId}:dwell`): it can't tell how much
+longer the traveller has been there.
 
 ## Reported directly (no detector)
 
@@ -80,17 +81,15 @@ Proposed labelling rules (open question 2):
 
 ## Open questions
 
-1. **dwell-time can't prove a long dwell with 10 check-ins** (about 100 s of history, shorter than the
-   5 / 20 min limits). Could the Check-in Service store when the current dwell started
-   (e.g. `dwellStartAt` in `trip:{tripId}:context`)? (M2, M4)
-2. **Labelling rule:** is the problem label applied from the moment the definition is met (proposed
+1. **Labelling rule:** is the problem label applied from the moment the definition is met (proposed
    above), or from when the traveller first left the route? This changes the measured detection delay. (M4, M3)
-3. **Scenario names differ.** `contracts/api.md` lists `normal`, `missed_stop`, `wrong_direction`,
+2. **Scenario names differ.** `contracts/api.md` lists `normal`, `missed_stop`, `wrong_direction`,
    `long_dwell`, `silence`, `tunnel`, `out_of_order`; the detector test data uses `normal`, `off_route`,
    `wrong_direction`, `long_dwell`, `normal_bus_wait`, `poor_gps`. Agree on one list (and add
    `off_route` to the contract). (M4)
-4. **`long_dwell` and `missed_stop` have one detector each**, so a faulty detector there can only be
+3. **`long_dwell` and `missed_stop` have one detector each**, so a faulty detector there can only be
    outvoted by lowering its reliability weight. Acceptable for now? (M4, M3)
 
 Resolved: `missed_stop` is now detected by `route-progress`; `off_route` and `wrong_direction` have a
-second judge (`route-progress`); `ml-anomaly` is not planned.
+second judge (`route-progress`); `ml-anomaly` is not planned. dwell-time keeps where and when a stop
+began in `trip:{tripId}:dwell`, so it times stops longer than the 10 check-in window itself.

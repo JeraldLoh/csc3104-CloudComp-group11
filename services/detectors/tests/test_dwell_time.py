@@ -65,6 +65,31 @@ def test_transit_step_uses_the_longer_limit():
     assert vote_for(still(10, every=140), step_index=1).problem_type == "long_dwell"  # 1260 s
 
 
+# walk to a stop at the check-ins spot then a bus from it
+BOARDING = [
+    {"stepIndex": 0, "mode": "walk", "to": {"name": "Stop", "lat": 1.405, "lng": 103.9}},
+    {"stepIndex": 1, "mode": "bus", "to": {"name": "Stop B", "lat": 1.41, "lng": 103.9}}
+]
+
+
+def test_waiting_at_the_stop_before_pressing_next_uses_the_transit_limit():
+    vote = vote_for(still(10, every=40), steps=BOARDING)  # 360 s, still on the walk step
+    assert vote.verdict != "problem" and "limit 1200 s" in vote.reason
+    assert vote_for(still(10, every=140), steps=BOARDING).problem_type == "long_dwell"  # 1260 s
+
+
+def test_stopping_away_from_the_stop_on_the_walk_step_uses_the_walk_limit():
+    away = still(10, every=40, lat=1.405 + 200 * M)
+    assert vote_for(away, steps=BOARDING).problem_type == "long_dwell"
+
+
+def test_stop_before_another_walk_uses_the_walk_limit():
+    steps = [BOARDING[0], {"stepIndex": 1, "mode": "walk"}]
+    assert vote_for(still(10, every=40), steps=steps).problem_type == "long_dwell"
+    # last step has nothing to board
+    assert vote_for(still(10, every=40), steps=BOARDING[:1]).problem_type == "long_dwell"
+
+
 def test_unknown_mode_or_step_uses_walk_limit():
     for step_index in (2, 9, None):
         assert vote_for(still(10, every=40), step_index=step_index).problem_type == "long_dwell"

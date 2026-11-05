@@ -4,7 +4,7 @@ import math
 import random
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from tools.simulator.geometry import bearing_deg, distance_m, offset
 from tools.simulator.route import (
@@ -43,6 +43,7 @@ class _Tick:
     s: float  # metres along the route
     lateral_m: float = 0.0  # sideways from the route and positive is left of travel
     label: str = "normal"
+    step: Optional[int] = None  # step the app shows when it lags the position
 
 
 # builds the list of ticks for a scenario
@@ -75,10 +76,10 @@ class _Planner:
             self.ticks.append(_Tick(s, self.lateral, label))
 
     # stand still and switch label after late_after_s
-    def hold(self, seconds: int, late_label: str = "normal", late_after_s: int = 0) -> None:
+    def hold(self, seconds: int, late_label: str = "normal", late_after_s: int = 0, step: Optional[int] = None) -> None:
         for k in range(1, seconds // INTERVAL_S + 1):
             label = late_label if k * INTERVAL_S > late_after_s else "normal"
-            self.ticks.append(_Tick(self.s, self.lateral, label))
+            self.ticks.append(_Tick(self.s, self.lateral, label, step=step))
 
     # turn off the route and walk sideways then stand still
     def drift(self, distance: float, side: int) -> None:
@@ -107,7 +108,12 @@ def _plan(scenario: str, track: Track, rng: random.Random) -> List[_Tick]:
             p.move_to(0.45 * stop, WALK_SPEED_MPS)
             p.hold(15 * 60, late_label="long_dwell", late_after_s=LONG_DWELL_LABEL_S)
         p.move_to(stop, WALK_SPEED_MPS)
-        p.hold(8 * 60 if scenario == "normal_bus_wait" else 60)
+        if scenario == "normal_bus_wait":
+            # app still on the walk step until the bus is in sight
+            p.hold(6 * 60, step=0)
+            p.hold(2 * 60)
+        else:
+            p.hold(60)
         p.move_to(alight, BUS_SPEED_MPS)
         p.move_to(track.length, WALK_SPEED_MPS)
     return p.ticks
@@ -180,7 +186,7 @@ def generate(scenario: str, seed: int = 42, browser: bool = False) -> List[Dict]
                 "accuracyM": accuracy,
                 "speedMps": round(max(0.0, moved / INTERVAL_S + rng.gauss(0, 0.1)), 2),
                 "headingDeg": round((heading + rng.gauss(0, 5)) % 360, 1) % 360,
-                "stepIndex": track.step_index(tick.s),
+                "stepIndex": track.step_index(tick.s) if tick.step is None else tick.step,
                 "routeVersion": ROUTE_VERSION,
                 "batteryPct": max(5, 90 - i // 30),
                 "status": "active",

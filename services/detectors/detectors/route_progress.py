@@ -1,6 +1,15 @@
 from dataclasses import dataclass
 
-from detectors.common import TRANSIT_MODES, abstain, abstain_reason, confidence, step_at, usable_checkins, vote
+from detectors.common import (
+    TRANSIT_MODES,
+    abstain,
+    abstain_reason,
+    confidence,
+    place_point,
+    step_at,
+    usable_checkins,
+    vote
+)
 from detectors.geo import cumulative_m, haversine_m, project_onto_path
 from detectors.models import CheckIn
 
@@ -26,20 +35,12 @@ class _Fix:
         return self.checkin.accuracy_m or 0.0
 
 
-# lat lng of a stop or None
-def _point(place):
-    try:
-        return float(place["lat"]), float(place["lng"])
-    except (TypeError, KeyError, ValueError):
-        return None
-
-
 # start and end along the path per step and end is None without a stop
 def _step_ranges(steps, path, cum):
     ranges = []
     start = 0.0
     for step in steps:
-        to = _point(step.get("to")) if isinstance(step, dict) else None
+        to = place_point(step.get("to")) if isinstance(step, dict) else None
         end = project_onto_path(to, path, cum, lo_m=start)[0] if to else None
         ranges.append((start, end))
         if end is not None:
@@ -93,7 +94,7 @@ def _clear_margin(a, b, settings):
 def _missed_stop(request, fixes, step, end_m, settings):
     if step is None or end_m is None or step.get("mode") not in TRANSIT_MODES:
         return None
-    stop = _point(step.get("to"))
+    stop = place_point(step.get("to"))
     if stop is None:
         return None
     run = fixes[-settings.corridor_consecutive:]

@@ -1,6 +1,16 @@
 from datetime import datetime
 
-from detectors.common import TRANSIT_MODES, abstain, abstain_reason, confidence, step_mode, usable_checkins, vote
+from detectors.common import (
+    TRANSIT_MODES,
+    abstain,
+    abstain_reason,
+    confidence,
+    place_point,
+    step_at,
+    step_mode,
+    usable_checkins,
+    vote
+)
 from detectors.context import _text
 from detectors.geo import haversine_m
 
@@ -51,7 +61,6 @@ class DwellStart:
         pipe.execute()
 
 
-
 # newest check-ins that all sit within radius of their centre
 def _stationary_run(usable, radius_m):
     for start in range(len(usable)):
@@ -63,9 +72,22 @@ def _stationary_run(usable, radius_m):
     return usable[-1:]
 
 
+# at the end stop of a walk that boards a bus or train next, step not advanced yet
+def _at_boarding_stop(ctx, newest, settings):
+    if ctx.step_index is None:
+        return False
+    step, after = step_at(ctx.steps, ctx.step_index), step_at(ctx.steps, ctx.step_index + 1)
+    stop = place_point(step.get("to")) if step else None
+    if stop is None or after is None or after.get("mode") not in TRANSIT_MODES:
+        return False
+    return haversine_m(stop[0], stop[1], newest.lat, newest.lng) <= settings.dwell_stop_m + newest.accuracy_m
+
+
 # longer limit when waiting for a bus or train
-def _limit_s(ctx, settings):
-    return settings.dwell_transit_s if step_mode(ctx) in TRANSIT_MODES else settings.dwell_walk_s
+def _limit_s(ctx, newest, settings):
+    if step_mode(ctx) in TRANSIT_MODES or _at_boarding_stop(ctx, newest, settings):
+        return settings.dwell_transit_s
+    return settings.dwell_walk_s
 
 
 # long dwell when stationary past the step limit
@@ -79,7 +101,7 @@ def detect(request, ctx, settings):
     run = _stationary_run(usable, settings.dwell_radius_m)
     since, saved = DwellStart(ctx.redis, request.checkin.trip_id).find(run, settings.dwell_radius_m)
     duration = (run[-1].timestamp - since).total_seconds()
-    limit = _limit_s(ctx, settings)
+    limit = _limit_s(ctx, run[-1], settings)
 
     # over the limit is a long dwell
     if duration > limit:

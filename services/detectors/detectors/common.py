@@ -28,6 +28,14 @@ def step_at(steps, index):
     return steps[index]
 
 
+# lat lng of a route place or None
+def place_point(place):
+    try:
+        return float(place["lat"]), float(place["lng"])
+    except (TypeError, KeyError, ValueError):
+        return None
+
+
 # mode of the current step or None
 def step_mode(ctx):
     step = step_at(ctx.steps, ctx.step_index)

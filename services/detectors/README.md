@@ -85,6 +85,10 @@ where and when the traveller stopped in `trip:{id}:dwell` (24 h expiry), and tim
 newest check-in stays within `DWELL_RADIUS_M` of that spot. Moving off starts a new stop. Without that key, as
 after a Redis restart, it falls back to the window and abstains when the whole window is stationary.
 
+The traveller app only moves to the next step when the traveller presses Next, so someone waiting at the
+bus stop is often still on the walk step. Within `DWELL_STOP_M` (50 m) plus GPS accuracy of the walk's end
+stop, when a bus or train boards there next, dwell-time uses the 20 minute transit limit.
+
 ### Replay a whole scenario
 
 With the compose stack up, from the repo root (needs the detectors venv for `redis`):
