@@ -7,6 +7,6 @@ nodes:
   - role: control-plane
     extraPortMappings:
       - { containerPort: 30001, hostPort: 8001, listenAddress: "127.0.0.1" }   # Check-in Service
-      - { containerPort: 30002, hostPort: 8002, listenAddress: "127.0.0.1" }   # Aggregator dashboard
+      - { containerPort: 30002, hostPort: 8002, listenAddress: "127.0.0.1" }   # dashboard (Coordinator)
       - { containerPort: 30005, hostPort: 8005, listenAddress: "127.0.0.1" }   # Alert Service
       - { containerPort: 30006, hostPort: 8006, listenAddress: "127.0.0.1" }   # Journey Service

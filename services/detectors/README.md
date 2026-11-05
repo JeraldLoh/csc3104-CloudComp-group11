@@ -101,8 +101,8 @@ detection delay in check-ins (only for the problem each detector owns). `results
 ### Watch a scenario in the caregiver app
 
 `replay` and `load` call the detectors directly. `live` goes through the real services instead, as a phone would:
-it starts a trip in the Journey Service, posts each check-in to the Check-in Service, and the Coordinator, detectors,
-Aggregator and Alert Service do the rest. The caregiver app shows the traveller moving and the alerts they raise.
+it starts a trip in the Journey Service, posts each check-in to the Check-in Service, and the Coordinator, detectors
+and Alert Service do the rest. The caregiver app shows the traveller moving and the alerts they raise.
 
 Locally, one script brings up the whole chain on kind, starts the caregiver app and sends the trip (repo README,
 "Everything in one command"):

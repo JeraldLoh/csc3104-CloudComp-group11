@@ -17,10 +17,9 @@ IMAGES=(
   "easyread-service:services/easyread-service"
   "cloud-detectors:services/detectors"
   "coordinator:services/coordinator"
-  "aggregator:services/aggregator"
 )
 # deployments running the images built here
-BUILT=(cloud-fastapi checkin-service alert-service journey-service easyread-service coordinator aggregator
+BUILT=(cloud-fastapi checkin-service alert-service journey-service easyread-service coordinator
   detector-route detector-heading detector-dwell detector-progress)
 # what must be ready before a trip, ollama left out as it is optional and large
 DEPLOYMENTS=(cloud-redis cloud-localstack "${BUILT[@]}")
@@ -178,7 +177,7 @@ fi
 
 echo
 echo "caregiver app: $APP_URL  act as $CAREGIVER"
-echo "aggregator dashboard: http://localhost:8002/dashboard"
+echo "dashboard (Coordinator): http://localhost:8002/dashboard"
 echo "another trip: $PYTHON -m tools.simulator live --scenario off_route --caregiver $CAREGIVER"
 if [ -n "$APP_PID" ]; then
   echo "press Ctrl+C to stop the app, the cluster keeps running"

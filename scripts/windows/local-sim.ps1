@@ -28,11 +28,10 @@ $Images = [ordered]@{
   "easyread-service" = "services/easyread-service"
   "cloud-detectors"  = "services/detectors"
   "coordinator"      = "services/coordinator"
-  "aggregator"       = "services/aggregator"
 }
 # deployments running the images built here
 $Built = @("cloud-fastapi", "checkin-service", "alert-service", "journey-service", "easyread-service",
-  "coordinator", "aggregator", "detector-route", "detector-heading", "detector-dwell", "detector-progress")
+  "coordinator", "detector-route", "detector-heading", "detector-dwell", "detector-progress")
 # what must be ready before a trip, ollama left out as it is optional and large
 $Deployments = @("cloud-redis", "cloud-localstack") + $Built
 # local port and the service behind it
@@ -181,7 +180,7 @@ try {
   }
   Write-Host ""
   Write-Host "caregiver app: $AppUrl  act as $Caregiver"
-  Write-Host "aggregator dashboard: http://localhost:8002/dashboard"
+  Write-Host "dashboard (Coordinator): http://localhost:8002/dashboard"
   Write-Host "another trip: $Python -m tools.simulator live --scenario off_route --caregiver $Caregiver"
   if ($app) {
     Write-Host "press Ctrl+C to stop the app, the cluster keeps running"

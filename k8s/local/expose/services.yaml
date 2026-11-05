@@ -11,10 +11,10 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: aggregator-host
+  name: coordinator-host
 spec:
   type: NodePort
-  selector: { app: aggregator }
+  selector: { app: coordinator }
   ports: [{ port: 8000, targetPort: 8000, nodePort: 30002 }]
 ---
 apiVersion: v1

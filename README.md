@@ -333,17 +333,16 @@ kubectl port-forward svc/cloud-fastapi 8000:8000 -n csc3104
 curl.exe http://localhost:8000/health
 ```
 
-### Check-in analysis (Coordinator, Aggregator, detectors)
+### Check-in analysis (Coordinator, detectors)
 
 Not part of `kubectl apply -k k8s/local`, so teammates without these images aren't affected. With them, the
-local cluster runs the whole chain: app -> Check-in Service -> Redis and SQS -> Coordinator -> detectors ->
-Aggregator -> Alert Service -> caregiver app.
+local cluster runs the whole chain: app -> Check-in Service -> Redis and SQS -> Coordinator <-> detectors,
+Coordinator -> Alert Service -> caregiver app.
 
 ```powershell
 docker build -t cloud-detectors:local services/detectors
 docker build -t coordinator:local services/coordinator
-docker build -t aggregator:local services/aggregator
-kind load docker-image cloud-detectors:local coordinator:local aggregator:local --name csc3104-local
+kind load docker-image cloud-detectors:local coordinator:local --name csc3104-local
 kubectl apply -k k8s/local/detectors
 kubectl apply -k k8s/local/analysis
 kubectl get pods -n csc3104 -w
@@ -369,7 +368,7 @@ kubectl apply -k k8s/local/expose
 | Address | Service |
 |---|---|
 | <http://localhost:8001> | Check-in Service |
-| <http://localhost:8002/dashboard> | Aggregator dashboard |
+| <http://localhost:8002/dashboard> | Dashboard (Coordinator) |
 | <http://localhost:8005> | Alert Service |
 | <http://localhost:8006> | Journey Service |
 
