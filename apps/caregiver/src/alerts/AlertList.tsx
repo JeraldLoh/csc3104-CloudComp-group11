@@ -95,6 +95,7 @@ function AlertCard({ incident: i, fresh, busy, onAcknowledge, onResolve }: CardP
     i.tripId && `Trip ${i.tripId}`,
     i.stepIndex != null && `step ${i.stepIndex + 1}`, // counted from 0; the traveller's phone says "Step 1 of 4"
     i.detectionCount && i.detectionCount > 1 && `detected ${i.detectionCount}×`,
+    i.escalationLevel && i.state === "open" && `not answered, sent again ${i.escalationLevel}×`,
     i.acknowledgedBy && i.state !== "open" && `acknowledged by ${i.acknowledgedBy}`,
   ].filter(Boolean);
 

@@ -4,6 +4,7 @@ import { readFlags, readSession } from "./app/session";
 import { ConnectionStatus } from "./components/ConnectionStatus";
 import { StepCard } from "./components/StepCard";
 import { HelpSheet } from "./components/HelpSheet";
+import { WhereSheet } from "./components/WhereSheet";
 import { DebugPanel } from "./components/DebugPanel";
 import type { Session } from "./types";
 
@@ -68,7 +69,10 @@ function Journey({ session, demo, debug }: { session: Session; demo: boolean; de
           <h1>{pack.travellerName ? `Hi ${pack.travellerName}` : "Hi there"}</h1>
           <p className="lead">Your trip has {pack.steps.length} steps.</p>
           {first && <p>First: {first.easyRead}</p>}
-          <p className="note">While you travel, {caregiver} can see where you are. Your phone will ask to use your location.</p>
+          <p className="note">
+            While you travel, {caregiver} can see where you are. Your phone will ask to use your location
+            {__FIREBASE__ ? <> and to show notifications. Say yes, so {caregiver} can reach you.</> : "."}
+          </p>
           <OfflineReadiness app={app} />
           <button className="btn btn--primary" onClick={() => void app.start()}>Start my trip</button>
         </div>
@@ -132,6 +136,9 @@ function Journey({ session, demo, debug }: { session: Session; demo: boolean; de
       {debugPanel}
       {app.helpAskedAt !== null && (
         <HelpSheet askedAt={app.helpAskedAt} requests={app.requests} caregiver={caregiver} phone={pack.caregiver.phone} onClose={app.closeHelp} />
+      )}
+      {app.question && app.helpAskedAt === null && (
+        <WhereSheet key={app.question.requestId} caregiver={caregiver} onAnswer={(answer) => void app.answerWhere(answer)} />
       )}
     </Screen>
   );

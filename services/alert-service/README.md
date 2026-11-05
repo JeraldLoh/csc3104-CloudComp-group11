@@ -25,6 +25,9 @@ that problem already has an incident. **Retrying is safe**: send again if a requ
 | POST | `/internal/problems` | See above |
 | POST | `/api/help` | The traveller pressed Help: an urgent incident. No login until Cognito, because a refused request for help is worse than a false alarm |
 | POST | `/api/arrived` | The traveller pressed "I've arrived": tells their caregivers once. Not an incident |
+| POST / GET | `/api/travellers/{travellerId}/where-are-you` | A caregiver asks "Where are you?" / the latest question and answer (`app/where.py`) |
+| GET / POST | `/api/where-are-you`, `/api/where-are-you/reply` | From the traveller's phone: the waiting question / their answer |
+| POST | `/api/devices`, `/api/devices/traveller` | A caregiver's browser / the traveller's phone, for push notifications (`app/push.py`) |
 | GET | `/api/incidents?travellerId=U-042` | Newest first |
 | POST | `/api/incidents/{incidentId}/ack` | URL-encode the ID: `U-042%23T-001%23off_route%232` |
 | POST | `/api/incidents/{incidentId}/resolve` | |
@@ -48,6 +51,37 @@ Same login as the Journey Service, chosen with `AUTH_MODE`:
 
 With a login, a caregiver only reaches travellers linked to them in `caregiver-links`: their profiles,
 safe locations, incidents and live alerts. Anyone else gets `404 not_found`.
+
+## Push notifications (issue 5.4)
+
+New and reopened **urgent** alerts are pushed to every caregiver of the traveller, and a new "Where are you?" question
+to the traveller's phone, through Firebase Cloud Messaging (`app/push.py`). Repeat detections don't push again.
+Sending happens on a background thread, so an alert never waits for Firebase, and tokens Firebase reports as gone are
+deleted.
+
+The service needs the Firebase service account key. Without it, push is off and everything else works.
+
+- Locally: save it as `secrets/firebase-service-account.json` (Git ignores `secrets/`), then
+  `kubectl create secret generic firebase-service-account -n csc3104 --from-file=service-account.json=secrets/firebase-service-account.json`
+  and `kubectl rollout restart deployment/alert-service -n csc3104`. The log says `push notifications are on`.
+- Running it with `dev.ps1`: set `FIREBASE_CREDENTIALS` to the file's path first.
+- On EKS: the same Secret, in the `careroute` namespace.
+
+The apps get the public web config from `firebase-web-config.json` in the repo root (see
+`firebase-web-config.example.json`).
+
+## Escalation (issue 5.4)
+
+An **urgent** alert still **open** (nobody acknowledged it) 2 minutes after it opened, or after it was last sent again,
+is sent again: a push to the traveller's caregivers ("Still not answered: ...") and an `incident.escalated` event, so
+the dashboard highlights it and says how often it's been sent. Up to 3 times; acknowledging or resolving stops it, and
+a reopened alert starts again (`app/escalation.py`).
+
+Every replica checks every 15 s. Each level is claimed with a conditional write on `escalationLevel`, so with several
+replicas it's still sent once, and the incidents table is the only state, so a restart loses nothing. The timings are
+settings: `ESCALATE_AFTER_S` (120), `ESCALATE_MAX` (3), `ESCALATION_CHECK_S` (15), and `ESCALATE_WITHIN_S` (3600): only
+alerts opened that recently are sent again, so after an outage old alerts aren't. `ESCALATION_ENABLED=false` turns it
+off. For a demo, `ESCALATE_AFTER_S=20` shows it quickly.
 
 ## How duplicates are prevented
 

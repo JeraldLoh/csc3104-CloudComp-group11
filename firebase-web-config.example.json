@@ -1,0 +1,9 @@
+{
+  "apiKey": "from Firebase: Project settings, Your apps, Web app, SDK setup and configuration",
+  "authDomain": "careroute-17249.firebaseapp.com",
+  "projectId": "careroute-17249",
+  "storageBucket": "careroute-17249.firebasestorage.app",
+  "messagingSenderId": "from the same place",
+  "appId": "from the same place",
+  "vapidKey": "from Project settings, Cloud Messaging, Web Push certificates, Key pair"
+}
