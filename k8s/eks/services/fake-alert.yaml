@@ -1,5 +1,5 @@
 # Fake Alert Service (stand-in for Member 5's), deployed under the contract name
-# alert-service so the Aggregator finds it without extra config.
+# alert-service so the Coordinator finds it without extra config.
 # Deploy: bash scripts/macos/deploy.sh --service fake-alert  (Deployment found by its part-of label)
 # Remove before Member 5 deploys the real one (same name):
 #   kubectl delete -n careroute deploy,svc -l role=fake-alert

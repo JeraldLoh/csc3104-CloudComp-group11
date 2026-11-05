@@ -1,5 +1,7 @@
-# Coordinator (Member 3) on the local kind cluster: consumes careroute-checkins from LocalStack's SQS
-# and asks the detectors (k8s/local/detectors) about each check-in. Same shape as k8s/eks/services/coordinator.yaml.
+# Coordinator (Member 3) on the local kind cluster: consumes careroute-checkins from LocalStack's SQS,
+# asks the detectors (k8s/local/detectors) about each check-in, decides and reports problems to the
+# Alert Service. Same shape as k8s/eks/services/coordinator.yaml.
+# Dashboard: kubectl port-forward svc/coordinator 8002:8000 -n csc3104   then open http://localhost:8002/dashboard
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -30,7 +32,8 @@ spec:
             # it isn't there yet: it just reports not ready, and starts consuming once it exists.
             - { name: CHECKINS_QUEUE_URL, value: "http://cloud-localstack:4566/000000000000/careroute-checkins" }
             - { name: REDUNDANCY_MODE, value: "fixed4" }   # fixed4 | adaptive | fixed2
-            # Detector and Aggregator URLs default to the in-cluster service names.
+            - { name: ALERT_SERVICE_URL, value: "http://alert-service:8000" }
+            # Detector URLs default to the in-cluster service names.
           resources:
             requests: { cpu: 100m, memory: 128Mi }
             limits: { cpu: 500m, memory: 256Mi }

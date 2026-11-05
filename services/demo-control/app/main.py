@@ -51,7 +51,7 @@ class Settings:
     traveller_id: str = field(default_factory=lambda: os.getenv("TRAVELLER", "U-042"))
     route_file: str = field(default_factory=lambda: os.getenv("ROUTE_FILE", "/tools/route.json"))
     interval_s: float = field(default_factory=lambda: float(os.getenv("INTERVAL_S", "1.5")))
-    dashboard_url: str = field(default_factory=lambda: os.getenv("DASHBOARD_URL", "http://localhost:8001/dashboard"))
+    dashboard_url: str = field(default_factory=lambda: os.getenv("DASHBOARD_URL", "http://localhost:8000/dashboard"))
     # Member 5's caregiver app (Alerts tab), shown beside the dashboard. Started with npm, not compose.
     caregiver_url: str = field(default_factory=lambda: os.getenv("CAREGIVER_URL", "http://localhost:5174/#alerts"))
     # Stop/start buttons: the containers of this compose project, through the Docker socket.

@@ -1,14 +1,14 @@
 # Check-in analysis: local run
 
-Runs the Coordinator and Aggregator on your laptop with stand-ins for everything else:
-Redis, ElasticMQ (a local SQS, no account needed), the real detectors and the real Alert
-Service (Member 5) with a local DynamoDB. No AWS, no cost.
+Runs the Coordinator on your laptop with stand-ins for everything else: Redis, ElasticMQ
+(a local SQS, no account needed), the real detectors and the real Alert Service (Member 5)
+with a local DynamoDB. No AWS, no cost.
 
 ```
 send ──► ElasticMQ ──► coordinator ──► detector-route / -heading / -dwell / -progress (real)
-                           │
-                           ▼
-           Redis ◄── aggregator ──► alert-service (real) ──► DynamoDB (local)
+                        │   decides (rule-based), updates risk
+                        ▼
+           Redis ◄──────┴──────► alert-service (real) ──► DynamoDB (local)
 ```
 
 Run all commands from the repo root.
@@ -20,8 +20,7 @@ docker compose -f services/analysis-dev/compose.yaml up --build -d
 docker compose -f services/analysis-dev/compose.yaml down          # stop (data is not kept)
 ```
 
-`curl localhost:8000/ready` (Coordinator) and `curl localhost:8001/ready` (Aggregator) should
-both answer `{"status":"ready"}`.
+`curl localhost:8000/ready` (Coordinator) should answer `{"status":"ready"}`.
 
 ## Detectors need a trip in Redis
 
@@ -41,14 +40,14 @@ Each check-in needs a new `--seq` (the same `--seq` again counts as a duplicate 
 
 ## See what happened
 
-**Dashboard: http://localhost:8001/dashboard** (served by the Aggregator, refreshes every 2 s):
+**Dashboard: http://localhost:8000/dashboard** (served by the Coordinator, refreshes every 2 s):
 risk per traveller, and every decision with its detectors, votes, latency, escalations and alerts.
 Click a traveller to see only their decisions.
 
 Or from the terminal:
 
 ```bash
-docker compose -f services/analysis-dev/compose.yaml logs -f coordinator aggregator alert-service
+docker compose -f services/analysis-dev/compose.yaml logs -f coordinator alert-service
 curl 'localhost:8004/api/incidents?travellerId=U-042'                              # alerts (M5's service)
 docker compose -f services/analysis-dev/compose.yaml exec redis redis-cli hgetall risk:U-042
 docker compose -f services/analysis-dev/compose.yaml exec redis redis-cli lindex decisions:U-042 0
@@ -77,7 +76,7 @@ Observed with the real detectors (route-corridor needs 3 usable check-ins before
 | `send --seq 3`, `--seq 4` (on route) | `k=4 ... -> normal` |
 | `send --seq 5`, `6`, `7` with `--off-route` | `normal`, `normal`, then `-> problem`, `ALERT` (route-corridor needs 3 usable check-ins to flag) |
 | `send --seq 7 --off-route` again | `skip T-001#7: already decided`, no new incident |
-| `docker compose stop alert-service`, send 3 off-route, `docker compose start alert-service` | `not processed, it will be retried` (Aggregator 503); ≤30 s after it's back, `decided` and the incident exists |
+| `docker compose stop alert-service`, send 3 off-route, `docker compose start alert-service` | `not processed, it will be retried` (`ConnectError`); ≤30 s after it's back, `decided` and the incident exists |
 | `docker compose stop detector-route`, send on-route | route-corridor `abstain` (`error: ConnectError`), k=4, the other three still decide |
 
 ## Fault demos (fake detectors)

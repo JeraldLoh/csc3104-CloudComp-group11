@@ -44,22 +44,12 @@ services:
       REDIS_URL: redis://redis:6379/0
       CHECKINS_QUEUE: careroute-checkins
       REDUNDANCY_MODE: ${REDUNDANCY_MODE:-fixed4}   # adaptive | fixed2 for the experiment
-      # Detector and Aggregator URLs: the defaults match the service names below.
-    ports: ["127.0.0.1:8000:8000"]
+      ALERT_SERVICE_URL: http://alert-service:8000
+      # Detector URLs: the defaults match the service names below.
+    ports: ["127.0.0.1:8000:8000"]   # also the dashboard: http://localhost:8000/dashboard
     depends_on:
       redis: { condition: service_healthy }
       elasticmq: { condition: service_started }
-      aggregator: { condition: service_started }
-
-  aggregator:
-    build: ../aggregator
-    image: careroute-aggregator:dev
-    environment:
-      REDIS_URL: redis://redis:6379/0
-      ALERT_SERVICE_URL: http://alert-service:8000
-    ports: ["127.0.0.1:8001:8000"]
-    depends_on:
-      redis: { condition: service_healthy }
 
   # --- The detectors (Member 4): one image, DETECTOR_ID picks the detector ---------------
   # Service names match contracts/api.md, so the Coordinator finds them without extra config.
