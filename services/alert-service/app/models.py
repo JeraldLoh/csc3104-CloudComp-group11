@@ -39,12 +39,38 @@ class ProblemReport(BaseModel):
     timestamp: datetime  # when the problem was detected
 
 
+# The traveller app's own rule (session.ts), which also allows hyphens: anything it sends must be accepted.
+PHONE_TRAVELLER_ID = r"^U-[A-Za-z0-9-]+$"
+
+
 class ArrivalRequest(BaseModel):
     """POST /api/arrived, from the traveller's phone when they press "I've arrived"."""
 
     tripId: str = Field(min_length=1, max_length=64)
-    # The traveller app's own rule (session.ts), which also allows hyphens: anything it sends must be accepted.
-    travellerId: str | None = Field(default=None, pattern=r"^U-[A-Za-z0-9-]+$", max_length=64)
+    travellerId: str | None = Field(default=None, pattern=PHONE_TRAVELLER_ID, max_length=64)
+
+
+class NewDevice(BaseModel):
+    """POST /api/devices: a caregiver's browser, for push notifications (a Firebase registration token)."""
+
+    token: str = Field(min_length=20, max_length=4096)
+
+
+class TravellerDevice(NewDevice):
+    """POST /api/devices/traveller: the traveller's phone, which has no login yet."""
+
+    travellerId: str = Field(pattern=PHONE_TRAVELLER_ID, max_length=64)
+
+
+class WhereReply(BaseModel):
+    """POST /api/where-are-you/reply, from the traveller's phone. "help" also goes through POST /api/help on the phone,
+    so this only tells the caregiver what they answered. lat and lng aren't range checked, as for Help."""
+
+    travellerId: str = Field(pattern=PHONE_TRAVELLER_ID, max_length=64)
+    requestId: str = Field(min_length=1, max_length=32)
+    answer: Literal["ok", "help"]
+    lat: float | None = None
+    lng: float | None = None
 
 
 class HelpRequest(ArrivalRequest):

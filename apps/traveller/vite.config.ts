@@ -2,6 +2,15 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
+import { existsSync, readFileSync } from "node:fs";
+
+// The Firebase web config for push notifications (issue 5.4), shared by both apps: firebase-web-config.json in the
+// repo root. Its values are public by design (the secret key is the Alert Service's). Without the file, push is off.
+const firebaseFile = new URL("../../firebase-web-config.json", import.meta.url);
+const firebaseRead = existsSync(firebaseFile) ? JSON.parse(readFileSync(firebaseFile, "utf8")) : null;
+// No VAPID key yet (Cloud Messaging, Web Push certificates) means browsers can't subscribe, so push stays off.
+// The tests always run without it, so they never depend on someone's real Firebase project.
+const firebase = firebaseRead?.vapidKey && !process.env.VITEST ? firebaseRead : null;
 
 // In development the app calls /api/... on its own origin and Vite forwards each path
 // to the service that owns it (contracts/api.md). Same origin = no CORS needed locally.
@@ -11,6 +20,7 @@ const alerts = process.env.ALERT_URL ?? "http://localhost:8005";
 const journey = process.env.JOURNEY_URL ?? "http://localhost:8006";
 
 export default defineConfig({
+  define: { __FIREBASE__: JSON.stringify(firebase) },
   plugins: [
     react(),
     // Service worker (issue 2.4): stores the app itself on the phone so it opens with no signal.
@@ -24,7 +34,8 @@ export default defineConfig({
         // Every built file: HTML, JS, CSS, fonts, icons. Hashed names = safe to cache forever.
         globPatterns: ["**/*.{html,js,css,woff,woff2,svg,webmanifest}"],
         // Demo trip photos are downloaded like real ones (offline.ts), not bundled with the app.
-        globIgnores: ["**/demo-media/**"],
+        // The push worker (issue 5.4) is a separate service worker with its own scope, not part of the app.
+        globIgnores: ["**/demo-media/**", "firebase-messaging-sw.js"],
         // Opening any page with no signal shows the app instead of the browser's offline page.
         navigateFallback: "/index.html",
         // API calls must never get the HTML page by mistake.
@@ -44,6 +55,8 @@ export default defineConfig({
       "/api/checkins": { target: checkin, changeOrigin: true },
       "/api/help": { target: alerts, changeOrigin: true },
       "/api/arrived": { target: alerts, changeOrigin: true },
+      "/api/where-are-you": { target: alerts, changeOrigin: true },
+      "/api/devices": { target: alerts, changeOrigin: true },
       "/api/trips": { target: journey, changeOrigin: true },
     },
   },
@@ -54,6 +67,8 @@ export default defineConfig({
       "/api/checkins": { target: checkin, changeOrigin: true },
       "/api/help": { target: alerts, changeOrigin: true },
       "/api/arrived": { target: alerts, changeOrigin: true },
+      "/api/where-are-you": { target: alerts, changeOrigin: true },
+      "/api/devices": { target: alerts, changeOrigin: true },
       "/api/trips": { target: journey, changeOrigin: true },
     },
   },
