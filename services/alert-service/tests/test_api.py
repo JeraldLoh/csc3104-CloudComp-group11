@@ -8,7 +8,7 @@ from app.main import app
 
 
 @pytest.fixture
-def client(dynamodb):  # dynamodb: make sure LocalStack is up and the tables exist
+def client(dynamodb):  # dynamodb: make sure the tables exist
     return TestClient(app)
 
 
