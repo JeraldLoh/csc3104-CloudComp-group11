@@ -53,6 +53,7 @@ def build_event(event_type: str, incident: dict, traveller_name: str | None = No
             "message": alert_message(incident, name),
             "lastLocation": incident.get("lastLocation"),
             "detectionCount": incident.get("detectionCount"),
+            "escalationLevel": incident.get("escalationLevel"),  # how many times it's been sent again (escalation.py)
             "createdAt": incident["createdAt"],
             "updatedAt": incident.get("updatedAt"),
         },
@@ -76,6 +77,10 @@ class AlertPublisher:
         except Exception as e:
             log.warning("couldn't publish %s for %s: %s", event_type, incident.get("incidentId"), e)
 
+    def traveller_name(self, traveller_id: str) -> str:
+        """Their name, or their ID until they have a profile."""
+        return self._name(traveller_id) or traveller_id
+
     def publish_arrival(self, traveller_id: str, trip_id: str, arrived_at: str) -> None:
         """arrival-event.json. Never raises, like publish: the arrival is saved, and dashboards read it from there."""
         try:
@@ -89,6 +94,19 @@ class AlertPublisher:
             }))
         except Exception as e:
             log.warning("couldn't publish the arrival of trip %s: %s", trip_id, e)
+
+    def publish_where(self, kind: str, traveller_id: str, question: dict) -> None:
+        """where-event.json: a "Where are you?" question was asked or answered. Never raises, like publish."""
+        try:
+            self.redis.publish(CHANNEL, json.dumps({
+                "event": f"where.{kind}",
+                "travellerId": traveller_id,
+                "travellerName": self._name(traveller_id) or traveller_id,
+                "request": question,
+                "sentAt": now_iso(),
+            }))
+        except Exception as e:
+            log.warning("couldn't publish where.%s for %s: %s", kind, traveller_id, e)
 
     def _name(self, traveller_id: str) -> str | None:
         """From the travellers table (issue 5.1). None until the traveller has a profile."""

@@ -23,12 +23,16 @@ from app.aws_resources import ensure_queue, ensure_tables
 from app.config import settings
 from app.disruptions import DisruptionConsumer
 from app.errors import ApiError
+from app.escalation import Escalator
 from app.events import EVENT_FOR_OUTCOME, AlertPublisher
 from app.incidents import IncidentStore, now_iso
 from app.live import ARRIVED_TTL_S, LiveTrips, arrived_key
-from app.models import ArrivalRequest, HelpRequest, Location, NewLink, NewSafeLocation, NewTraveller, ProblemReport
+from app.models import (PHONE_TRAVELLER_ID, ArrivalRequest, HelpRequest, Location, NewDevice, NewLink, NewSafeLocation,
+                        NewTraveller, ProblemReport, TravellerDevice, WhereReply)
 from app.profiles import ProfileStore
+from app.push import DeviceStore, Notifier, make_sender
 from app.stream import event_stream
+from app.where import WhereRequests
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("alert.api")
@@ -40,7 +44,12 @@ sqs = boto3.client("sqs", region_name=settings.aws_region, endpoint_url=settings
 incidents = IncidentStore(dynamodb)
 profiles = ProfileStore(dynamodb)
 live = LiveTrips(r, settings.live_window_s)
+where = WhereRequests(r)
 publisher = AlertPublisher(r, dynamodb, settings.travellers_table)
+devices = DeviceStore(dynamodb, settings.device_tokens_table)
+notifier = Notifier(devices, profiles.caregivers_of, make_sender(settings.firebase_credentials), publisher.traveller_name)
+escalator = Escalator(incidents, publisher, notifier, settings.escalate_after_s, settings.escalate_max,
+                      settings.escalation_check_s, settings.escalate_within_s)
 authenticator = Authenticator(settings)  # a bad AUTH_MODE / Cognito setting fails here, at startup
 
 
@@ -52,9 +61,12 @@ async def lifespan(app: FastAPI):
     consumer = None
     if settings.disruptions_consumer_enabled:
         queue_url = settings.disruptions_queue_url or sqs.get_queue_url(QueueName=settings.disruptions_queue)["QueueUrl"]
-        consumer = DisruptionConsumer(sqs, queue_url, incidents, publisher=publisher)
+        consumer = DisruptionConsumer(sqs, queue_url, incidents, publisher=publisher, notifier=notifier)
         consumer.start()
+    if settings.escalation_enabled:
+        escalator.start()
     yield
+    escalator.stop()
     if consumer:
         consumer.stop()
 
@@ -152,6 +164,7 @@ def receive_problem(report: ProblemReport):
     incident, outcome = incidents.record_problem(report)
     log.info("%s %s (detections: %s)", outcome, incident["incidentId"], incident["detectionCount"])
     publisher.publish(EVENT_FOR_OUTCOME[outcome], incident)
+    notifier.incident(incident, outcome)
     return {"incidentId": incident["incidentId"], "created": outcome == "created"}
 
 
@@ -165,19 +178,100 @@ def _trip_context(trip_id: str) -> dict:
         return {}
 
 
-def _traveller_on_trip(body: ArrivalRequest, request: Request) -> tuple[str, dict]:
-    """Whose trip a request from a phone is about, and the trip's context.
-
-    Travellers have no login until issue 1.5, and a phone treats a refusal as final and drops the request, so
-    only Cognito checks who is asking."""
+def _check_phone(request: Request, traveller_id: str) -> None:
+    """Requests from a traveller's phone. Travellers have no login until issue 1.5, and a phone treats a refusal
+    as final and drops the request, so only Cognito checks who is asking."""
     who = authenticator.authenticate(request.headers) if settings.auth_mode == "cognito" else None
+    if who and (who.is_caregiver or who.id != traveller_id):
+        raise Forbidden("Only the traveller can do that.")
+
+
+def _traveller_on_trip(body: ArrivalRequest, request: Request) -> tuple[str, dict]:
+    """Whose trip a request from a phone is about, and the trip's context."""
     context = _trip_context(body.tripId)
     traveller_id = context.get("travellerId") or body.travellerId  # the context comes from the trip's own check-ins
     if not traveller_id:
         raise ApiError(404, "not_found", f"Trip {body.tripId} not found")
-    if who and (who.is_caregiver or who.id != traveller_id):
-        raise Forbidden("Only the traveller on this trip can do that.")
+    _check_phone(request, traveller_id)
     return traveller_id, context
+
+
+# ---------------------------------------------------------------------------- push notifications (issue 5.4)
+@app.post("/api/devices", status_code=201)
+def register_device(body: NewDevice, who: Caller | None = Depends(caller)):
+    """A caregiver's browser, to get urgent alerts by push. Safe to repeat."""
+    me = require_caregiver(who, "get alerts by push")
+    devices.register(me.id, body.token, "caregiver")
+    return {"registered": True, "pushEnabled": notifier.enabled}
+
+
+@app.post("/api/devices/traveller", status_code=201)
+def register_traveller_device(body: TravellerDevice, request: Request):
+    """The traveller's phone, to get "Where are you?" by push. Safe to repeat."""
+    _check_phone(request, body.travellerId)
+    devices.register(body.travellerId, body.token, "traveller")
+    return {"registered": True, "pushEnabled": notifier.enabled}
+
+
+# ---------------------------------------------------------------------------- "Where are you?" (issue 5.5)
+def _redis_or_503(what: str):
+    log.warning("can't reach Redis for %s", what)
+    return ApiError(503, "unavailable", f"Can't {what} right now")
+
+
+@app.post("/api/travellers/{travellerId}/where-are-you", status_code=202)
+def ask_where(travellerId: str, who: Caller | None = Depends(caller)):
+    """A caregiver asks the traveller where they are. The question waits until their phone picks it up, which it
+    does every few seconds while a trip is open; asking again while it waits keeps the same question."""
+    me = require_caregiver(who, "ask where a traveller is")
+    check_access(who, travellerId)
+    try:
+        question, created = where.ask(travellerId, me.id)
+    except redis.RedisError:
+        raise _redis_or_503("ask them")
+    if created:
+        log.info("%s asked %s where they are (%s)", me.id, travellerId, question["requestId"])
+        publisher.publish_where("asked", travellerId, question)
+        notifier.where_asked(travellerId, question)
+    return question
+
+
+@app.get("/api/travellers/{travellerId}/where-are-you")
+def latest_where(travellerId: str, who: Caller | None = Depends(caller)):
+    """The traveller's latest question, waiting or answered, or null."""
+    require_caregiver(who, "see where a traveller is")
+    check_access(who, travellerId)
+    try:
+        return where.get(travellerId)
+    except redis.RedisError:
+        raise _redis_or_503("check")
+
+
+@app.get("/api/where-are-you")
+def question_for_phone(request: Request, travellerId: str = Query(pattern=PHONE_TRAVELLER_ID, max_length=64)):
+    """From the traveller's phone: a question waiting for an answer, or null."""
+    _check_phone(request, travellerId)
+    try:
+        found = where.get(travellerId)
+    except redis.RedisError:
+        raise _redis_or_503("check for questions")
+    return found if found and found["status"] == "asked" else None
+
+
+@app.post("/api/where-are-you/reply")
+def reply_where(body: WhereReply, request: Request):
+    """From the traveller's phone. Safe to retry: only the first reply counts and tells caregivers."""
+    _check_phone(request, body.travellerId)
+    try:
+        question, outcome = where.reply(body.travellerId, body.requestId, body.answer, body.lat, body.lng)
+    except redis.RedisError:
+        raise _redis_or_503("send the answer")  # a 5xx makes the phone try again
+    if outcome == "unknown":
+        raise ApiError(404, "not_found", f"Question {body.requestId} not found")  # expired, or asked again since
+    if outcome == "answered":
+        log.info("%s answered %s: %s", body.travellerId, body.requestId, body.answer)
+        publisher.publish_where("answered", body.travellerId, question)
+    return question
 
 
 @app.post("/api/arrived")
@@ -213,6 +307,7 @@ def ask_for_help(body: HelpRequest, request: Request):
     incident, outcome = incidents.record_problem(report)
     log.info("%s %s (help pressed)", outcome, incident["incidentId"])
     publisher.publish(EVENT_FOR_OUTCOME[outcome], incident)
+    notifier.incident(incident, outcome)
     return {"incidentId": incident["incidentId"]}
 
 

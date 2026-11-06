@@ -13,6 +13,8 @@ All tables are named `careroute-<name>`, use **on-demand** billing, and are crea
 | `safe-locations` | `travellerId` | `locationId` | — | — | Member 5 |
 | `device-tokens` | `userId` | `token` | — | — | Member 5 |
 
+`device-tokens` items: `userId` (a caregiver's G- or a traveller's U- ID), `token` (Firebase registration token), `app` (`caregiver` or `traveller`), `registeredAt`.
+
 Item shapes follow the example files: `checkin.json`, `route.json`, `trip.json`, `incident.json`.
 
 ## Important rules

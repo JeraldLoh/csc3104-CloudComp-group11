@@ -14,6 +14,8 @@ import { ScreenWakeLock, type WakeLockState } from "../lib/wakelock";
 import { batteryPct, startBatteryWatch } from "../lib/battery";
 import { downloadMedia, forgetTrip, requestPersistentStorage, type DownloadProgress } from "../lib/offline";
 import { appShell } from "../lib/sw-register";
+import { fetchQuestion, WHERE_CHECK_MS, type WhereAnswer, type WhereQuestion } from "../lib/where";
+import { askToNotify, pushToken, WHERE_PUSHED } from "../lib/push";
 import type { Session } from "../types";
 
 export type Phase = "loading" | "no-pack" | "ready" | "travelling" | "arrived";
@@ -40,6 +42,8 @@ export interface CareRoute {
   problem: TrackerProblem;
   fix: Fix | null;
   helpAskedAt: number | null;
+  /** The caregiver is asking "Where are you?" and waiting for an answer. */
+  question: WhereQuestion | null;
   offlineSim: boolean;
   outboxDropped: number;
   /** Is everything needed for this trip stored on the phone? */
@@ -57,6 +61,7 @@ export interface CareRoute {
   back(): Promise<void>;
   askForHelp(): Promise<void>;
   closeHelp(): void;
+  answerWhere(answer: WhereAnswer): Promise<void>;
   finish(): Promise<void>;
   setOfflineSim(on: boolean): void;
   checkInNow(): Promise<void>;
@@ -77,6 +82,8 @@ export function useCareRoute(session: Session, opts: { demo: boolean }): CareRou
   const [problem, setProblem] = useState<TrackerProblem>(null);
   const [fix, setFix] = useState<Fix | null>(null);
   const [helpAskedAt, setHelpAskedAt] = useState<number | null>(null);
+  const [question, setQuestion] = useState<WhereQuestion | null>(null);
+  const answered = useRef(new Set<string>()); // answered here, though the server may not have the reply yet
   const [offlineSim, setOfflineSimState] = useState(netsim.offline);
   const [media, setMedia] = useState<DownloadProgress | null>(null);
   const [shellReady, setShellReady] = useState(appShell.ready);
@@ -248,14 +255,31 @@ export function useCareRoute(session: Session, opts: { demo: boolean }): CareRou
     await e.tracker.checkInNow(); // tell the backend straight away, not at the next tick
   }, [session.tripId]);
 
+  // Push (issue 5.4): give the Alert Service this phone's token, through the queue so it gets there with poor signal.
+  const registerPush = useCallback(async () => {
+    const token = await pushToken();
+    if (token) void engine.current?.requests.add("push token", "/api/devices/traveller", { travellerId: session.travellerId, token });
+  }, [session.travellerId]);
+
   const start = useCallback(async () => {
     const e = engine.current;
     if (!e || !loaded) return;
+    // First, while it's still the tap: browsers only show the "Allow notifications?" question after one.
+    void askToNotify().then((allowed) => {
+      if (allowed) void registerPush();
+    });
     await setMeta(e.db, metaKeys.tripStarted(session.tripId), "travelling");
     setPhase("travelling");
     void e.requests.add("trip start", `/api/trips/${encodeURIComponent(session.tripId)}/start`, {});
     startTracking(e, loaded);
-  }, [loaded, session.tripId, startTracking]);
+  }, [loaded, session.tripId, startTracking, registerPush]);
+
+  // Opened again mid-trip, with notifications already allowed: register again, since a phone's token can change.
+  useEffect(() => {
+    if (phase === "travelling" && typeof Notification !== "undefined" && Notification.permission === "granted") {
+      void registerPush();
+    }
+  }, [phase, registerPush]);
 
   const next = useCallback(async () => {
     if (!loaded) return;
@@ -281,6 +305,45 @@ export function useCareRoute(session: Session, opts: { demo: boolean }): CareRou
     void e.tracker.checkInNow();
   }, [session.tripId, session.travellerId]);
 
+  // "Where are you?": look for a waiting question while travelling. One the traveller has answered isn't shown
+  // again, even before the reply gets through (it may still be in the request queue, waiting for signal).
+  useEffect(() => {
+    if (phase !== "travelling") return;
+    let stopped = false;
+    const check = async () => {
+      const found = await fetchQuestion(session.travellerId);
+      const queued = engine.current?.requests.state.pending
+        .some((r) => r.label === "where reply" && (r.body as { requestId?: string }).requestId === found?.requestId);
+      if (stopped || !found || answered.current.has(found.requestId) || queued) return;
+      setQuestion((current) => {
+        if (current?.requestId !== found.requestId) navigator.vibrate?.([300, 150, 300]); // where supported
+        return found;
+      });
+    };
+    void check();
+    const timer = setInterval(() => void check(), WHERE_CHECK_MS);
+    const pushed = () => void check(); // a push says a question is waiting: look now
+    window.addEventListener(WHERE_PUSHED, pushed);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+      window.removeEventListener(WHERE_PUSHED, pushed);
+    };
+  }, [phase, session.travellerId]);
+
+  const answerWhere = useCallback(async (answer: WhereAnswer) => {
+    const e = engine.current;
+    if (!e || !question) return;
+    answered.current.add(question.requestId);
+    setQuestion(null);
+    const f = e.tracker.fix;
+    void e.requests.add("where reply", "/api/where-are-you/reply", {
+      travellerId: session.travellerId, requestId: question.requestId, answer, lat: f?.lat ?? null, lng: f?.lng ?? null,
+    });
+    if (answer === "help") await askForHelp(); // the same urgent alert, and the Help sheet with Call
+    else void e.tracker.checkInNow(); // so the map is fresh for the caregiver
+  }, [question, session.travellerId, askForHelp]);
+
   const finish = useCallback(async () => {
     const e = engine.current;
     if (!e) return;
@@ -297,7 +360,7 @@ export function useCareRoute(session: Session, opts: { demo: boolean }): CareRou
   }, [session.tripId, session.travellerId, stopTracking]);
 
   return {
-    phase, loaded, stepIndex, sender, requests, problem, fix, helpAskedAt, offlineSim,
+    phase, loaded, stepIndex, sender, requests, problem, fix, helpAskedAt, question, offlineSim,
     outboxDropped: engine.current?.outbox.dropped ?? 0,
     offline: { appShell: shellReady, media, persisted },
     routeChangedAt,
@@ -318,7 +381,7 @@ export function useCareRoute(session: Session, opts: { demo: boolean }): CareRou
       if (!opts.demo || !e || !loaded) return; // never replace a real trip's route
       e.applyPack({ ...loaded, pack: DEMO_PACK_CHANGED, source: "network" }, true);
     },
-    start, next, back, askForHelp, finish,
+    start, next, back, askForHelp, finish, answerWhere,
     closeHelp: () => setHelpAskedAt(null),
     setOfflineSim: (on) => netsim.set(on),
     checkInNow: async () => {

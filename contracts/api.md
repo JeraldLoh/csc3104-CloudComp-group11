@@ -74,11 +74,15 @@ Scenarios: `normal`, `missed_stop`, `wrong_direction`, `long_dwell`, `silence`, 
 | GET | `/api/incidents?travellerId=U-042` | — | list of `incident.json` |
 | POST | `/api/incidents/{incidentId}/ack` | — | updated `incident.json` |
 | POST | `/api/incidents/{incidentId}/resolve` | — | updated `incident.json` |
-| GET | `/api/stream` | — | Live events (SSE), each one is `alert-event.json` or `arrival-event.json` |
+| GET | `/api/stream` | — | Live events (SSE), each one is `alert-event.json`, `arrival-event.json` or `where-event.json` |
 | POST | `/api/arrived` | `{"tripId": "T-001", "travellerId": "U-042"}` | `{"tripId", "arrivedAt"}`: the traveller pressed "I've arrived". Safe to repeat; only the first call tells caregivers. No login needed until Cognito |
 | POST | `/api/help` | `{"tripId": "T-001", "travellerId": "U-042", "stepIndex": 2, "lat": 1.40, "lng": 103.90}` | `{"incidentId": "..."}`: an urgent `help_requested` incident. Only `tripId` is required; the trip's check-in context fills in the rest. No login needed until Cognito |
-| POST | `/api/travellers/{travellerId}/where-are-you` | — | `202` |
-| POST | `/api/devices` | `{"token": "<firebase token>"}` | `201` |
+| POST | `/api/travellers/{travellerId}/where-are-you` | — | `202` the question (`requestId`, `askedBy`, `askedAt`, `status`, `answer`, `answeredAt`, `lat`, `lng`). One waits at a time; asking again returns it |
+| GET | `/api/travellers/{travellerId}/where-are-you` | — | the latest question, waiting or answered, or `null` |
+| GET | `/api/where-are-you?travellerId=U-042` | — | from the phone: the question waiting for an answer, or `null`. No login needed until Cognito |
+| POST | `/api/where-are-you/reply` | `{"travellerId", "requestId", "answer": "ok" \| "help", "lat", "lng"}` | the answered question. Safe to repeat: only the first reply counts. "help" is also sent as `POST /api/help` by the phone |
+| POST | `/api/devices` | `{"token": "<firebase token>"}` | `201` `{"registered": true, "pushEnabled": bool}`: a caregiver's browser, for urgent alerts by push. Safe to repeat |
+| POST | `/api/devices/traveller` | `{"travellerId": "U-042", "token": "<firebase token>"}` | `201`, as above: the traveller's phone, for "Where are you?" by push. No login needed until Cognito |
 
 ## Profiles (Member 5)
 

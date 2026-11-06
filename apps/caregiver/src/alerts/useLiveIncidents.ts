@@ -4,7 +4,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { isCaregiverId, type MyTravellers } from "../profiles/useMyTravellers";
 import { fetchIncidents, streamUrl } from "./api";
-import { applyEvent, mergeIncidents, type AlertEvent, type ArrivalEvent, type Incident, type IncidentMap } from "./incidents";
+import {
+  applyEvent,
+  mergeIncidents,
+  newerWhere,
+  type AlertEvent,
+  type ArrivalEvent,
+  type Incident,
+  type IncidentMap,
+  type WhereEvent,
+  type WhereRequest,
+} from "./incidents";
 
 const FRESH_MS = 4000; // how long a new alert stays highlighted
 // The Alert Service pings every 15 s. Hearing nothing for this long means the connection is dead even
@@ -21,6 +31,7 @@ export function useLiveIncidents(caregiverId: string, my: MyTravellers) {
   const [loadedFor, setLoadedFor] = useState<string | null>(null); // which travellers the last good load covered
   const [fresh, setFresh] = useState<ReadonlySet<string>>(new Set());
   const [arrivals, setArrivals] = useState<ArrivalEvent[]>([]); // announced while the page is open, until dismissed
+  const [where, setWhere] = useState<Record<string, WhereRequest>>({}); // latest "Where are you?" per traveller
   const loggedIn = isCaregiverId(caregiverId);
 
   const travellerIds = my.travellers.map((t) => t.travellerId);
@@ -79,16 +90,20 @@ export function useLiveIncidents(caregiverId: string, my: MyTravellers) {
       });
       source.onmessage = (msg) => {
         lastHeard = Date.now();
-        const event: AlertEvent | ArrivalEvent = JSON.parse(msg.data);
+        const event: AlertEvent | ArrivalEvent | WhereEvent = JSON.parse(msg.data);
         const about = "incident" in event ? event.incident.travellerId : event.travellerId;
         // The service already sends only this caregiver's travellers; this also covers AUTH_MODE=off.
         if (!idsRef.current.includes(about)) return;
+        if ("request" in event) {
+          setWhere((current) => ({ ...current, [about]: newerWhere(current[about], event.request) }));
+          return;
+        }
         if (!("incident" in event)) {
           setArrivals((current) => [...current.filter((a) => a.tripId !== event.tripId), event]);
           return;
         }
         setIncidents((current) => applyEvent(current, event));
-        if (event.event === "incident.opened" || event.event === "incident.reopened") {
+        if (event.event === "incident.opened" || event.event === "incident.reopened" || event.event === "incident.escalated") {
           highlight(event.incident.incidentId);
         }
       };
@@ -117,10 +132,15 @@ export function useLiveIncidents(caregiverId: string, my: MyTravellers) {
     setArrivals((current) => current.filter((a) => a.tripId !== tripId));
   }, []);
 
+  /** A question the page asked or loaded itself; the live stream may already have something newer. */
+  const noteWhere = useCallback((travellerId: string, request: WhereRequest) => {
+    setWhere((current) => ({ ...current, [travellerId]: newerWhere(current[travellerId], request) }));
+  }, []);
+
   /** Only this caregiver's current travellers. */
   const mine = Object.values(incidents).filter((i) => travellerIds.includes(i.travellerId));
   /** False until the current travellers' alerts have loaded, and again if a reload fails: "no alerts" means nothing then. */
   const known = my.loaded && loadedFor === idsKey;
 
-  return { mine, known, connection, error, setError, merge, fresh, loggedIn, arrivals, dismissArrival };
+  return { mine, known, connection, error, setError, merge, fresh, loggedIn, arrivals, dismissArrival, where, noteWhere };
 }

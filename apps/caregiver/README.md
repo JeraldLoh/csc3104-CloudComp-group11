@@ -54,6 +54,12 @@ first, with alerts arriving live. It needs the Alert Service on port 8005 with `
   planned its route. That's why it says "No trip of yours under way" then, not "No trip under way".
 - When a traveller presses "I've arrived", a green banner appears straight away (`trip.arrived` on the live stream) and
   stays until dismissed. A dashboard that wasn't open still shows "Arrived 5 min ago" on the card, for 30 minutes.
+- **Where are you?** on an opened traveller asks them on their phone (`WhereAreYou` in `DashboardPage.tsx`). The
+  phone shows it within about 5 seconds while the traveller app is open, and the answer ("I'm OK" or "I need help",
+  with where they were) appears here live. After 2 minutes with no answer it says to call them.
+- **Get urgent alerts on this computer** (`src/push/`) turns on push notifications, so an urgent alert reaches the
+  caregiver with the dashboard closed. It needs `firebase-web-config.json` in the repo root, and is hidden without it.
+  Push only works on a secure page: `localhost`, or HTTPS.
 - Alerts are live. Step and location refresh every 3 seconds; safe locations and caregivers every 30.
 
 ## Using the planner in another page
