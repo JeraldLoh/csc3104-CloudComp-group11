@@ -116,19 +116,9 @@ jobs:
     concurrency:
       group: ${{ github.event_name == 'pull_request' && format('pr-{0}-{1}', github.event.pull_request.number, matrix.service) || format('deploy-{0}', matrix.service) }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-    # Tests for these services talk to LocalStack and Redis on localhost (the port-forwards
-    # their conftest.py describes). An empty image means the container isn't started.
+    # Tests for these services talk to Redis on localhost (the port-forward their conftest.py
+    # describes; moto fakes AWS in-process). An empty image means the container isn't started.
     services:
-      localstack:
-        image: ${{ contains(fromJSON('["alert-service"]'), matrix.service) && 'localstack/localstack:latest' || '' }}
-        ports: ["4566:4566"]
-        env:
-          LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_AUTH_TOKEN }}
-          SERVICES: s3,sqs,dynamodb
-          AWS_DEFAULT_REGION: ap-southeast-1
-        options: >-
-          --health-cmd "curl -fs http://localhost:4566/_localstack/health"
-          --health-interval 5s --health-timeout 3s --health-retries 30
       redis:
         image: ${{ contains(fromJSON('["alert-service"]'), matrix.service) && 'redis:7' || '' }}
         ports: ["6379:6379"]

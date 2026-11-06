@@ -1,0 +1,180 @@
+{
+  "odata.metadata": "https://datamall2.mytransport.sg/ltaodataservice/$metadata#BusStops",
+  "value": [
+    {
+      "BusStopCode": "01012",
+      "RoadName": "Victoria St",
+      "Description": "Hotel Grand Pacific",
+      "Latitude": 1.29684825487647,
+      "Longitude": 103.85253591654006
+    },
+    {
+      "BusStopCode": "01013",
+      "RoadName": "Victoria St",
+      "Description": "St. Joseph's Ch",
+      "Latitude": 1.29770970610083,
+      "Longitude": 103.8532247463225
+    },
+    {
+      "BusStopCode": "01019",
+      "RoadName": "Victoria St",
+      "Description": "Bras Basah Cplx",
+      "Latitude": 1.29698951191332,
+      "Longitude": 103.85302201172507
+    },
+    {
+      "BusStopCode": "01029",
+      "RoadName": "Nth Bridge Rd",
+      "Description": "Opp Natl Lib",
+      "Latitude": 1.2966729849642,
+      "Longitude": 103.85441422464267
+    },
+    {
+      "BusStopCode": "01039",
+      "RoadName": "Nth Bridge Rd",
+      "Description": "Bugis Cube",
+      "Latitude": 1.29820784139683,
+      "Longitude": 103.85549139837407
+    },
+    {
+      "BusStopCode": "01059",
+      "RoadName": "Victoria St",
+      "Description": "Bugis Stn Exit B",
+      "Latitude": 1.30075679526626,
+      "Longitude": 103.85611040457583
+    },
+    {
+      "BusStopCode": "01109",
+      "RoadName": "Queen St",
+      "Description": "Queen St Ter",
+      "Latitude": 1.30358577565355,
+      "Longitude": 103.85650372998224
+    },
+    {
+      "BusStopCode": "01112",
+      "RoadName": "Victoria St",
+      "Description": "Opp Bugis Stn Exit C",
+      "Latitude": 1.30009212839081,
+      "Longitude": 103.85520027125814
+    },
+    {
+      "BusStopCode": "01113",
+      "RoadName": "Victoria St",
+      "Description": "Bugis Stn Exit A",
+      "Latitude": 1.30117297541547,
+      "Longitude": 103.8561140106393
+    },
+    {
+      "BusStopCode": "01119",
+      "RoadName": "Victoria St",
+      "Description": "Aft Bugis Stn Exit C",
+      "Latitude": 1.2996041093804,
+      "Longitude": 103.85512934079571
+    },
+    {
+      "BusStopCode": "01121",
+      "RoadName": "Victoria St",
+      "Description": "Aft Victoria Lane",
+      "Latitude": 1.30393809691048,
+      "Longitude": 103.85867999243207
+    },
+    {
+      "BusStopCode": "01129",
+      "RoadName": "Victoria St",
+      "Description": "Bef Jln Pisang",
+      "Latitude": 1.30350269187301,
+      "Longitude": 103.85864530718491
+    },
+    {
+      "BusStopCode": "01139",
+      "RoadName": "Nth Bridge Rd",
+      "Description": "Bugis Stn/Parkview Sq",
+      "Latitude": 1.30033057855542,
+      "Longitude": 103.85716080665901
+    },
+    {
+      "BusStopCode": "01211",
+      "RoadName": "Victoria St",
+      "Description": "Opp Blk 461",
+      "Latitude": 1.30551803523268,
+      "Longitude": 103.8605449516032
+    },
+    {
+      "BusStopCode": "01219",
+      "RoadName": "Victoria St",
+      "Description": "Blk 461",
+      "Latitude": 1.30526598535719,
+      "Longitude": 103.86072019914616
+    },
+    {
+      "BusStopCode": "01229",
+      "RoadName": "Nth Bridge Rd",
+      "Description": "Bef Sultan Mque",
+      "Latitude": 1.30337552638813,
+      "Longitude": 103.85963089198265
+    },
+    {
+      "BusStopCode": "01231",
+      "RoadName": "Jln Sultan",
+      "Description": "Opp Textile Ctr",
+      "Latitude": 1.3032499999752,
+      "Longitude": 103.8610830559663
+    },
+    {
+      "BusStopCode": "01239",
+      "RoadName": "Jln Sultan",
+      "Description": "Sultan Plaza",
+      "Latitude": 1.30291236608351,
+      "Longitude": 103.86161817611134
+    },
+    {
+      "BusStopCode": "01311",
+      "RoadName": "Kallang Rd",
+      "Description": "Lavender Stn Exit B",
+      "Latitude": 1.3070916463394,
+      "Longitude": 103.86219695240973
+    },
+    {
+      "BusStopCode": "01319",
+      "RoadName": "Kallang Rd",
+      "Description": "Lavender Stn Exit A/ICA",
+      "Latitude": 1.30757426746418,
+      "Longitude": 103.86325596123476
+    },
+    {
+      "BusStopCode": "01329",
+      "RoadName": "Nth Bridge Rd",
+      "Description": "Blk 8",
+      "Latitude": 1.30495670239172,
+      "Longitude": 103.86363028484124
+    },
+    {
+      "BusStopCode": "01339",
+      "RoadName": "Crawford St",
+      "Description": "Bef Crawford Bridge",
+      "Latitude": 1.30774601733202,
+      "Longitude": 103.8642627465441
+    },
+    {
+      "BusStopCode": "01341",
+      "RoadName": "Crawford St",
+      "Description": "Southbank",
+      "Latitude": 1.30647555600578,
+      "Longitude": 103.86452527798744
+    },
+    {
+      "BusStopCode": "01349",
+      "RoadName": "Crawford St",
+      "Description": "Opp Blk 4",
+      "Latitude": 1.30568635716829,
+      "Longitude": 103.86543994417883
+    },
+    {
+      "BusStopCode": "01411",
+      "RoadName": "Beach Rd",
+      "Description": "Opp St. John HQ",
+      "Latitude": 1.30211332865049,
+      "Longitude": 103.86295598167331
+    }
+  ]
+}

@@ -1,0 +1,209 @@
+{
+  "odata.metadata": "https://datamall2.mytransport.sg/ltaodataservice/$metadata#PcdRealTime",
+  "value": [
+    {
+      "Station": "CC1",
+      "StartTime": "2026-11-06T16:00:00+08:00",
+      "EndTime": "2026-11-06T16:10:00+08:00",
+      "CrowdLevel": "l"
+    },
+    {
+      "Station": "CC10",
+      "StartTime": "2026-11-06T16:00:00+08:00",
+      "EndTime": "2026-11-06T16:10:00+08:00",
+      "CrowdLevel": "l"
+    },
+    {
+      "Station": "CC11",
+      "StartTime": "2026-11-06T16:00:00+08:00",
+      "EndTime": "2026-11-06T16:10:00+08:00",
+      "CrowdLevel": "l"
+    },
+    {
+      "Station": "CC12",
+      "StartTime": "2026-11-06T16:00:00+08:00",
+      "EndTime": "2026-11-06T16:10:00+08:00",
+      "CrowdLevel": "l"
+    },
+    {
+      "Station": "CC13",
+      "StartTime": "2026-11-06T16:00:00+08:00",
+      "EndTime": "2026-11-06T16:10:00+08:00",
+      "CrowdLevel": "l"
+    },
+    {
+      "Station": "CC14",
+      "StartTime": "2026-11-06T16:00:00+08:00",
+      "EndTime": "2026-11-06T16:10:00+08:00",
+      "CrowdLevel": "l"
+    },
+    {
+      "Station": "CC15",
+      "StartTime": "2026-11-06T16:00:00+08:00",
+      "EndTime": "2026-11-06T16:10:00+08:00",
+      "CrowdLevel": "l"
+    },
+    {
+      "Station": "CC16",
+      "StartTime": "2026-11-06T16:00:00+08:00",
+      "EndTime": "2026-11-06T16:10:00+08:00",
+      "CrowdLevel": "l"
+    },
+    {
+      "Station": "CC17",
+      "StartTime": "2026-11-06T16:00:00+08:00",
+      "EndTime": "2026-11-06T16:10:00+08:00",
+      "CrowdLevel": "l"
+    },
+    {
+      "Station": "CC18",
+      "StartTime": "2026-11-06T16:00:00+08:00",
+      "EndTime": "2026-11-06T16:10:00+08:00",
+      "CrowdLevel": "l"
+    },
+    {
+      "Station": "CC19",
+      "StartTime": "2026-11-06T16:00:00+08:00",
+      "EndTime": "2026-11-06T16:10:00+08:00",
+      "CrowdLevel": "l"
+    },
+    {
+      "Station": "CC2",
+      "StartTime": "2026-11-06T16:00:00+08:00",
+      "EndTime": "2026-11-06T16:10:00+08:00",
+      "CrowdLevel": "l"
+    },
+    {
+      "Station": "CC20",
+      "StartTime": "2026-11-06T16:00:00+08:00",
+      "EndTime": "2026-11-06T16:10:00+08:00",
+      "CrowdLevel": "l"
+    },
+    {
+      "Station": "CC21",
+      "StartTime": "2026-11-06T16:00:00+08:00",
+      "EndTime": "2026-11-06T16:10:00+08:00",
+      "CrowdLevel": "l"
+    },
+    {
+      "Station": "CC22",
+      "StartTime": "2026-11-06T16:00:00+08:00",
+      "EndTime": "2026-11-06T16:10:00+08:00",
+      "CrowdLevel": "l"
+    },
+    {
+      "Station": "CC23",
+      "StartTime": "2026-11-06T16:00:00+08:00",
+      "EndTime": "2026-11-06T16:10:00+08:00",
+      "CrowdLevel": "l"
+    },
+    {
+      "Station": "CC24",
+      "StartTime": "2026-11-06T16:00:00+08:00",
+      "EndTime": "2026-11-06T16:10:00+08:00",
+      "CrowdLevel": "m"
+    },
+    {
+      "Station": "CC25",
+      "StartTime": "2026-11-06T16:00:00+08:00",
+      "EndTime": "2026-11-06T16:10:00+08:00",
+      "CrowdLevel": "l"
+    },
+    {
+      "Station": "CC26",
+      "StartTime": "2026-11-06T16:00:00+08:00",
+      "EndTime": "2026-11-06T16:10:00+08:00",
+      "CrowdLevel": "l"
+    },
+    {
+      "Station": "CC27",
+      "StartTime": "2026-11-06T16:00:00+08:00",
+      "EndTime": "2026-11-06T16:10:00+08:00",
+      "CrowdLevel": "l"
+    },
+    {
+      "Station": "CC28",
+      "StartTime": "2026-11-06T16:00:00+08:00",
+      "EndTime": "2026-11-06T16:10:00+08:00",
+      "CrowdLevel": "l"
+    },
+    {
+      "Station": "CC29",
+      "StartTime": "2026-11-06T16:00:00+08:00",
+      "EndTime": "2026-11-06T16:10:00+08:00",
+      "CrowdLevel": "l"
+    },
+    {
+      "Station": "CC3",
+      "StartTime": "2026-11-06T16:00:00+08:00",
+      "EndTime": "2026-11-06T16:10:00+08:00",
+      "CrowdLevel": "l"
+    },
+    {
+      "Station": "CC30",
+      "StartTime": "2026-11-06T16:00:00+08:00",
+      "EndTime": "2026-11-06T16:10:00+08:00",
+      "CrowdLevel": "l"
+    },
+    {
+      "Station": "CC31",
+      "StartTime": "2026-11-06T16:00:00+08:00",
+      "EndTime": "2026-11-06T16:10:00+08:00",
+      "CrowdLevel": "l"
+    },
+    {
+      "Station": "CC32",
+      "StartTime": "2026-11-06T16:00:00+08:00",
+      "EndTime": "2026-11-06T16:10:00+08:00",
+      "CrowdLevel": "l"
+    },
+    {
+      "Station": "CC33",
+      "StartTime": "2026-11-06T16:00:00+08:00",
+      "EndTime": "2026-11-06T16:10:00+08:00",
+      "CrowdLevel": "l"
+    },
+    {
+      "Station": "CC34",
+      "StartTime": "2026-11-06T16:00:00+08:00",
+      "EndTime": "2026-11-06T16:10:00+08:00",
+      "CrowdLevel": "l"
+    },
+    {
+      "Station": "CC4",
+      "StartTime": "2026-11-06T16:00:00+08:00",
+      "EndTime": "2026-11-06T16:10:00+08:00",
+      "CrowdLevel": "l"
+    },
+    {
+      "Station": "CC5",
+      "StartTime": "2026-11-06T16:00:00+08:00",
+      "EndTime": "2026-11-06T16:10:00+08:00",
+      "CrowdLevel": "l"
+    },
+    {
+      "Station": "CC6",
+      "StartTime": "2026-11-06T16:00:00+08:00",
+      "EndTime": "2026-11-06T16:10:00+08:00",
+      "CrowdLevel": "l"
+    },
+    {
+      "Station": "CC7",
+      "StartTime": "2026-11-06T16:00:00+08:00",
+      "EndTime": "2026-11-06T16:10:00+08:00",
+      "CrowdLevel": "l"
+    },
+    {
+      "Station": "CC8",
+      "StartTime": "2026-11-06T16:00:00+08:00",
+      "EndTime": "2026-11-06T16:10:00+08:00",
+      "CrowdLevel": "l"
+    },
+    {
+      "Station": "CC9",
+      "StartTime": "2026-11-06T16:00:00+08:00",
+      "EndTime": "2026-11-06T16:10:00+08:00",
+      "CrowdLevel": "l"
+    }
+  ]
+}
