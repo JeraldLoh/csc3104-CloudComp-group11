@@ -1,0 +1,422 @@
+{
+  "trips": [
+    {
+      "id": "punggol-orchard",
+      "name": "Punggol to Orchard",
+      "from": {
+        "name": "Punggol MRT Station",
+        "lat": 1.404546536689935,
+        "lng": 103.9020726222284
+      },
+      "to": {
+        "name": "Orchard MRT Station",
+        "lat": 1.303980136817154,
+        "lng": 103.8322452443746
+      }
+    },
+    {
+      "id": "amk-toapayoh",
+      "name": "Ang Mo Kio to Toa Payoh",
+      "from": {
+        "name": "Ang Mo Kio MRT Station",
+        "lat": 1.369932849622636,
+        "lng": 103.8495580923193
+      },
+      "to": {
+        "name": "Toa Payoh MRT Station",
+        "lat": 1.332629280968894,
+        "lng": 103.8475021980474
+      }
+    },
+    {
+      "id": "sengkang-serangoon",
+      "name": "Sengkang to Serangoon",
+      "from": {
+        "name": "Sengkang MRT Station",
+        "lat": 1.391694626015214,
+        "lng": 103.895484694279
+      },
+      "to": {
+        "name": "Serangoon MRT Station",
+        "lat": 1.349707880895642,
+        "lng": 103.873574849884
+      }
+    },
+    {
+      "id": "hougang-dhobyghaut",
+      "name": "Hougang to Dhoby Ghaut",
+      "from": {
+        "name": "Hougang MRT Station",
+        "lat": 1.371292266207984,
+        "lng": 103.8923805130286
+      },
+      "to": {
+        "name": "Dhoby Ghaut MRT Station",
+        "lat": 1.29870132536119,
+        "lng": 103.8461136779511
+      }
+    },
+    {
+      "id": "tampines-changi",
+      "name": "Tampines to Changi Airport",
+      "from": {
+        "name": "Tampines MRT Station",
+        "lat": 1.353301676373764,
+        "lng": 103.9451445867489
+      },
+      "to": {
+        "name": "Changi Airport MRT Station",
+        "lat": 1.357478974476929,
+        "lng": 103.9878835695896
+      }
+    },
+    {
+      "id": "pasirris-bugis",
+      "name": "Pasir Ris to Bugis",
+      "from": {
+        "name": "Pasir Ris MRT Station",
+        "lat": 1.373043316358061,
+        "lng": 103.9492845277626
+      },
+      "to": {
+        "name": "Bugis MRT Station",
+        "lat": 1.30046508509718,
+        "lng": 103.8557067309327
+      }
+    },
+    {
+      "id": "bedok-payalebar",
+      "name": "Bedok to Paya Lebar",
+      "from": {
+        "name": "Bedok MRT Station",
+        "lat": 1.323979968681596,
+        "lng": 103.9299844950654
+      },
+      "to": {
+        "name": "Paya Lebar MRT Station",
+        "lat": 1.318111492245282,
+        "lng": 103.8930607715758
+      }
+    },
+    {
+      "id": "harbourfront-marinabay",
+      "name": "HarbourFront to Marina Bay",
+      "from": {
+        "name": "HarbourFront MRT Station",
+        "lat": 1.265389383749022,
+        "lng": 103.8215301570942
+      },
+      "to": {
+        "name": "Marina Bay MRT Station",
+        "lat": 1.276410298754993,
+        "lng": 103.8545955222629
+      }
+    },
+    {
+      "id": "tiongbahru-payalebar",
+      "name": "Tiong Bahru to Paya Lebar",
+      "from": {
+        "name": "Tiong Bahru MRT Station",
+        "lat": 1.286102536157761,
+        "lng": 103.827445112419
+      },
+      "to": {
+        "name": "Paya Lebar MRT Station",
+        "lat": 1.318111492245282,
+        "lng": 103.8930607715758
+      }
+    }
+  ],
+  "lta": {
+    "recordedAt": "2026-11-06T16:21:42+08:00",
+    "busArrivalStops": [
+      "01112",
+      "03071",
+      "03222",
+      "04222",
+      "10169",
+      "14119",
+      "52031",
+      "54009",
+      "54019",
+      "54248",
+      "54339",
+      "60159",
+      "63059",
+      "63379",
+      "64009",
+      "64119",
+      "64461",
+      "64541",
+      "65009",
+      "65049",
+      "65529",
+      "67009",
+      "67409",
+      "67441",
+      "67529",
+      "70279",
+      "72019",
+      "72179",
+      "75009",
+      "76141",
+      "76149",
+      "76231",
+      "77009",
+      "77031",
+      "80011",
+      "80169",
+      "81211",
+      "83029",
+      "84009",
+      "84039"
+    ],
+    "crowdLines": [
+      "CCL",
+      "CGL",
+      "EWL",
+      "NEL",
+      "NSL"
+    ]
+  },
+  "onemap": {
+    "recordedAt": "2026-11-06",
+    "source": "live OneMap"
+  },
+  "routes": [
+    {
+      "trip": "punggol-orchard",
+      "mode": "TRANSIT",
+      "file": "onemap/punggol-orchard_transit.json",
+      "from": [
+        1.4043,
+        103.9021
+      ],
+      "to": [
+        1.304,
+        103.8318
+      ]
+    },
+    {
+      "trip": "punggol-orchard",
+      "mode": "BUS",
+      "file": "onemap/punggol-orchard_bus.json",
+      "from": [
+        1.4043,
+        103.9021
+      ],
+      "to": [
+        1.304,
+        103.8318
+      ]
+    },
+    {
+      "trip": "amk-toapayoh",
+      "mode": "TRANSIT",
+      "file": "onemap/amk-toapayoh_transit.json",
+      "from": [
+        1.37,
+        103.8486
+      ],
+      "to": [
+        1.3326,
+        103.8474
+      ]
+    },
+    {
+      "trip": "amk-toapayoh",
+      "mode": "BUS",
+      "file": "onemap/amk-toapayoh_bus.json",
+      "from": [
+        1.37,
+        103.8486
+      ],
+      "to": [
+        1.3326,
+        103.8474
+      ]
+    },
+    {
+      "trip": "sengkang-serangoon",
+      "mode": "TRANSIT",
+      "file": "onemap/sengkang-serangoon_transit.json",
+      "from": [
+        1.391694626015214,
+        103.895484694279
+      ],
+      "to": [
+        1.349707880895642,
+        103.873574849884
+      ]
+    },
+    {
+      "trip": "sengkang-serangoon",
+      "mode": "BUS",
+      "file": "onemap/sengkang-serangoon_bus.json",
+      "from": [
+        1.391694626015214,
+        103.895484694279
+      ],
+      "to": [
+        1.349707880895642,
+        103.873574849884
+      ]
+    },
+    {
+      "trip": "hougang-dhobyghaut",
+      "mode": "TRANSIT",
+      "file": "onemap/hougang-dhobyghaut_transit.json",
+      "from": [
+        1.371292266207984,
+        103.8923805130286
+      ],
+      "to": [
+        1.29870132536119,
+        103.8461136779511
+      ]
+    },
+    {
+      "trip": "hougang-dhobyghaut",
+      "mode": "BUS",
+      "file": "onemap/hougang-dhobyghaut_bus.json",
+      "from": [
+        1.371292266207984,
+        103.8923805130286
+      ],
+      "to": [
+        1.29870132536119,
+        103.8461136779511
+      ]
+    },
+    {
+      "trip": "tampines-changi",
+      "mode": "TRANSIT",
+      "file": "onemap/tampines-changi_transit.json",
+      "from": [
+        1.353301676373764,
+        103.9451445867489
+      ],
+      "to": [
+        1.357478974476929,
+        103.9878835695896
+      ]
+    },
+    {
+      "trip": "tampines-changi",
+      "mode": "BUS",
+      "file": "onemap/tampines-changi_bus.json",
+      "from": [
+        1.353301676373764,
+        103.9451445867489
+      ],
+      "to": [
+        1.357478974476929,
+        103.9878835695896
+      ]
+    },
+    {
+      "trip": "pasirris-bugis",
+      "mode": "TRANSIT",
+      "file": "onemap/pasirris-bugis_transit.json",
+      "from": [
+        1.373043316358061,
+        103.9492845277626
+      ],
+      "to": [
+        1.30046508509718,
+        103.8557067309327
+      ]
+    },
+    {
+      "trip": "pasirris-bugis",
+      "mode": "BUS",
+      "file": "onemap/pasirris-bugis_bus.json",
+      "from": [
+        1.373043316358061,
+        103.9492845277626
+      ],
+      "to": [
+        1.30046508509718,
+        103.8557067309327
+      ]
+    },
+    {
+      "trip": "bedok-payalebar",
+      "mode": "TRANSIT",
+      "file": "onemap/bedok-payalebar_transit.json",
+      "from": [
+        1.323979968681596,
+        103.9299844950654
+      ],
+      "to": [
+        1.318111492245282,
+        103.8930607715758
+      ]
+    },
+    {
+      "trip": "bedok-payalebar",
+      "mode": "BUS",
+      "file": "onemap/bedok-payalebar_bus.json",
+      "from": [
+        1.323979968681596,
+        103.9299844950654
+      ],
+      "to": [
+        1.318111492245282,
+        103.8930607715758
+      ]
+    },
+    {
+      "trip": "harbourfront-marinabay",
+      "mode": "TRANSIT",
+      "file": "onemap/harbourfront-marinabay_transit.json",
+      "from": [
+        1.265389383749022,
+        103.8215301570942
+      ],
+      "to": [
+        1.276410298754993,
+        103.8545955222629
+      ]
+    },
+    {
+      "trip": "harbourfront-marinabay",
+      "mode": "BUS",
+      "file": "onemap/harbourfront-marinabay_bus.json",
+      "from": [
+        1.265389383749022,
+        103.8215301570942
+      ],
+      "to": [
+        1.276410298754993,
+        103.8545955222629
+      ]
+    },
+    {
+      "trip": "tiongbahru-payalebar",
+      "mode": "TRANSIT",
+      "file": "onemap/tiongbahru-payalebar_transit.json",
+      "from": [
+        1.286102536157761,
+        103.827445112419
+      ],
+      "to": [
+        1.318111492245282,
+        103.8930607715758
+      ]
+    },
+    {
+      "trip": "tiongbahru-payalebar",
+      "mode": "BUS",
+      "file": "onemap/tiongbahru-payalebar_bus.json",
+      "from": [
+        1.286102536157761,
+        103.827445112419
+      ],
+      "to": [
+        1.318111492245282,
+        103.8930607715758
+      ]
+    }
+  ]
+}

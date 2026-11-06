@@ -1,0 +1,9 @@
+{
+  "odata.metadata": "https://datamall2.mytransport.sg/ltaodataservice/PcdForecast",
+  "value": [
+    {
+      "Date": "2026-11-06T00:00:00+08:00",
+      "Stations": []
+    }
+  ]
+}

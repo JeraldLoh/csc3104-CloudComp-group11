@@ -1,0 +1,83 @@
+{
+  "odata.metadata": "https://datamall2.mytransport.sg/ltaodataservice/TrafficIncidents",
+  "value": [
+    {
+      "Type": "Vehicle breakdown",
+      "Latitude": 1.4369352834353095,
+      "Longitude": 103.7686641801711,
+      "Message": "(6/11)15:46 Vehicle Breakdown on BKE (towards PIE) at Woodlands Center Road Entrance."
+    },
+    {
+      "Type": "Roadwork",
+      "Latitude": 1.3613505369338406,
+      "Longitude": 103.96077698037462,
+      "Message": "(6/11)14:46 Road Works on TPE (towards PIE) at Loyang Ave Exit."
+    },
+    {
+      "Type": "Heavy Traffic",
+      "Latitude": 1.4367129149122946,
+      "Longitude": 103.76847043442173,
+      "Message": "(6/11)14:20 Heavy Traffic on BKE (towards W'lands) at Woodlands Checkpoint Exit."
+    },
+    {
+      "Type": "Heavy Traffic",
+      "Latitude": 1.3301698833540847,
+      "Longitude": 103.86254662150374,
+      "Message": "(6/11)14:09 Heavy Traffic on PIE (towards Tuas) at CTE(SLE) Exit."
+    },
+    {
+      "Type": "Heavy Traffic",
+      "Latitude": 1.3360175169248951,
+      "Longitude": 103.86237546077588,
+      "Message": "(6/11)14:02 Heavy Traffic on CTE (towards AYE) at PIE(Changi) Exit."
+    },
+    {
+      "Type": "Roadwork",
+      "Latitude": 1.426399552334932,
+      "Longitude": 103.77068119010684,
+      "Message": "(6/11)10:39 Road Works on BKE (towards PIE) before SLE. Avoid lane 3."
+    },
+    {
+      "Type": "Roadwork",
+      "Latitude": 1.3532634382748343,
+      "Longitude": 103.73010876245826,
+      "Message": "(6/11)10:27 Road Works on PIE (towards Changi) after Tengah Boulevard."
+    },
+    {
+      "Type": "Roadwork",
+      "Latitude": 1.3682246696677685,
+      "Longitude": 103.71446973166036,
+      "Message": "(6/11)10:24 Road Works on KJE (towards BKE) before Sungei Tengah Rd. Avoid lane 1."
+    },
+    {
+      "Type": "Roadwork",
+      "Latitude": 1.3803911351381073,
+      "Longitude": 103.7344686401573,
+      "Message": "(6/11)10:23 Road Works on KJE (towards PIE) after Brickland Rd. Avoid lane 1."
+    },
+    {
+      "Type": "Roadwork",
+      "Latitude": 1.3588838979157596,
+      "Longitude": 103.96233852366309,
+      "Message": "(6/11)09:54 Road Works on TPE (towards PIE) at Tampines Avenue 7 Entrance."
+    },
+    {
+      "Type": "Roadwork",
+      "Latitude": 1.3551672709912943,
+      "Longitude": 103.72396291849826,
+      "Message": "(6/11)09:41 Road Works on PIE (towards Tuas) after Jurong East Ave 1. Avoid lane 3."
+    },
+    {
+      "Type": "Roadwork",
+      "Latitude": 1.3229458638829525,
+      "Longitude": 103.68163344798825,
+      "Message": "(6/11)09:20 Road Works on AYE (towards MCE) at Benoi Road Entrance."
+    },
+    {
+      "Type": "Roadwork",
+      "Latitude": 1.3139969570941261,
+      "Longitude": 103.9561958059686,
+      "Message": "(6/11)09:41 Road Works on ECP (towards City) after Changi. Avoid lane 1."
+    }
+  ]
+}

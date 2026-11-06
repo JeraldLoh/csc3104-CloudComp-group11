@@ -28,9 +28,6 @@ dist/
 
 # Common build output
 build/
-services/journey-service/app/saved_data/*
-# The tests' captured API responses are committed, so CI can run the tests
-!services/journey-service/app/saved_data/fixtures/
 
 # AWS
 iam_policy.json
