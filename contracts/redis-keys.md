@@ -17,8 +17,11 @@ Journey keys expire **24 hours** after their last update.
 | `hb:{tripId}:intervals` | List | Last 100 gaps between single live check-ins, in milliseconds (catch-up batches don't add gaps; they only update lastseen) | Check-in Service (M2) | Heartbeat (M1) |
 | `hb:{tripId}:status` | String | `active` or `backgrounded` | Check-in Service (M2) | Heartbeat (M1) |
 | `hb:{tripId}:reported` | String | The `lastseen` value of the silence already reported as `no_response`, so each silence is reported once | Heartbeat (M1) | Heartbeat (M1) |
-| `risk:{travellerId}` | Hash | `score`, `level` (`normal`/`elevated`), `detectorsUsed`, `updatedAt` | Coordinator / Aggregator (M3) | Coordinator (M3), Status page (M3) |
-| `detector:weights` | Hash | `detectorId` → voting weight | Aggregator (M3) | Aggregator (M3) |
+| `risk:{travellerId}` | Hash | `score`, `level` (`normal`/`elevated`), `detectorsUsed`, `updatedAt` | Coordinator (M3) | Coordinator (M3), dashboard (M3) |
+| `detector:weights` | Hash | `detectorId` → reliability, 0–1 (default 1.0); 0 silences a faulty detector | Set by hand (operator, experiment) | Coordinator (M3) |
+| `decided:{tripId}:{seq}` | String | `1` once that check-in has been decided, so a redelivered SQS message isn't decided twice (expires after 24 h) | Coordinator (M3) | Coordinator (M3) |
+| `decisions:{travellerId}` | List | Last 50 decisions for the traveller (JSON, newest first): votes, decision, risk before and after, incident | Coordinator (M3) | Coordinator dashboard and `/api/decisions` (M3), experiment |
+| `decisions:recent` | List | Last 200 decisions for everyone (same JSON) | Coordinator (M3) | Coordinator dashboard and `/api/decisions` (M3), experiment |
 | `lock:heartbeat-monitor` | String | Leader lease: which Heartbeat Monitor replica checks the trips (pod name), 15 s | Heartbeat (M1) | Heartbeat (M1) |
 | `lock:checkin-reconciler` | String | Leader lease: which Check-in Service replica runs the clean-up task (pod name), 45 s | Check-in Service (M2) | Check-in Service (M2) |
 | `lock:escalation:{incidentId}` | String | Short lock so only one replica escalates an incident | Alert Service (M5) | Alert Service (M5) |

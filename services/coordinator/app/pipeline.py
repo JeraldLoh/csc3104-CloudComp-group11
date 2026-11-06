@@ -2,17 +2,19 @@
 
     1. Already decided (tripId + seq)?     SQS delivers at least once: skip repeats
     2. Read risk:{travellerId}             normal / elevated
-    3. Choose detectors                    fixed4: all 4. adaptive: k = 2 or 4; at k = 2 the
-                                           pair fits the journey step (selection.py)
-    4. Call them in parallel               timeout or error = abstain (detectors.py)
-    5. Too few real votes?                 ask the remaining detectors straight away
-    6. Decide                              rule-based (decision.py, voting.py)
-    7. Still can't call it?                ask the remaining detectors, decide again
-    8. Record                              alert, risk, dashboard record, mark decided
+    3. Ask detectors and decide            REDUNDANCY_MODE picks how:
+         fixed4 (default)    _ask_all         all 4 in parallel, decide once (rule-based,
+                                              decision.py, voting.py). Too few real votes ->
+                                              inconclusive: there is no one left to ask.
+         adaptive / fixed2   _ask_pair_first  the experiment: a pair that fits the journey step
+                                              first (adaptive: all 4 when risk is elevated); too
+                                              few real votes or still undecided -> ask the rest
+       A detector that times out or fails counts as an abstain (detectors.py).
+    4. Record                              alert, risk, dashboard record, mark decided
 
 Redis or Alert Service failures raise. The caller (the SQS consumer) then doesn't delete the
 message, so it comes back after the visibility timeout and any replica retries it.
-Steps 4-7 change nothing, and step 8 only writes after the alert went out, in one transaction
+Step 3 changes nothing, and step 4 only writes after the alert went out, in one transaction
 (decision.py), so a retry costs at most a repeated report, never a lost check-in.
 """
 import logging
@@ -21,9 +23,20 @@ from dataclasses import dataclass
 from .config import Settings
 from .decision import DecisionRecorder, decided_key
 from .detectors import DetectorClient
-from .selection import STRATEGIES, choose_detectors, needs_escalation, pair_for_step, remaining, step_mode
+from .selection import ALL_DETECTORS, STRATEGIES, choose_detectors, needs_escalation, pair_for_step, \
+    remaining, step_mode
+from .voting import Decision
 
 log = logging.getLogger("coordinator")
+
+
+@dataclass
+class Asked:
+    """What asking the detectors produced: their votes and the decision on them."""
+    votes: list[dict]
+    d: Decision
+    escalated: bool = False      # asked more than the first choice
+    situation: str | None = None # why that pair (None = all asked)
 
 
 @dataclass
@@ -41,6 +54,41 @@ class Pipeline:
         self.detectors = detectors
         self.decisions = decisions
         self.s = s
+
+    async def _ask_all(self, request: dict) -> Asked:
+        """fixed4 (the default): every detector, one round."""
+        votes = await self.detectors.call_many(list(ALL_DETECTORS), request)
+        return Asked(votes, await self.decisions.decide(votes))
+
+    async def _ask_pair_first(self, checkin: dict, risk_level: str, request: dict) -> Asked:
+        """adaptive / fixed2 (the experiment): a pair first, then the rest if the pair can't decide."""
+        request_id = request["requestId"]
+        asked = choose_detectors(risk_level, self.s.redundancy_mode, self.s.normal_pair)
+        situation = None
+        if len(asked) == 2:   # a pair, not everyone: pick the one that fits the journey step
+            pair, situation = await self._pair_for(checkin)
+            asked = choose_detectors(risk_level, self.s.redundancy_mode, pair)
+        votes = await self.detectors.call_many(asked, request)
+        escalated = False
+
+        # Too few real votes: no point deciding yet.
+        if needs_escalation(votes, self.s.quorum):
+            extra = remaining(asked)
+            log.info("escalating %s: too few real votes, asking %s", request_id, extra)
+            votes += await self.detectors.call_many(extra, request)
+            asked += extra
+            escalated = True
+
+        d = await self.decisions.decide(votes)
+
+        # Still can't call it (e.g. the answers carry no weight): more evidence instead of a guess.
+        extra = remaining(asked)
+        if d.needs_more_votes and extra:
+            log.info("escalating %s: %s, asking %s", request_id, d.reason, extra)
+            votes += await self.detectors.call_many(extra, request)
+            escalated = True
+            d = await self.decisions.decide(votes)
+        return Asked(votes, d, escalated, situation)
 
     async def _pair_for(self, checkin: dict) -> tuple[tuple[str, ...], str]:
         """The pair to ask at normal risk, and why (PAIR_STRATEGY)."""
@@ -65,37 +113,15 @@ class Pipeline:
             return Result(outcome="duplicate")
 
         risk_level = await self.redis.hget(f"risk:{traveller_id}", "level") or "normal"
-        asked = choose_detectors(risk_level, self.s.redundancy_mode, self.s.normal_pair)
-        situation = None
-        if len(asked) == 2:   # a pair, not everyone: pick the one that fits the journey step
-            pair, situation = await self._pair_for(checkin)
-            asked = choose_detectors(risk_level, self.s.redundancy_mode, pair)
         request = {"requestId": request_id, "riskLevel": risk_level, "checkin": checkin}
-        votes = await self.detectors.call_many(asked, request)
-        escalated = False
+        if self.s.redundancy_mode == "fixed4":
+            a = await self._ask_all(request)
+        else:
+            a = await self._ask_pair_first(checkin, risk_level, request)
 
-        # Too few real votes: no point deciding yet.
-        if needs_escalation(votes, self.s.quorum):
-            extra = remaining(asked)
-            log.info("escalating %s: too few real votes, asking %s", request_id, extra)
-            votes += await self.detectors.call_many(extra, request)
-            asked += extra
-            escalated = True
-
-        d = await self.decisions.decide(votes)
-
-        # Still can't call it (e.g. the answers carry no weight): more evidence instead of a guess.
-        extra = remaining(asked)
-        if d.needs_more_votes and extra:
-            log.info("escalating %s: %s, asking %s", request_id, d.reason, extra)
-            votes += await self.detectors.call_many(extra, request)
-            asked += extra
-            escalated = True
-            d = await self.decisions.decide(votes)
-
-        decision = await self.decisions.record(request_id, checkin, votes, d, escalated, situation)
+        decision = await self.decisions.record(request_id, checkin, a.votes, a.d, a.escalated, a.situation)
         # k is logged for every decision: the experiment and the dashboard depend on it.
-        log.info("decided %s k=%d escalated=%s risk=%s step=%s -> %s", request_id, len(votes), escalated,
-                 risk_level, situation or "-", decision["decision"])
-        return Result(outcome="decided", k=len(votes), escalated=escalated, decision=decision,
-                      situation=situation)
+        log.info("decided %s k=%d escalated=%s risk=%s step=%s -> %s", request_id, len(a.votes), a.escalated,
+                 risk_level, a.situation or "-", decision["decision"])
+        return Result(outcome="decided", k=len(a.votes), escalated=a.escalated, decision=decision,
+                      situation=a.situation)

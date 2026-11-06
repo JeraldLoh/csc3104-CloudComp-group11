@@ -22,8 +22,8 @@ This folder is how our services agree on what they send each other. If your code
 | `checkin.json` | Traveller app (M2) | Check-in Service (M2) → SQS → Coordinator (M3) |
 | `checkin-batch.json` | Traveller app (M2), after being offline | Check-in Service (M2) |
 | `detector-request.json` | Coordinator (M3) | Detectors (M4) |
-| `detector-vote.json` | Detectors (M4) | Coordinator (M3) → Aggregator (M3) |
-| `problem-report.json` | Aggregator (M3) | Alert Service (M5) |
+| `detector-vote.json` | Detectors (M4) | Coordinator (M3) |
+| `problem-report.json` | Coordinator (M3) | Alert Service (M5) |
 | `problem-report-no-response.json` | Heartbeat Monitor (M1) | Alert Service (M5) |
 | `incident.json` | Alert Service (M5) | Stored in DynamoDB; shown on dashboard |
 | `alert-event.json` | Alert Service (M5) | Caregiver dashboard (live, SSE) |

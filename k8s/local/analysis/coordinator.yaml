@@ -1,4 +1,4 @@
-# Coordinator (Member 3) on the local kind cluster: consumes careroute-checkins from LocalStack's SQS,
+# Coordinator on the local kind cluster: consumes careroute-checkins from LocalStack's SQS,
 # asks the detectors (k8s/local/detectors) about each check-in, decides and reports problems to the
 # Alert Service. Same shape as k8s/eks/services/coordinator.yaml.
 # Dashboard: kubectl port-forward svc/coordinator 8002:8000 -n csc3104   then open http://localhost:8002/dashboard
@@ -27,9 +27,6 @@ spec:
             - { name: AWS_ACCESS_KEY_ID, value: "csc3104" }
             - { name: AWS_SECRET_ACCESS_KEY, value: "csc3104" }
             - { name: AWS_DEFAULT_REGION, value: "ap-southeast-1" }
-            # The Check-in Service creates the queue on its start (CREATE_RESOURCES). Giving the URL
-            # instead of the name means this pod doesn't look the queue up at start-up and crash if
-            # it isn't there yet: it just reports not ready, and starts consuming once it exists.
             - { name: CHECKINS_QUEUE_URL, value: "http://cloud-localstack:4566/000000000000/careroute-checkins" }
             - { name: REDUNDANCY_MODE, value: "fixed4" }   # fixed4 | adaptive | fixed2
             - { name: ALERT_SERVICE_URL, value: "http://alert-service:8000" }

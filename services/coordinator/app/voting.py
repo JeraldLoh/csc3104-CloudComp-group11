@@ -1,6 +1,6 @@
-"""Rule-based decision over detector votes. Pure functions, no I/O.
+"""Rule-based decision over detector votes.
 
-The detectors are diverse: each one checks a different thing (detectors/*.py, Member 4):
+The detectors are diverse: each one checks a different thing:
 
     route-corridor   far from the planned path?            -> off_route
     heading-speed    moving against the route direction?   -> wrong_direction
@@ -13,12 +13,11 @@ A missed alert is the unsafe failure, so the rules lean towards alerting:
      off_route alerts if route-corridor OR route-progress says so; wrong_direction if
      heading-speed OR route-progress; missed_stop if route-progress; long_dwell if dwell-time.
      A "normal" never cancels a problem: dwell-time's "normal" means "not stuck", not "on route".
-  2. Otherwise, at least `quorum` real (non-abstain) votes -> normal.
-  3. Otherwise inconclusive: too few detectors answered to call it normal. The Coordinator asks
+  2. Inconclusive: too few detectors answered to call it normal. The Coordinator asks
      the rest if some weren't asked yet (needs_more_votes).
 
 A problem vote is ignored if the detector doesn't check that type (COVERAGE), or if its weight is 0.
-weight = vote confidence x detector reliability (detector:weights, default 1.0), so setting a
+weight = vote confidence x detector reliability (detector:weights, default 1.0), setting a
 faulty detector's reliability to 0 silences it. When several types are raised, the strongest
 claim (highest weight) is reported.
 """

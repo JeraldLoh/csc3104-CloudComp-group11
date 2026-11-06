@@ -43,7 +43,7 @@ WEIGHTS_KEY = "detector:weights"
 
 
 def parse_weights(raw: dict) -> dict[str, float]:
-    """detector:weights hash -> {detectorId: weight}; unreadable entries are skipped (weight 1.0)."""
+    """detector:weights hash -> {detectorId: weight}; unreadable entries are skipped."""
     weights = {}
     for k, v in (raw or {}).items():
         try:

@@ -33,7 +33,7 @@ def build_problem_report(request_id: str, checkin: dict, votes: list[dict], deci
     now = now or datetime.now(timezone.utc)
     return {
         "reportId": request_id,
-        "source": "aggregator",   # as in contracts/examples/problem-report.json (the decision step)
+        "source": "coordinator",
         "travellerId": checkin["travellerId"],
         "tripId": checkin["tripId"],
         "stepIndex": checkin.get("stepIndex"),

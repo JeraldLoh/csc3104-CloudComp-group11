@@ -215,12 +215,8 @@ class DemoControl:
         if self.dynamodb is not None:   # the real Alert Service keeps incidents in DynamoDB
             try:
                 log.info("cleared %d incidents", await asyncio.to_thread(self._clear_incidents))
-            except Exception as e:  # noqa: BLE001 - table not created yet, or the fake is running
+            except Exception as e:  # noqa: BLE001 - table not created yet
                 log.warning("couldn't clear the incidents table: %s", e)
-        try:   # the fake Alert Service keeps them in memory; the real one answers 404
-            await self.http.post("http://alert-service:8000/control/reset", timeout=3)
-        except httpx.HTTPError:
-            pass
         log.info("demo reset: Redis cleared, %s seeded", t)
 
     async def status(self) -> dict:

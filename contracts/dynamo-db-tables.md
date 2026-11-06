@@ -20,4 +20,4 @@ Item shapes follow the example files: `checkin.json`, `route.json`, `trip.json`,
 - **Incidents are created with a conditional write**: only if `incidentId` doesn't exist yet (`attribute_not_exists(incidentId)`). This is what stops two replicas sending the same alert.
 - **Incident ID** = `travellerId#tripId#problemType#stepIndex`, e.g. `U-042#T-001#off_route#2`.
 - **Routes and trips are separate.** A disruption only changes the trip (`override` field), never the caregiver's planned route.
-- **Who can read what:** only the Journey Service and Profiles APIs read names and personal details. Detectors, Coordinator, Aggregator and Heartbeat use IDs only.
+- **Who can read what:** only the Journey Service and Profiles APIs read names and personal details. Detectors, Coordinator and Heartbeat use IDs only.

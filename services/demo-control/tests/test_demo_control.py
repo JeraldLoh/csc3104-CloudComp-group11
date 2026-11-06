@@ -229,7 +229,6 @@ def test_reset_clears_everything_and_reseeds_the_trip():
     keys, context = asyncio.run(go())
     assert keys == ["trip:T-001:context", "trip:T-001:route"]
     assert context["stepIndex"] == "0" and context["routeVersion"] == "3"
-    assert ("alert-service", "/control/reset", None) in controls.calls
 
 
 def test_reset_clears_the_real_alert_services_incidents():

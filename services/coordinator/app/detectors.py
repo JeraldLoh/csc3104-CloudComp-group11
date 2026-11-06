@@ -53,7 +53,7 @@ class DetectorClient:
         start = time.perf_counter()
         try:
             vote = await asyncio.wait_for(self._post(detector_id, request), self.timeout_s)
-        except Exception as e:  # noqa: BLE001 - any failure is an abstain, by design
+        except Exception as e:  #any failure is an abstain
             ms = int((time.perf_counter() - start) * 1000)
             reason = _reason(e)
             log.warning("detector %s abstained for %s (%s, %d ms)", detector_id, request_id, reason, ms)

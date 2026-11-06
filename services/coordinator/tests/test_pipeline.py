@@ -215,6 +215,16 @@ def test_fixed4_asks_every_detector_at_normal_risk():
     assert len(world.asked) == 4 and result.situation is None
 
 
+def test_fixed4_too_few_votes_is_inconclusive_without_asking_again():
+    world = World(detector_votes={"route-corridor": "abstain", "heading-speed": "abstain",
+                                  "dwell-time": "abstain"})
+    result, state = process(world, redundancy_mode="fixed4")
+    assert sorted(world.asked) == ["dwell-time", "heading-speed", "route-corridor", "route-progress"]
+    assert result.k == 4 and not result.escalated
+    assert result.decision["decision"] == "inconclusive"
+    assert state["decided"]   # still marked decided: a redelivery isn't asked again
+
+
 def test_risk_over_a_journey():
     redis = new_redis()
     [problem], _ = process_all(World(detector_votes={"route-corridor": "problem"}), [seq(17)], redis)

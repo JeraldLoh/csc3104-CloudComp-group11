@@ -1,5 +1,4 @@
-"""CareRoute Coordinator (Member 3): the check-in analysis.
-
+"""
 No public API of its own for the pipeline: it consumes the careroute-checkins queue in the
 background (consumer.py), asks the detectors and decides about each check-in (pipeline.py).
 
@@ -57,6 +56,7 @@ def create_app(s: Settings = default_settings, redis=None) -> FastAPI:
         if own_redis:
             app.state.redis = aioredis.from_url(s.redis_url, decode_responses=True)
         redis = app.state.redis
+        
         sqs = boto3.client("sqs", region_name=s.aws_region, endpoint_url=s.aws_endpoint_url)
         async with httpx.AsyncClient() as http:
             pipeline = Pipeline(redis, DetectorClient(http, s.detector_urls, s.detector_timeout_s),

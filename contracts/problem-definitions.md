@@ -1,7 +1,7 @@
 # Problem definitions
 
 **Status: DRAFT for review.** M4 (detectors, simulator) owns the detection rules; M5 (Alert Service)
-and M3 (Aggregator, experiment) review. Comment on the pull request.
+and M3 (Coordinator, experiment) review. Comment on the pull request.
 
 The other contract files say **what** the problem types are called. This file says **which detector**
 reports each one and **when** something counts as it, so the detectors, the simulator's ground-truth
@@ -52,19 +52,28 @@ to the limit: it can't tell how much longer the traveller has been there (open q
 | `help_requested` | The traveller pressed the help button. Always an alert. | Traveller app → Alert Service `POST /api/help` (M2, M5) |
 | `disruption` | A transport disruption (LTA DataMall) affects a step of the trip. | Disruption Lambda (M6) → `careroute-disruptions` |
 
-## From votes to a decision (Aggregator, M3)
+## From votes to a decision (Coordinator, M3)
 
-- Each problem type is judged only by the detectors that report it (the first table). A "normal" from
-  dwell-time is not a vote against `off_route`.
-- Weight of a vote = confidence × the detector's reliability (`detector:weights`, default 1.0).
-  Abstains don't count.
-- A problem is confirmed when its weighted share of its jury is **≥ 0.5**. A tie counts as a problem
-  (a missed alert is the unsafe failure).
-- If only one detector that judges that problem has answered, or it's a close call (0.4–0.6), and
-  another detector that judges it hasn't been asked yet, the Coordinator asks more detectors first.
-- `route-progress` votes `normal` with confidence **0.3** when the traveller is off the corridor but
-  still getting closer to the end (a detour), so it cannot outvote `route-corridor` on `off_route`
-  (0.8 vs 0.3 is still a problem). It confirms an off-route; it isn't meant to overrule one.
+The detectors check different things, so their votes aren't averaged. A missed alert is the unsafe
+failure, so the rules lean towards alerting (`services/coordinator/app/voting.py`):
+
+1. **Problem:** any detector that reports a problem type (the first table) votes `problem` of that
+   type. `off_route` alerts if route-corridor **or** route-progress says so; `wrong_direction` if
+   heading-speed or route-progress. A `normal` never cancels a problem: dwell-time's `normal` means
+   "not stuck", not "on route".
+2. **Normal:** otherwise, at least **2** real votes (`problem` or `normal`, not `abstain`; env `QUORUM`).
+3. **Inconclusive:** otherwise. Too few detectors could judge (e.g. the start of a trip, poor GPS). If
+   some detectors weren't asked yet, the Coordinator asks them and decides again.
+
+- A `problem` vote is ignored if the detector doesn't report that type, or if its weight is 0.
+  Weight = confidence × the detector's reliability (`detector:weights`, default 1.0), so setting a
+  faulty detector's reliability to 0 silences it. If several types are raised at once, the one with
+  the highest weight is reported, and its weight is the report's `confidence`.
+- `route-progress` votes `normal` (confidence 0.3) when the traveller is off the corridor but still
+  getting closer to the end (a detour). Under rule 1 this doesn't cancel route-corridor's `off_route`.
+- By default the Coordinator asks all 4 detectors (`REDUNDANCY_MODE=fixed4`). The experiment compares
+  it with `adaptive` (at normal risk, 2 detectors chosen for the current step: walking, waiting or
+  riding; all 4 when risk is elevated or the result is inconclusive) and `fixed2`.
 - A confirmed problem is sent to the Alert Service as `problem-report.json`. The Alert Service keeps one
   incident per `travellerId#tripId#problemType#stepIndex`.
 
@@ -89,8 +98,9 @@ Proposed labelling rules (open question 2):
    `long_dwell`, `silence`, `tunnel`, `out_of_order`; the detector test data uses `normal`, `off_route`,
    `wrong_direction`, `long_dwell`, `normal_bus_wait`, `poor_gps`. Agree on one list (and add
    `off_route` to the contract). (M4)
-4. **`long_dwell` and `missed_stop` have one detector each**, so a faulty detector there can only be
-   outvoted by lowering its reliability weight. Acceptable for now? (M4, M3)
+4. **`long_dwell` and `missed_stop` have one detector each**, so if that detector fails, nothing else
+   catches the problem. And since any one detector can raise a problem (rule 1), a detector that
+   wrongly says `problem` is only stopped by setting its reliability to 0. Acceptable for now? (M4, M3)
 
 Resolved: `missed_stop` is now detected by `route-progress`; `off_route` and `wrong_direction` have a
 second judge (`route-progress`); `ml-anomaly` is not planned.

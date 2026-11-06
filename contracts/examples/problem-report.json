@@ -1,6 +1,6 @@
 {
   "reportId": "T-001#17",
-  "source": "aggregator",
+  "source": "coordinator",
   "travellerId": "U-042",
   "tripId": "T-001",
   "stepIndex": 2,
@@ -24,7 +24,7 @@
       "confidence": 0.6
     },
     {
-      "detectorId": "ml-anomaly",
+      "detectorId": "route-progress",
       "verdict": "problem",
       "confidence": 0.7
     }

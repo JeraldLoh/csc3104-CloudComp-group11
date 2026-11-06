@@ -29,14 +29,20 @@ busy server stops a batch after about 1 s; the sender removes those and sends th
 `503` with `{"error": {"code": "overloaded"}}` and a `Retry-After` header (seconds): the replica is at
 capacity and did nothing; retry after that long (plus random extra).
 
-## Coordinator and Aggregator (Member 3)
+## Coordinator (Member 3)
 
-The Coordinator has no public endpoint; it reads from the `careroute-checkins` queue.
+The Coordinator reads check-ins from the `careroute-checkins` queue, asks the detectors, decides
+(rules in `problem-definitions.md`) and sends confirmed problems to the Alert Service
+(`POST /internal/problems`). It used to hand the votes to a separate Aggregator
+(`POST /internal/votes`); that service is gone and the decision happens inside the Coordinator.
 
-| Service | Method | Path | Body | Returns |
-|---|---|---|---|---|
-| Aggregator | POST | `/internal/votes` | `{"requestId": "...", "checkin": {...}, "votes": [detector-vote, ...]}` | `{"decision": "problem" \| "normal", "problemType": "...", "confidence": 0.81}` |
-| Coordinator | GET | `/api/status/travellers` | — | `[{"travellerId": "U-042", "tripId": "T-001", "riskLevel": "elevated", "detectorsUsed": 4}]` |
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| GET | `/api/status/travellers` | — | `[{"travellerId": "U-042", "tripId": "T-001", "riskLevel": "elevated", "detectorsUsed": 4}]` |
+| GET | `/api/decisions?travellerId=U-042&limit=50` | — | Newest decisions first (both parameters optional; `limit` 1–200, default 50): each has `tripId`, `seq`, `k`, `votes`, `decision` (`problem` \| `normal` \| `inconclusive`), `problemType`, `confidence`, `riskBefore`, `riskAfter`, `incidentId` |
+| GET | `/dashboard` | — | The detection dashboard (HTML), built on the two endpoints above |
+
+The dashboard isn't exposed through the load balancer; open it with `kubectl port-forward`.
 
 ## Detectors (Member 4)
 
