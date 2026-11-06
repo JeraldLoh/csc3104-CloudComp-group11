@@ -1,4 +1,4 @@
-"""Fake detector: stands in for Member 4's detectors until they're ready.
+"""Fake detector to simulate faulty detectors .
 
 Same endpoint and message formats as a real detector (contracts/api.md):
     POST /internal/detect   detector-request.json -> detector-vote.json
