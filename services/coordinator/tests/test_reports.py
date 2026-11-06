@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from app.reports import UNKNOWN_PROBLEM, build_problem_report, iso_z
+from app.reports import UNKNOWN_PROBLEM, build_problem_report, build_problem_reports, iso_z
 from app.voting import Decision, aggregate
 
 CONTRACTS = Path(__file__).resolve().parents[3] / "contracts" / "examples"
@@ -72,6 +72,17 @@ def test_vote_extras_are_left_out():
     votes = [vote, {**vote, "detectorId": "dwell-time"}]
     report = build_problem_report("T-001#17", example("checkin.json"), votes, aggregate(votes), NOW)
     assert report["votes"][0] == {"detectorId": "route-corridor", "verdict": "problem", "confidence": 0.85}
+
+
+def test_one_report_per_problem_type_strongest_first():
+    votes = [
+        {"detectorId": "route-corridor", "verdict": "problem", "confidence": 0.6, "problemType": "off_route"},
+        {"detectorId": "heading-speed", "verdict": "problem", "confidence": 0.9, "problemType": "wrong_direction"},
+    ]
+    reports = build_problem_reports("T-001#17", example("checkin.json"), votes, aggregate(votes), NOW)
+    assert [(r["problemType"], r["confidence"]) for r in reports] == [("wrong_direction", 0.9), ("off_route", 0.6)]
+    assert all(r["reportId"] == "T-001#17" and r["detectorsUsed"] == 2 for r in reports)
+    assert build_problem_report("T-001#17", example("checkin.json"), votes, aggregate(votes), NOW) == reports[0]
 
 
 def test_missing_problem_type_falls_back_to_unknown():

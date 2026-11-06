@@ -26,19 +26,34 @@ def iso_z(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def build_problem_report(request_id: str, checkin: dict, votes: list[dict], decision: Decision,
-                         now: datetime | None = None) -> dict:
+def build_problem_reports(request_id: str, checkin: dict, votes: list[dict], decision: Decision,
+                          now: datetime | None = None) -> list[dict]:
+    """One report per problem type raised, strongest first. Two detectors can find different
+    problems on the same check-in (walking sideways off the road can also look like the wrong
+    direction); reporting only the strongest would drop the other, maybe for the whole trip."""
     if decision.decision != "problem":
         raise ValueError(f"only a 'problem' decision is reported, got {decision.decision!r}")
     now = now or datetime.now(timezone.utc)
+    claims = decision.claims or ((decision.problem_type, decision.confidence),)
+    return [_report(request_id, checkin, votes, problem_type, weight, now) for problem_type, weight in claims]
+
+
+def build_problem_report(request_id: str, checkin: dict, votes: list[dict], decision: Decision,
+                         now: datetime | None = None) -> dict:
+    """The report for the strongest problem raised."""
+    return build_problem_reports(request_id, checkin, votes, decision, now)[0]
+
+
+def _report(request_id: str, checkin: dict, votes: list[dict], problem_type: str | None, confidence: float,
+            now: datetime) -> dict:
     return {
         "reportId": request_id,
         "source": "coordinator",
         "travellerId": checkin["travellerId"],
         "tripId": checkin["tripId"],
         "stepIndex": checkin.get("stepIndex"),
-        "problemType": decision.problem_type or UNKNOWN_PROBLEM,
-        "confidence": round(decision.confidence, 2),
+        "problemType": problem_type or UNKNOWN_PROBLEM,
+        "confidence": round(confidence, 2),
         "detectorsUsed": len(votes),
         "votes": [
             {"detectorId": v.get("detectorId"), "verdict": v.get("verdict"), "confidence": v.get("confidence")}

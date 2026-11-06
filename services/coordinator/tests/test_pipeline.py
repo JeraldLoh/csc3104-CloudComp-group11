@@ -29,11 +29,12 @@ class World:
     """Fake detectors and Alert Service. A detector answers `detector_votes[name]`: a verdict,
     "timeout", "down", or ("abstain", reason). The Alert Service keeps one incident per id."""
 
-    def __init__(self, detector_votes=None, alert_status=200, alert_down=False):
+    def __init__(self, detector_votes=None, alert_status=200, alert_down=False, alert_fails_for=None):
         self.detector_votes = {"route-corridor": "normal", "heading-speed": "normal",
                                "dwell-time": "normal", "route-progress": "normal", **(detector_votes or {})}
         self.alert_status = alert_status
         self.alert_down = alert_down
+        self.alert_fails_for = alert_fails_for   # a problemType the Alert Service answers 503 to
         self.detector_calls = []   # (detectorId, request body)
         self.reports = []
         self.incidents = set()
@@ -61,6 +62,8 @@ class World:
         self.reports.append(report)
         if self.alert_status != 200:
             return httpx.Response(self.alert_status, json={"error": {"code": "unavailable"}})
+        if report["problemType"] == self.alert_fails_for:
+            return httpx.Response(503, json={"error": {"code": "unavailable"}})
         iid = f"{report['travellerId']}#{report['tripId']}#{report['problemType']}#{report['stepIndex']}"
         created = iid not in self.incidents
         self.incidents.add(iid)
@@ -172,6 +175,33 @@ def test_problem_is_reported_to_the_alert_service_and_raises_risk():
     assert record["incidentId"] == "U-042#T-001#off_route#2" and record["alertCreated"] is True
 
 
+def test_two_problem_types_at_once_are_both_reported():
+    # Walking sideways off the road can look like the wrong direction too: the caregiver gets both.
+    world = World(detector_votes={"route-corridor": "problem", "heading-speed": "problem"})
+    result, state = process(world, redundancy_mode="fixed4")
+    assert sorted(r["problemType"] for r in world.reports) == ["off_route", "wrong_direction"]
+    assert world.incidents == {"U-042#T-001#off_route#2", "U-042#T-001#wrong_direction#2"}
+    record = state["decisions"][0]
+    assert [a["problemType"] for a in record["alerts"]] == ["off_route", "wrong_direction"]   # equal: alphabetical
+    assert record["incidentId"] == "U-042#T-001#off_route#2"
+    assert result.decision["riskLevel"] == "elevated"
+
+
+def test_a_failed_second_report_retries_the_checkin_without_a_second_incident():
+    world = World(detector_votes={"route-corridor": "problem", "heading-speed": "problem"},
+                  alert_fails_for="wrong_direction")
+    redis = new_redis()
+    with pytest.raises(httpx.HTTPStatusError):
+        process(world, redis, redundancy_mode="fixed4")
+    assert not asyncio.run(redis.exists(decided_key("T-001", 17)))   # not decided: SQS will retry
+    world.alert_fails_for = None
+    result, state = process(world, redis, redundancy_mode="fixed4")
+    assert result.outcome == "decided"
+    assert world.incidents == {"U-042#T-001#off_route#2", "U-042#T-001#wrong_direction#2"}
+    assert [a["created"] for a in state["decisions"][0]["alerts"]] == [False, True]   # off_route already existed
+    assert len(state["decisions"]) == 1
+
+
 def test_one_problem_from_the_pair_alerts_at_once():
     # Any detector that checks the type saying problem is enough: no second opinion first.
     world = World(detector_votes={"route-corridor": "problem"})
@@ -186,7 +216,8 @@ def test_decision_record_has_what_the_dashboard_needs():
     record = state["decisions"][0]
     assert record["requestId"] == "T-001#17" and record["seq"] == 17 and record["stepIndex"] == 2
     assert record["k"] == 2 and record["escalated"] is False and record["situation"] == "fixed"
-    assert record["votes"][0] == {"detectorId": "route-corridor", "verdict": "problem", "confidence": 0.8,
+    assert record["votes"][0] == {"detectorId": "route-corridor", "verdict": "problem",
+                                  "problemType": "off_route", "confidence": 0.8,
                                   "latencyMs": record["votes"][0]["latencyMs"], "reason": "test"}
     assert record["riskBefore"] == {"level": "normal", "score": 0.0}
     assert record["riskAfter"] == {"level": "elevated", "score": 0.5}

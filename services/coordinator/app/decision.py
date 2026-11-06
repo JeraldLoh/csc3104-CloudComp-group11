@@ -1,15 +1,16 @@
 """What happens once the votes for a check-in are in.
 
     decide()   rule-based decision          voting.py, with detector:weights from Redis
-    record()   1. Problem?                  problem-report.json -> Alert Service
+    record()   1. Problem?                  problem-report.json -> Alert Service, one per
+                                            problem type raised (strongest first)
                2. Update risk:{travellerId}  risk.py              \\  one Redis
                3. Save the decision record   for the dashboard    |  transaction
                4. Mark tripId + seq decided  repeats are skipped  /
 
 Step 1 runs before anything is written. If the Alert Service fails, record() raises with no
-state changed: the message stays on the queue and the retry starts clean. If step 1 succeeded
-but the Redis write fails, the retry sends the report again, which the Alert Service
-deduplicates. Steps 2-4 are one transaction, so a check-in is either fully decided or not
+Redis state changed: the message stays on the queue and is retried. Reports already sent (an
+earlier type, or all of them if the Redis write failed) are sent again, which the Alert
+Service deduplicates by incident id. Steps 2-4 are one transaction, so a check-in is either fully decided or not
 at all: risk is never raised twice for the same check-in.
 """
 import json
@@ -19,7 +20,7 @@ from datetime import datetime, timezone
 import httpx
 
 from .config import Settings
-from .reports import build_problem_report, iso_z
+from .reports import build_problem_reports, iso_z
 from .risk import Risk, detectors_failed, update_risk
 from .voting import Decision, aggregate
 
@@ -65,7 +66,7 @@ def summary(d: Decision, risk_level: str | None) -> dict:
 
 
 def decision_record(request_id: str, checkin: dict, votes: list[dict], d: Decision, escalated: bool,
-                    risk_before: Risk, risk_after: Risk, incident: dict | None, now: datetime,
+                    risk_before: Risk, risk_after: Risk, alerts: list[dict], now: datetime,
                     situation: str | None = None) -> dict:
     """One entry of decisions:{travellerId}: what the dashboard and the experiment read."""
     return {
@@ -79,7 +80,7 @@ def decision_record(request_id: str, checkin: dict, votes: list[dict], d: Decisi
         "escalated": escalated,
         "situation": situation,
         "votes": [{"detectorId": v.get("detectorId"), "verdict": v.get("verdict"),
-                   "confidence": v.get("confidence"), "latencyMs": v.get("latencyMs"),
+                   "problemType": v.get("problemType"), "confidence": v.get("confidence"), "latencyMs": v.get("latencyMs"),
                    "reason": v.get("reason")} for v in votes],
         "decision": d.decision,
         "reason": d.reason,
@@ -88,8 +89,10 @@ def decision_record(request_id: str, checkin: dict, votes: list[dict], d: Decisi
         "confidence": round(d.confidence, 4),
         "riskBefore": {"level": risk_before.level, "score": round(risk_before.score, 4)},
         "riskAfter": {"level": risk_after.level, "score": round(risk_after.score, 4)},
-        "incidentId": incident.get("incidentId") if incident else None,
-        "alertCreated": incident.get("created") if incident else None,
+        # The strongest problem's incident, as before; `alerts` has one entry per type reported.
+        "incidentId": alerts[0]["incidentId"] if alerts else None,
+        "alertCreated": alerts[0]["created"] if alerts else None,
+        "alerts": alerts,
     }
 
 
@@ -115,13 +118,18 @@ class DecisionRecorder:
         now = now or datetime.now(timezone.utc)
         traveller_id = checkin["travellerId"]
 
-        incident = None
+        # One report per problem type, strongest first. If one fails, the whole check-in is retried:
+        # the ones already sent go again and only update their incident (same incident id).
+        alerts = []
         if d.decision == "problem":
-            incident = await self._report_problem(build_problem_report(request_id, checkin, votes, d, now))
+            for report in build_problem_reports(request_id, checkin, votes, d, now):
+                incident = await self._report_problem(report)
+                alerts.append({"problemType": report["problemType"], "incidentId": incident.get("incidentId"),
+                               "created": incident.get("created")})
 
         before = Risk.from_hash(await self.redis.hgetall(risk_key(traveller_id)))
         after = update_risk(before, d, self.s.risk, failed=detectors_failed(votes))
-        record = json.dumps(decision_record(request_id, checkin, votes, d, escalated, before, after, incident, now,
+        record = json.dumps(decision_record(request_id, checkin, votes, d, escalated, before, after, alerts, now,
                                             situation))
         ttl = self.s.key_ttl_s
 
@@ -138,5 +146,5 @@ class DecisionRecorder:
         await tx.execute()
 
         log.info("%s -> %s (k=%d, risk %s -> %s%s)", request_id, d.decision, len(votes), before.level,
-                 after.level, f", incident {incident['incidentId']}" if incident else "")
+                 after.level, "".join(f", incident {a['incidentId']}" for a in alerts))
         return summary(d, after.level)

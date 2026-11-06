@@ -1,4 +1,4 @@
-# Demo panel (local only, not committed): adds demo-control to the analysis-dev stack.
+# Demo panel (local only, never deployed): adds demo-control to the analysis-dev stack.
 # Run from the repo root; paths below are relative to services/analysis-dev (the first file):
 #
 #   docker compose -f services/analysis-dev/compose.yaml -f services/demo-control/compose.demo.yaml up --build -d

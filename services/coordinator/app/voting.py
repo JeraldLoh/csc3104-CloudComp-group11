@@ -18,8 +18,9 @@ A missed alert is the unsafe failure, so the rules lean towards alerting:
 
 A problem vote is ignored if the detector doesn't check that type (COVERAGE), or if its weight is 0.
 weight = vote confidence x detector reliability (detector:weights, default 1.0), setting a
-faulty detector's reliability to 0 silences it. When several types are raised, the strongest
-claim (highest weight) is reported.
+faulty detector's reliability to 0 silences it. When several types are raised at once, each one
+is reported (one problem-report per type, so the caregiver gets an incident for each); the
+strongest claim (highest weight) is the decision's problem_type and comes first.
 """
 from dataclasses import dataclass
 
@@ -49,6 +50,8 @@ class Decision:
     counted: int                   # votes that took part (not abstains)
     reason: str | None = None      # why inconclusive: "quorum" | "no_weight"
     needs_more_votes: bool = False # inconclusive and some detectors weren't asked yet
+    claims: tuple = ()             # every problem type raised, strongest first: ((type, weight), ...).
+                                   # Each one is reported; problem_type is the first.
 
 
 def _clamp(x, lo: float = 0.0, hi: float = 1.0) -> float:
@@ -87,10 +90,14 @@ def aggregate(votes: list[dict], reliability: dict[str, float] | None = None, qu
               if v["verdict"] == "problem" and checks(v.get("detectorId"), _type_of(v), coverage)]
     claims = [(w, t) for w, t in claims if w > 0]
     if claims:
-        # Strongest claim first; equal weights reported alphabetically by type.
-        weight, problem_type = min(claims, key=lambda c: (-c[0], c[1]))
-        reported = None if problem_type == UNKNOWN else problem_type
-        return Decision("problem", reported, weight, weight, len(counted))
+        # One entry per type at its strongest claim; strongest first, equal weights alphabetically.
+        strongest: dict[str, float] = {}
+        for weight, problem_type in claims:
+            strongest[problem_type] = max(weight, strongest.get(problem_type, 0.0))
+        ranked = sorted(strongest.items(), key=lambda c: (-c[1], c[0]))
+        reported = tuple((None if t == UNKNOWN else t, w) for t, w in ranked)
+        problem_type, weight = reported[0]
+        return Decision("problem", problem_type, weight, weight, len(counted), claims=reported)
 
     # Rules 2 and 3: "normal" needs enough detectors to have actually looked.
     if len(counted) < quorum:

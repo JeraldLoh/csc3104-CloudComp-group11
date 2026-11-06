@@ -72,7 +72,8 @@ def test_decision_record_has_what_the_page_shows():
                   "incidentId", "alertCreated"):
         assert field in d, field
     assert d["k"] == 2 and d["escalated"] is True
-    assert d["votes"][0] == {"detectorId": "route-corridor", "verdict": "problem", "confidence": 0.9,
+    assert d["votes"][0] == {"detectorId": "route-corridor", "verdict": "problem", "problemType": "off_route",
+                             "confidence": 0.9,
                              "latencyMs": 12, "reason": "test"}
     assert d["alertCreated"] is True
 

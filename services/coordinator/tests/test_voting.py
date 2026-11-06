@@ -133,6 +133,29 @@ def test_equal_problems_are_reported_alphabetically():
     assert d.problem_type == "off_route"
 
 
+def test_every_problem_type_raised_is_kept_strongest_first():
+    # Walking sideways off the road: route-corridor says off_route, heading-speed wrong_direction.
+    # Both are reported, so the weaker one isn't lost.
+    d = aggregate(asked_all(v(ROUTE, "problem", 0.6), v(HEADING, "problem", 0.9), v(DWELL, "normal")))
+    assert d.claims == (("wrong_direction", pytest.approx(0.9)), ("off_route", pytest.approx(0.6)))
+    assert d.problem_type == d.claims[0][0]
+
+
+def test_two_detectors_on_one_type_make_one_claim_at_the_stronger_weight():
+    d = aggregate(asked_all(v(ROUTE, "problem", 0.6), v(PROGRESS, "problem", 0.8), v(DWELL, "normal")))
+    assert d.claims == (("off_route", pytest.approx(0.8)),)
+
+
+def test_a_silenced_detectors_problem_is_not_claimed():
+    d = aggregate(asked_all(v(ROUTE, "problem", 0.6), v(HEADING, "problem", 0.9), v(DWELL, "normal")),
+                  reliability={HEADING: 0})
+    assert [t for t, _ in d.claims] == ["off_route"]
+
+
+def test_no_claims_without_a_problem():
+    assert aggregate([v(ROUTE, "normal"), v(DWELL, "normal")]).claims == ()
+
+
 # --- rules 2 and 3: normal needs enough answers -------------------------------------------------------------
 
 def test_all_say_normal():
