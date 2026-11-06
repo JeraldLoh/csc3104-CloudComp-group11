@@ -8,10 +8,10 @@
       "NextBus": {
         "OriginCode": "77009",
         "DestinationCode": "77009",
-        "EstimatedArrival": "2026-11-06T16:17:59+08:00",
+        "EstimatedArrival": "2026-11-06T16:29:57+08:00",
         "Monitored": 1,
-        "Latitude": "1.3296176666666666",
-        "Longitude": "103.90481166666666",
+        "Latitude": "1.3309585",
+        "Longitude": "103.9033995",
         "VisitNumber": "1",
         "Load": "SEA",
         "Feature": "WAB",
@@ -20,10 +20,10 @@
       "NextBus2": {
         "OriginCode": "77009",
         "DestinationCode": "77009",
-        "EstimatedArrival": "2026-11-06T16:27:57+08:00",
+        "EstimatedArrival": "2026-11-06T16:37:17+08:00",
         "Monitored": 1,
-        "Latitude": "1.3462306666666666",
-        "Longitude": "103.92035683333333",
+        "Latitude": "1.3395155",
+        "Longitude": "103.9180995",
         "VisitNumber": "1",
         "Load": "SEA",
         "Feature": "WAB",
@@ -32,10 +32,10 @@
       "NextBus3": {
         "OriginCode": "77009",
         "DestinationCode": "77009",
-        "EstimatedArrival": "2026-11-06T16:36:17+08:00",
+        "EstimatedArrival": "2026-11-06T16:47:26+08:00",
         "Monitored": 1,
-        "Latitude": "1.3465603333333334",
-        "Longitude": "103.94282833333334",
+        "Latitude": "1.3464883333333333",
+        "Longitude": "103.94290316666667",
         "VisitNumber": "1",
         "Load": "SEA",
         "Feature": "WAB",
@@ -48,18 +48,6 @@
       "NextBus": {
         "OriginCode": "82009",
         "DestinationCode": "82009",
-        "EstimatedArrival": "2026-11-06T16:17:08+08:00",
-        "Monitored": 1,
-        "Latitude": "1.3188571666666666",
-        "Longitude": "103.90191033333333",
-        "VisitNumber": "1",
-        "Load": "SEA",
-        "Feature": "WAB",
-        "Type": "SD"
-      },
-      "NextBus2": {
-        "OriginCode": "82009",
-        "DestinationCode": "82009",
         "EstimatedArrival": "2026-11-06T16:28:42+08:00",
         "Monitored": 0,
         "Latitude": "0.0",
@@ -69,7 +57,7 @@
         "Feature": "WAB",
         "Type": "SD"
       },
-      "NextBus3": {
+      "NextBus2": {
         "OriginCode": "82009",
         "DestinationCode": "82009",
         "EstimatedArrival": "2026-11-06T16:48:42+08:00",
@@ -80,6 +68,18 @@
         "Load": "SEA",
         "Feature": "WAB",
         "Type": "SD"
+      },
+      "NextBus3": {
+        "OriginCode": "",
+        "DestinationCode": "",
+        "EstimatedArrival": "",
+        "Monitored": 0,
+        "Latitude": "",
+        "Longitude": "",
+        "VisitNumber": "",
+        "Load": "",
+        "Feature": "",
+        "Type": ""
       }
     },
     {
@@ -88,10 +88,10 @@
       "NextBus": {
         "OriginCode": "52009",
         "DestinationCode": "84009",
-        "EstimatedArrival": "2026-11-06T16:25:06+08:00",
+        "EstimatedArrival": "2026-11-06T16:23:55+08:00",
         "Monitored": 1,
-        "Latitude": "1.3187386666666667",
-        "Longitude": "103.88538483333333",
+        "Latitude": "1.3191746666666666",
+        "Longitude": "103.90499366666667",
         "VisitNumber": "1",
         "Load": "SEA",
         "Feature": "WAB",
@@ -100,10 +100,10 @@
       "NextBus2": {
         "OriginCode": "52009",
         "DestinationCode": "84009",
-        "EstimatedArrival": "2026-11-06T16:27:22+08:00",
+        "EstimatedArrival": "2026-11-06T16:29:16+08:00",
         "Monitored": 1,
-        "Latitude": "1.3196435",
-        "Longitude": "103.88194733333333",
+        "Latitude": "1.3173318333333333",
+        "Longitude": "103.89499983333333",
         "VisitNumber": "1",
         "Load": "SEA",
         "Feature": "WAB",
@@ -112,10 +112,10 @@
       "NextBus3": {
         "OriginCode": "52009",
         "DestinationCode": "84009",
-        "EstimatedArrival": "2026-11-06T16:37:44+08:00",
+        "EstimatedArrival": "2026-11-06T16:40:55+08:00",
         "Monitored": 1,
-        "Latitude": "1.3272916666666665",
-        "Longitude": "103.88793983333333",
+        "Latitude": "1.3254901666666665",
+        "Longitude": "103.88101683333333",
         "VisitNumber": "1",
         "Load": "SEA",
         "Feature": "WAB",
