@@ -1,5 +1,6 @@
 // Profiles (issue 5.1) on the Alert Service: the caregiver's travellers, links and safe locations.
 import { call } from "../alerts/api";
+import type { WhereRequest } from "../alerts/incidents";
 
 export interface Traveller {
   travellerId: string;
@@ -15,6 +16,16 @@ export interface SafeLocation {
   name: string;
   lat: number;
   lng: number;
+}
+
+/** Asks the traveller "Where are you?" on their phone. A question already waiting is returned, not repeated. */
+export function askWhere(caregiverId: string, travellerId: string): Promise<WhereRequest> {
+  return call(`/api/travellers/${encodeURIComponent(travellerId)}/where-are-you`, caregiverId, { method: "POST" });
+}
+
+/** The traveller's latest question, waiting or answered, or null. */
+export function latestWhere(caregiverId: string, travellerId: string): Promise<WhereRequest | null> {
+  return call(`/api/travellers/${encodeURIComponent(travellerId)}/where-are-you`, caregiverId);
 }
 
 /** A traveller's latest trip, from their phone's check-ins. */

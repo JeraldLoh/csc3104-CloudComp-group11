@@ -29,7 +29,7 @@ class FakeEventSource {
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
 
 // What the Alert Service answers; a test changes this before rendering.
-let answers: Record<string, () => Response>;
+let answers: Record<string, (init?: RequestInit) => Response>;
 
 function my(travellers: MyTravellers["travellers"]): MyTravellers {
   return { travellers, loaded: true, error: null, reload: async () => {} };
@@ -61,14 +61,107 @@ beforeEach(() => {
   journey.getTrip.mockReset().mockRejectedValue(new Error("not yours"));
   journey.getRoute.mockReset();
   vi.stubGlobal("EventSource", FakeEventSource);
-  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
     const paths = Object.keys(answers).sort((a, b) => b.length - a.length); // the most specific path wins
     const match = paths.find((path) => url.includes(path));
-    return match ? answers[match]() : json({}, 404);
+    return match ? answers[match](init) : json({}, 404);
   }));
 });
 
 afterEach(() => vi.unstubAllGlobals());
+
+const question = (changes = {}) => ({
+  requestId: "W-1", askedBy: "G-1", askedAt: new Date().toISOString(), status: "asked", answer: null,
+  answeredAt: null, lat: null, lng: null, ...changes,
+});
+
+describe("a push notification's link", () => {
+  function showLinked(linked: { travellerId: string | null }) {
+    return render(<DashboardPage caregiverId="G-1" my={my([alex])} journey={journey} onOpenProfile={vi.fn()} linked={linked} />);
+  }
+
+  it("opens the traveller it's about", async () => {
+    showLinked({ travellerId: "U-1" });
+    expect(await screen.findByRole("heading", { name: "Alex" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /All travellers/ })).toBeTruthy();
+  });
+
+  it("opens them again after going back, when the same link comes again", async () => {
+    const { rerender } = showLinked({ travellerId: "U-1" });
+    fireEvent.click(await screen.findByRole("button", { name: /All travellers/ }));
+    await screen.findByRole("button", { name: /Open/ });
+
+    const props = { caregiverId: "G-1", my: my([alex]), journey, onOpenProfile: vi.fn() };
+    rerender(<DashboardPage {...props} linked={{ travellerId: "U-1" }} />);
+
+    expect(await screen.findByRole("heading", { name: "Alex" })).toBeTruthy();
+  });
+});
+
+describe("Where are you?", () => {
+  async function openAlex() {
+    show();
+    fireEvent.click(await screen.findByRole("button", { name: /Alex/ }));
+  }
+
+  it("asks the traveller and shows that it's waiting for them", async () => {
+    let asked = false;
+    answers["/where-are-you"] = (init) => {
+      if (init?.method === "POST") asked = true;
+      return json(init?.method === "POST" ? question() : null);
+    };
+    await openAlex();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Where are you?" }));
+
+    expect(await screen.findByText(/Waiting for Alex to answer/)).toBeTruthy();
+    expect(asked).toBe(true);
+    expect(screen.getByRole("button", { name: "Ask again" })).toBeTruthy();
+  });
+
+  it("shows the answer the moment it arrives, with where they answered", async () => {
+    answers["/where-are-you"] = () => json(question());
+    await openAlex();
+    await screen.findByText(/Waiting for Alex to answer/);
+
+    act(() => FakeEventSource.last.onmessage?.({ data: JSON.stringify({
+      event: "where.answered", travellerId: "U-1", travellerName: "Alex", sentAt: "x",
+      request: question({ status: "answered", answer: "ok", answeredAt: new Date().toISOString(), lat: 1.4, lng: 103.9 }),
+    }) }));
+
+    expect((await screen.findByText(/answered "I'm OK"/)).textContent).toContain("Alex answered");
+    expect(screen.getByRole("link", { name: "See where they answered" }).getAttribute("href")).toContain("1.4,103.9");
+  });
+
+  it("says to call when there's been no answer for a while", async () => {
+    answers["/where-are-you"] = () => json(question({ askedAt: new Date(Date.now() - 3 * 60_000).toISOString() }));
+    await openAlex();
+
+    expect(await screen.findByText(/hasn't answered since/)).toBeTruthy();
+    expect(screen.getByText(/Call them/)).toBeTruthy();
+  });
+
+  it("shows an answer of I need help as a problem", async () => {
+    answers["/where-are-you"] = () => json(question({ status: "answered", answer: "help", answeredAt: new Date().toISOString() }));
+    await openAlex();
+
+    const status = await screen.findByText(/answered "I need help"/);
+    expect(status.className).toContain("pf__msg--error");
+  });
+
+  it("ignores a late copy of the question after the answer", async () => {
+    answers["/where-are-you"] = () => json(question({ status: "answered", answer: "ok", answeredAt: new Date().toISOString() }));
+    await openAlex();
+    await screen.findByText(/answered "I'm OK"/);
+
+    act(() => FakeEventSource.last.onmessage?.({ data: JSON.stringify({
+      event: "where.asked", travellerId: "U-1", travellerName: "Alex", sentAt: "x", request: question(),
+    }) }));
+
+    expect(screen.getByText(/answered "I'm OK"/)).toBeTruthy();
+    expect(screen.queryByText(/Waiting for Alex/)).toBeNull();
+  });
+});
 
 describe("DashboardPage", () => {
   it("shows a traveller with nothing wrong as all clear, with their profile numbers", async () => {

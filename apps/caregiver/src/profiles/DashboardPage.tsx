@@ -1,9 +1,11 @@
 // Dashboard (issues 5.1 and 5.3): every traveller the logged-in caregiver looks after at a glance, those who
 // need attention first. Alerts arrive live; opening a traveller shows their alerts, to acknowledge and resolve.
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AlertList, useLiveIncidents } from "../alerts";
-import { formatTime, problemTitle } from "../alerts/incidents";
+import { formatTime, problemTitle, type WhereRequest } from "../alerts/incidents";
+import { askWhere, latestWhere } from "./api";
 import type { TripsApi } from "../journey/api";
+import { PushToggle } from "../push/PushToggle";
 import { LiveMap } from "./LiveMap";
 import { buildRows, seenAgo, summarise, type Health, type TravellerRow } from "./overview";
 import { Avatar } from "./TravellersPage";
@@ -19,14 +21,19 @@ interface Props {
   journey: Pick<TripsApi, "listTrips"> & PathApi;
   /** Go to the Travellers page, optionally with one traveller open. */
   onOpenProfile: (travellerId?: string) => void;
+  /** Open this traveller, e.g. from a push notification's link. A new object asks again, even for the same one. */
+  linked?: { travellerId: string | null };
 }
 
 // Mounted with key={caregiverId}: switching caregiver starts from an empty page and a new connection.
-export function DashboardPage({ caregiverId, my, journey, onOpenProfile }: Props) {
+export function DashboardPage({ caregiverId, my, journey, onOpenProfile, linked }: Props) {
   const alerts = useLiveIncidents(caregiverId, my);
   const facts = useTravellerFacts(caregiverId, my, journey);
   const { live, known: liveKnown } = useLiveTrips(caregiverId, isCaregiverId(caregiverId));
-  const [openId, setOpenId] = useState<string | null>(null);
+  const [openId, setOpenId] = useState<string | null>(linked?.travellerId ?? null);
+  useEffect(() => {
+    if (linked?.travellerId) setOpenId(linked.travellerId);
+  }, [linked]);
   const path = useTripPath(journey, openId ? live[openId]?.tripId : undefined);
 
   if (!isCaregiverId(caregiverId)) {
@@ -56,9 +63,12 @@ export function DashboardPage({ caregiverId, my, journey, onOpenProfile }: Props
             <h1 className="pf__h1">Dashboard</h1>
             <p className="pf__sub">Everyone you look after, signed in as <strong>{caregiverId}</strong>.</p>
           </div>
-          <span className={`pf__live pf__live--${alerts.connection}`} role="status">
-            <span className="pf__dot" aria-hidden="true" />
-            {alerts.connection === "live" ? "Live" : alerts.connection === "connecting" ? "Connecting…" : "Reconnecting…"}
+          <span className="pf__head-side">
+            <span className={`pf__live pf__live--${alerts.connection}`} role="status">
+              <span className="pf__dot" aria-hidden="true" />
+              {alerts.connection === "live" ? "Live" : alerts.connection === "connecting" ? "Connecting…" : "Reconnecting…"}
+            </span>
+            <PushToggle caregiverId={caregiverId} />
           </span>
         </header>
 
@@ -84,12 +94,10 @@ export function DashboardPage({ caregiverId, my, journey, onOpenProfile }: Props
                 <HealthBadge health={open.health} failed={!!alerts.error} />
               </div>
               <Facts row={open} liveKnown={liveKnown} />
-              <div className="pf__tcard-actions">
-                <button type="button" className="pf__btn pf__btn--secondary"
-                  onClick={() => onOpenProfile(open.traveller.travellerId)}>
-                  Edit profile
-                </button>
-              </div>
+              <WhereAreYou key={open.traveller.travellerId} caregiverId={caregiverId}
+                travellerId={open.traveller.travellerId} name={open.traveller.name}
+                latest={alerts.where[open.traveller.travellerId]} onNote={alerts.noteWhere}
+                onEdit={() => onOpenProfile(open.traveller.travellerId)} />
             </div>
             {open.live && (
               <div className="pf__tcard pf__open">
@@ -135,6 +143,78 @@ export function DashboardPage({ caregiverId, my, journey, onOpenProfile }: Props
       </div>
     </div>
   );
+}
+
+const NO_ANSWER_MS = 2 * 60_000; // long enough to read and tap; after that, calling is quicker
+
+interface WhereProps {
+  caregiverId: string;
+  travellerId: string;
+  name: string;
+  latest: WhereRequest | undefined;
+  onNote: (travellerId: string, request: WhereRequest) => void;
+  onEdit: () => void;
+}
+
+// "Where are you?" (issue 5.5): the question appears on the traveller's phone while the app is open there, and
+// their answer arrives here over the live stream.
+function WhereAreYou({ caregiverId, travellerId, name, latest, onNote, onEdit }: WhereProps) {
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState<string | null>(null);
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    latestWhere(caregiverId, travellerId).then((found) => found && onNote(travellerId, found), () => undefined);
+  }, [caregiverId, travellerId, onNote]);
+
+  const waiting = latest?.status === "asked";
+  useEffect(() => {
+    if (!waiting) return;
+    const timer = setInterval(() => setNow(Date.now()), 5000); // to notice when it's been too long
+    return () => clearInterval(timer);
+  }, [waiting]);
+
+  async function ask() {
+    setBusy(true);
+    setFailed(null);
+    try {
+      onNote(travellerId, await askWhere(caregiverId, travellerId));
+      setNow(Date.now());
+    } catch (e) {
+      setFailed(`Couldn't ask ${name}: ${(e as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <div className="pf__tcard-actions">
+        <button type="button" className="pf__btn" onClick={() => void ask()} disabled={busy}>
+          {busy ? "Asking…" : latest ? "Ask again" : "Where are you?"}
+        </button>
+        <button type="button" className="pf__btn pf__btn--secondary" onClick={onEdit}>Edit profile</button>
+      </div>
+      <p className="pf__muted pf__where-note">Asks on {name}'s phone. They see it while the CareRoute app is open.</p>
+      {failed && <p className="pf__msg pf__msg--error pf__where" role="alert">{failed}</p>}
+      {latest && <WhereStatus name={name} request={latest} overdue={waiting && now - Date.parse(latest.askedAt) > NO_ANSWER_MS} />}
+    </>
+  );
+}
+
+function WhereStatus({ name, request: q, overdue }: { name: string; request: WhereRequest; overdue: boolean }) {
+  if (q.status === "asked") {
+    return overdue
+      ? <p className="pf__msg pf__msg--warn pf__where" role="status">{name} hasn't answered since {formatTime(q.askedAt)}. Their phone may be off or the app closed. Call them.</p>
+      : <p className="pf__msg pf__msg--info pf__where" role="status">Asked at {formatTime(q.askedAt)}. Waiting for {name} to answer on their phone…</p>;
+  }
+  const at = q.answeredAt ? ` at ${formatTime(q.answeredAt)}` : "";
+  const where = q.lat !== null && q.lng !== null && (
+    <> <a href={`https://www.google.com/maps?q=${q.lat},${q.lng}`} target="_blank" rel="noreferrer">See where they answered</a></>
+  );
+  return q.answer === "help"
+    ? <p className="pf__msg pf__msg--error pf__where" role="status">{name} answered "I need help"{at}.{where}</p>
+    : <p className="pf__msg pf__msg--ok pf__where" role="status">{name} answered "I'm OK"{at}.{where}</p>;
 }
 
 function Tile({ label, value, tone }: { label: string; value: number | null; tone?: "attention" | "urgent" }) {
@@ -240,6 +320,7 @@ function TravellerCard({ row, failed, liveKnown, onOpen }: CardProps) {
             <p className="pf__muted">
               <time dateTime={top.createdAt}>{formatTime(top.createdAt)}</time>
               {top.state === "acknowledged" && " · acknowledged"}
+              {top.state === "open" && !!top.escalationLevel && ` · not answered, sent again ${top.escalationLevel}×`}
               {unresolved.length > 1 && ` · ${unresolved.length - 1} more`}
             </p>
           </>

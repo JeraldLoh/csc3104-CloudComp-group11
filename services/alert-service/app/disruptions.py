@@ -19,11 +19,13 @@ log = logging.getLogger("alert.disruptions")
 
 
 class DisruptionConsumer:
-    def __init__(self, sqs_client, queue_url: str, incidents: IncidentStore, wait_s: int = 20, publisher=None):
+    def __init__(self, sqs_client, queue_url: str, incidents: IncidentStore, wait_s: int = 20, publisher=None,
+                 notifier=None):
         self.sqs = sqs_client
         self.queue_url = queue_url
         self.incidents = incidents
         self.publisher = publisher  # AlertPublisher: live events to dashboards (optional, e.g. in tests)
+        self.notifier = notifier  # push.Notifier: urgent alerts by push (optional)
         self.wait_s = wait_s  # long polling: wait up to this long for a message instead of busy-looping
         self._stop = threading.Event()
 
@@ -41,6 +43,8 @@ class DisruptionConsumer:
         log.info("%s %s from %s", outcome, incident["incidentId"], disruption.disruptionId)
         if self.publisher:
             self.publisher.publish(EVENT_FOR_OUTCOME[outcome], incident)
+        if self.notifier:
+            self.notifier.incident(incident, outcome)
         return True
 
     def poll_once(self) -> int:
