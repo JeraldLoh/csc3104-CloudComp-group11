@@ -28,7 +28,7 @@ export function HelpSheet({
         </h2>
         <p className="sheet__text">
           {delivered
-            ? `Stay where you are. ${caregiver} will help you.`
+            ? `Stay where you are. ${who} will help you.`
             : stuck
               ? `We can't reach ${caregiver} through the app right now. We will keep trying.${canCall ? "" : " Show this screen to a staff member or someone near you."}`
               : "Stay where you are."}

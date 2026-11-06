@@ -42,6 +42,7 @@ function Journey({ session, demo, debug }: { session: Session; demo: boolean; de
   }, [app.routeChangedAt]);
   const pack = app.loaded?.pack;
   const caregiver = pack?.caregiver.name ?? "your caregiver";
+  const Caregiver = caregiver.charAt(0).toUpperCase() + caregiver.slice(1); // at the start of a sentence
   const debugPanel = debug ? <DebugPanel app={app} /> : null;
 
   if (app.phase === "loading") {
@@ -90,7 +91,7 @@ function Journey({ session, demo, debug }: { session: Session; demo: boolean; de
           <Tick />
           <h1>You made it</h1>
           <p className="lead">
-            {told ? `${caregiver} knows you have arrived.` : `We are telling ${caregiver} you have arrived.`}
+            {told ? `${Caregiver} knows you have arrived.` : `We are telling ${caregiver} you have arrived.`}
           </p>
         </div>
         {debugPanel}

@@ -46,6 +46,16 @@ export interface RoutePackStep {
   photoUrl: string | null;
   audioUrl: string | null;
   backup: string | null;
+  /** What the wording tells them to look out for, each with a photo (Journey Service). Missing in older packs. */
+  landmarks?: Landmark[];
+}
+
+/** A building the step's wording names. photoUrl is null when its photo would repeat another one. */
+export interface Landmark {
+  name: string;
+  photoUrl: string | null;
+  /** Where it is seen instead when there's no photo: "step" or another landmark's name. Not sent by every pack. */
+  sameView?: string | null;
 }
 
 /** contracts/examples/route-pack.json */

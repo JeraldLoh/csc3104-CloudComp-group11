@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# local stack on kind plus the caregiver app and optionally one simulated trip, also for linux
+# local stack on kind plus the caregiver and traveller apps and optionally one simulated trip, also for linux
 #   bash scripts/macos/local-sim.sh --setup                          first time and after code changes
 #   bash scripts/macos/local-sim.sh --scenario off_route --caregiver G-777
 set -euo pipefail
@@ -8,6 +8,7 @@ CLUSTER=csc3104-local
 NS=csc3104
 CONFIG=k8s/local/kind-config.yaml
 APP_URL=http://localhost:5174
+TRAVELLER_URL=http://localhost:5173
 # image name and build folder
 IMAGES=(
   "cloud-fastapi:."
@@ -70,10 +71,10 @@ if docker --version 2>/dev/null | grep -qi podman || { ! command -v docker >/dev
 fi
 ENGINE=$([ "$PODMAN" = 1 ] && echo podman || echo docker)
 
-# cluster made from the config so its ports reach localhost
+# cluster made from the current config so its ports reach localhost (30566, LocalStack, is the newest one)
 cluster_ready() {
   kind get clusters 2>/dev/null | grep -qx "$CLUSTER" || return 1
-  "$ENGINE" port "$CLUSTER-control-plane" 30001/tcp >/dev/null 2>&1 || return 2
+  "$ENGINE" port "$CLUSTER-control-plane" 30566/tcp >/dev/null 2>&1 || return 2
 }
 
 ensure_cluster() {
@@ -145,8 +146,10 @@ wait_for() {
 }
 
 APP_PID=""
+TRAVELLER_PID=""
 stop_app() {
   [ -n "$APP_PID" ] && kill "$APP_PID" 2>/dev/null || true
+  [ -n "$TRAVELLER_PID" ] && kill "$TRAVELLER_PID" 2>/dev/null || true
 }
 
 start_app() {
@@ -162,6 +165,19 @@ start_app() {
   wait_for "$APP_URL" "the caregiver app (log in /tmp/careroute-caregiver.log)"
 }
 
+# the traveller app, where the caregiver app's trip links lead
+start_traveller_app() {
+  if curl -sf -m 2 -o /dev/null "$TRAVELLER_URL"; then
+    echo "traveller app already running"
+    return
+  fi
+  (cd apps/traveller && { [ -d node_modules ] || npm ci --no-audit --no-fund >/dev/null; })
+  (cd apps/traveller && exec ./node_modules/.bin/vite --strictPort >/tmp/careroute-traveller.log 2>&1) &
+  TRAVELLER_PID=$!
+  trap stop_app EXIT INT TERM
+  wait_for "$TRAVELLER_URL" "the traveller app (log in /tmp/careroute-traveller.log)"
+}
+
 ensure_cluster
 kubectl config use-context "kind-$CLUSTER" >/dev/null
 [ "$SETUP" = 1 ] && build_and_load
@@ -171,6 +187,7 @@ for entry in "${HEALTH[@]}"; do
   wait_for "http://localhost:${entry%% *}/health" "${entry#* }"
 done
 start_app
+start_traveller_app
 
 if [ -n "$SCENARIO" ]; then
   "$PYTHON" -m tools.simulator live --scenario "$SCENARIO" --caregiver "$CAREGIVER" --interval "$INTERVAL"
@@ -178,9 +195,11 @@ fi
 
 echo
 echo "caregiver app: $APP_URL  act as $CAREGIVER"
+echo "traveller app: $TRAVELLER_URL  open a trip's link from the caregiver app's Trips tab"
 echo "aggregator dashboard: http://localhost:8002/dashboard"
 echo "another trip: $PYTHON -m tools.simulator live --scenario off_route --caregiver $CAREGIVER"
-if [ -n "$APP_PID" ]; then
-  echo "press Ctrl+C to stop the app, the cluster keeps running"
-  wait "$APP_PID" || true
+# keep running while either app started here runs, so the exit trap doesn't stop the other one
+if [ -n "$APP_PID$TRAVELLER_PID" ]; then
+  echo "press Ctrl+C to stop the apps, the cluster keeps running"
+  wait $APP_PID $TRAVELLER_PID || true
 fi
