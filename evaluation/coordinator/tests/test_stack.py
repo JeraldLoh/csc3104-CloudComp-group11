@@ -4,7 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from stack import journey, off_contract  # noqa: E402
+from stack import NEAR_LEG, case_of, journey  # noqa: E402
 
 
 def test_each_journey_gets_its_own_trip_and_traveller():
@@ -14,12 +14,14 @@ def test_each_journey_gets_its_own_trip_and_traveller():
     assert all("expected" in c for c in a)
 
 
-def test_off_route_journeys_that_stay_near_the_route_are_rejected():
+def test_off_route_journeys_that_stay_near_the_route_are_their_own_case():
     # Seeds checked by hand: seed 1 drifts towards the road to the bus stop (at most ~73 m from
     # the route); seed 4 really leaves it (~170 m).
-    assert "never more than" in off_contract("off_route", journey("off_route", 1, "R"))
-    assert off_contract("off_route", journey("off_route", 4, "R")) is None
+    case, farthest = case_of("off_route", journey("off_route", 1, "R"))
+    assert case == NEAR_LEG and farthest <= 100
+    case, farthest = case_of("off_route", journey("off_route", 4, "R"))
+    assert case == "off_route" and farthest > 100
 
 
-def test_other_scenarios_are_always_used():
-    assert off_contract("wrong_direction", journey("wrong_direction", 1, "R")) is None
+def test_other_scenarios_are_their_own_case():
+    assert case_of("wrong_direction", journey("wrong_direction", 1, "R")) == ("wrong_direction", None)

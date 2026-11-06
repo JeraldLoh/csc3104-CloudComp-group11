@@ -67,8 +67,10 @@ failure, so the rules lean towards alerting (`services/coordinator/app/voting.py
 
 - A `problem` vote is ignored if the detector doesn't report that type, or if its weight is 0.
   Weight = confidence × the detector's reliability (`detector:weights`, default 1.0), so setting a
-  faulty detector's reliability to 0 silences it. If several types are raised at once, the one with
-  the highest weight is reported, and its weight is the report's `confidence`.
+  faulty detector's reliability to 0 silences it. If several types are raised at once, **each one is
+  reported**: one `problem-report.json` per type, strongest first, each with its own strongest
+  weight as `confidence`. (Walking sideways off the road can look like the wrong direction too;
+  reporting only the strongest could hide the off-route for the whole trip.)
 - `route-progress` votes `normal` (confidence 0.3) when the traveller is off the corridor but still
   getting closer to the end (a detour). Under rule 1 this doesn't cancel route-corridor's `off_route`.
 - By default the Coordinator asks all 4 detectors (`REDUNDANCY_MODE=fixed4`). The experiment compares

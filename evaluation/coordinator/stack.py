@@ -44,20 +44,22 @@ def journey(scenario: str, seed: int, run_id: str) -> list[dict]:
     return [{**c, "tripId": trip, "travellerId": traveller} for c in generate(scenario, seed, browser=True)]
 
 
-def off_contract(scenario: str, checkins: list[dict]) -> str | None:
-    """Why a simulated journey doesn't match contracts/problem-definitions.md, or None.
+NEAR_LEG = "off_route_near"   # off_route, but never more than 100 m from some part of the route
+
+
+def case_of(scenario: str, checkins: list[dict]) -> tuple[str, float | None]:
+    """The case a journey is scored under, and (off_route only) the farthest it got from the route.
 
     The simulator labels off_route once the traveller is 100 m sideways from where they should
-    be. The contract (and route-corridor) measure to the nearest point of the whole route, so a
-    walk towards another leg of the route can be "off_route" in the labels while never leaving
-    the corridor. Those journeys would score a correct "normal" as a miss."""
+    be. The contract (and route-corridor) measure to the nearest point of the whole route. A walk
+    towards another leg of the route (the road north to the bus stop) is labelled off_route but
+    never leaves the corridor: route-corridor can't see it by definition, only route-progress
+    can. Those journeys are scored as their own case, so the two kinds aren't mixed."""
     if scenario != "off_route":
-        return None
+        return scenario, None
     labelled = [c for c in checkins if c["expected"] == "off_route"]
     farthest = max(min(distance_m((c["lat"], c["lng"]), p) for p in ROUTE_PATH) for c in labelled)
-    if farthest <= OFF_ROUTE_LABEL_M:
-        return f"never more than {farthest:.0f} m from the route (off_route needs over {OFF_ROUTE_LABEL_M} m)"
-    return None
+    return (NEAR_LEG if farthest <= OFF_ROUTE_LABEL_M else scenario), round(farthest)
 
 
 class Stack:

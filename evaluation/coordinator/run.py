@@ -17,7 +17,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from stack import Stack, journey, off_contract, play
+from stack import Stack, case_of, journey, play
 from tools.simulator.scenarios import SCENARIOS
 
 RESULTS = Path(__file__).resolve().parent / "results"
@@ -25,35 +25,34 @@ RESULTS = Path(__file__).resolve().parent / "results"
 
 def c1(stack: Stack, seeds: int, run_id: str) -> dict:
     """C1: the Coordinator's decision vs each detector alone. In fixed4 every decision records
-    all 4 detectors' votes, so one pass gives both. Journeys whose labels don't match the
-    contract's definitions are skipped (and recorded), and the next seed is tried."""
-    journeys, skipped = [], []
+    all 4 detectors' votes, so one pass gives both.
+
+    `seeds` journeys per scenario. off_route journeys come in two kinds (stack.case_of): seeds are
+    drawn until there are `seeds` that leave the corridor, and every one that wanders near another
+    leg on the way is kept too, as its own case."""
+    journeys = []
     for scenario in SCENARIOS:
-        chosen, seed = 0, 0
-        while chosen < seeds:
+        kept, seed = 0, 0
+        while kept < seeds:
             seed += 1
             if seed > seeds * 20:
-                raise SystemExit(f"{scenario}: only {chosen} usable journeys in {seed - 1} seeds")
+                raise SystemExit(f"{scenario}: only {kept} journeys of that kind in {seed - 1} seeds")
             checkins = journey(scenario, seed, run_id)
-            reason = off_contract(scenario, checkins)
-            if reason:
-                skipped.append({"scenario": scenario, "seed": seed, "reason": reason})
-                continue
-            chosen += 1
+            case, farthest = case_of(scenario, checkins)
+            kept += case == scenario
             started = time.perf_counter()
             rows = play(stack, checkins)
             undecided = sum(r["decision"] is None for r in rows)
             ks = {r["decision"]["k"] for r in rows if r["decision"]}
             if ks - {4}:
                 raise SystemExit(f"decisions asked k={sorted(ks)} detectors: C1 needs REDUNDANCY_MODE=fixed4")
-            journeys.append({"scenario": scenario, "seed": seed, "tripId": checkins[0]["tripId"],
+            journeys.append({"scenario": scenario, "case": case, "farthestM": farthest, "seed": seed,
+                             "tripId": checkins[0]["tripId"],
                              "travellerId": checkins[0]["travellerId"], "rows": rows,
                              "incidents": stack.incidents(checkins[0]["travellerId"])})
-            print(f"  {scenario:<16} seed {seed}: {len(rows)} check-ins in {time.perf_counter() - started:.1f} s"
+            print(f"  {case:<16} seed {seed}: {len(rows)} check-ins in {time.perf_counter() - started:.1f} s"
                   + (f", {undecided} NOT decided" if undecided else ""), flush=True)
-    if skipped:
-        print(f"  skipped {len(skipped)} journeys whose labels don't match the contract (see 'skipped')")
-    return {"journeys": journeys, "skipped": skipped}
+    return {"journeys": journeys}
 
 
 EXPERIMENTS = {"C1": c1}

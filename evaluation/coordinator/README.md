@@ -30,11 +30,13 @@ Service) is measured separately by Member 2 in [`evaluation/`](../README.md).
   a phone checking in every 10 s would: the detectors read the trip's recent check-ins, so they
   must not see later ones early. Every journey has its own trip and traveller, so runs never
   share risk, duplicate markers or incidents.
-- **Labels are checked against the contract.** The simulator labels `off_route` once the
-  traveller is 100 m sideways from where they should be; the contract measures to the nearest
-  point of the route. A drift towards another leg of the route (the road north to the bus stop)
-  is labelled off route but never leaves the corridor, so a correct "normal" would score as a
-  miss. C1 skips those journeys, uses the next seed, and lists the skipped ones in the results.
+- **Two kinds of off route.** The simulator labels `off_route` once the traveller is 100 m
+  sideways from where they should be; the contract (and route-corridor) measure to the nearest
+  point of the whole route. A drift towards another leg of the route (the road north to the bus
+  stop) is labelled off route but never leaves the corridor. C1 scores those journeys as their
+  own case, *off route near another leg*: route-corridor can't see them by definition, so they
+  show what the second judge (route-progress) adds. Seeds are drawn until there are 5 that
+  leave the corridor; every near-leg one on the way is kept.
 - No AWS: the numbers describe the design on one machine, not EKS performance.
 
 ## Running

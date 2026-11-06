@@ -56,11 +56,19 @@ def test_problem_on_a_normal_checkin_is_a_false_alarm():
     assert score_journey(j, "route-corridor")["falseAlarms"] == 0
 
 
-def test_problem_of_the_wrong_type_is_a_false_alarm():
+def test_problem_of_the_wrong_type_during_a_real_problem_is_wrong_type_not_a_false_alarm():
     j = {"scenario": "off_route", "rows": [row(0, "off_route", "problem", "wrong_direction",
                                                {"heading-speed": ("problem", "wrong_direction")})]}
     s = score_journey(j, "combined")
-    assert s["falseAlarms"] == 1 and s["detected"] is False
+    assert s["wrongType"] == 1 and s["falseAlarms"] == 0 and s["detected"] is False
+
+
+def test_the_coordinator_is_judged_on_every_type_it_reported():
+    r = row(0, "off_route", "problem", "wrong_direction",
+            {"heading-speed": ("problem", "wrong_direction"), "route-progress": ("problem", "off_route")})
+    r["decision"]["alerts"] = [{"problemType": "wrong_direction"}, {"problemType": "off_route"}]
+    s = score_journey({"scenario": "off_route", "rows": [r]}, "combined")
+    assert s["detected"] is True and s["wrongType"] == 0
 
 
 def test_an_alert_of_another_type_counts_for_the_first_alert_not_for_detected():
@@ -77,21 +85,30 @@ def test_poor_gps_must_not_alert_and_abstains_are_no_answer():
                                               {d: ("abstain", None) for d in DETECTORS})]}
     s = score_journey(j, "combined")
     assert s["falseAlarms"] == 0 and s["noAnswer"] == 1
-    assert answer(j["rows"][0], "route-corridor") == ("none", None)
+    assert answer(j["rows"][0], "route-corridor") == ("none", set())
 
 
 def test_an_undecided_checkin_is_no_answer_for_everyone():
     r = {**row(0, "normal"), "decision": None, "endToEndMs": None}
-    assert answer(r, "combined") == ("none", None) and answer(r, "heading-speed") == ("none", None)
+    assert answer(r, "combined") == ("none", set()) and answer(r, "heading-speed") == ("none", set())
 
 
 def test_summary_counts_alerts_from_the_alert_service():
     journeys = [{**off_route_journey(), "incidents": [{"problemType": "off_route"}]},
                 {"scenario": "normal", "rows": [row(0, "normal")], "incidents": [{"problemType": "long_dwell"}]}]
     s = c1({"runId": "t", "seeds": 1, "journeys": journeys})
-    assert s["alerts"] == {"falseAlerts": 1, "journeysWithoutProblem": 1, "missedAlerts": 0,
-                           "journeysWithProblem": 1, "wrongTypeAlerts": 0}
+    assert s["alerts"] == {"withoutProblem": {"journeys": 1, "falseAlerts": 1},
+                           "cases": {"off_route": {"journeys": 1, "rightType": 1, "anyAlert": 1}}}
     assert s["judges"]["combined"]["problems"]["off_route"] == {"journeys": 1, "detected": 1, "medianDelayS": 20.0,
                                                                 "medianAnyDelayS": 20.0}
     assert s["judges"]["route-progress"]["problems"]["off_route"]["detected"] == 0
     assert "off_route" not in s["judges"]["dwell-time"]["problems"]
+
+
+def test_near_leg_journeys_are_scored_as_their_own_case():
+    near = {**off_route_journey(), "case": "off_route_near",
+            "incidents": [{"problemType": "wrong_direction"}]}   # alerted, but as another type
+    s = c1({"runId": "t", "seeds": 1, "journeys": [near]})
+    assert set(s["judges"]["combined"]["problems"]) == {"off_route_near"}
+    assert s["judges"]["route-corridor"]["problems"]["off_route_near"]["detected"] == 1
+    assert s["alerts"]["cases"] == {"off_route_near": {"journeys": 1, "rightType": 0, "anyAlert": 1}}
