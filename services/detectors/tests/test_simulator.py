@@ -62,6 +62,19 @@ def test_normal_bus_wait_is_stationary_for_8_minutes():
     assert sum(c["stepIndex"] == 0 for c in waiting) * 10 >= 6 * 60
 
 
+def test_missed_stop_rides_on_past_the_stop_on_the_bus_step():
+    route = build_route()
+    stop = route["steps"][1]["to"]
+    checkins = generate("missed_stop")
+    labels = [c["expected"] for c in checkins]
+    first = labels.index("missed_stop")
+    assert set(labels[:first]) == {"normal"} and set(labels[first:]) == {"missed_stop"}
+    riding = checkins[first:]
+    assert all(c["stepIndex"] == 1 and c["speedMps"] > 4 for c in riding)
+    assert distance_m((riding[-1]["lat"], riding[-1]["lng"]), (stop["lat"], stop["lng"])) > 450
+    assert all(c["stepIndex"] <= 1 for c in checkins)
+
+
 def test_off_route_drifts_150_to_250_m():
     route = build_route()
     checkins = generate("off_route")

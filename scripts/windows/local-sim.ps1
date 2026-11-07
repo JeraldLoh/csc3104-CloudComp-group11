@@ -3,7 +3,7 @@
 #   .\scripts\windows\local-sim.ps1 -Scenario off_route -Caregiver G-777
 param(
   [switch]$Setup,
-  [ValidateSet("normal", "off_route", "wrong_direction", "long_dwell", "normal_bus_wait", "poor_gps")]
+  [ValidateSet("normal", "off_route", "wrong_direction", "long_dwell", "normal_bus_wait", "poor_gps", "missed_stop")]
   [string]$Scenario,
   [string]$Caregiver = "G-003",
   [ValidateRange(0.01, 10)]

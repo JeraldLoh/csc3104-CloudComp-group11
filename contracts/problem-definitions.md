@@ -16,7 +16,7 @@ A detector's `normal` vote is evidence only about the types in its row.
 | `route-corridor` | `detector-route` | `off_route` | Last 3 check-ins all further than 100 m + GPS accuracy from the planned path |
 | `heading-speed` | `detector-heading` | `wrong_direction` | Median direction of travel is over 120° from the path direction |
 | `dwell-time` | `detector-dwell` | `long_dwell` | Stationary longer than 5 min walking / 20 min waiting for a bus or train, including at the stop before the app moves on to the bus step |
-| `route-progress` | `detector-progress` | `off_route`, `wrong_direction`, `missed_stop` | Distance left to the end measured along the route: off the corridor and not getting closer, going back along the route, or riding over 150 m past the step's end stop |
+| `route-progress` | `detector-progress` | `off_route`, `wrong_direction`, `missed_stop` | Distance left to the end measured along the route: off the corridor and not getting closer, going back along the route, or riding over 150 m past the step's end stop, also when the bus turns off the route there |
 
 So `off_route` and `wrong_direction` each have two detectors that judge them; `long_dwell` and
 `missed_stop` have one. There is no `ml-anomaly` detector (not planned).
@@ -83,13 +83,11 @@ Proposed labelling rules (open question 2):
 
 1. **Labelling rule:** is the problem label applied from the moment the definition is met (proposed
    above), or from when the traveller first left the route? This changes the measured detection delay. (M4, M3)
-2. **Scenario names differ.** `contracts/api.md` lists `normal`, `missed_stop`, `wrong_direction`,
-   `long_dwell`, `silence`, `tunnel`, `out_of_order`; the detector test data uses `normal`, `off_route`,
-   `wrong_direction`, `long_dwell`, `normal_bus_wait`, `poor_gps`. Agree on one list (and add
-   `off_route` to the contract). (M4)
-3. **`long_dwell` and `missed_stop` have one detector each**, so a faulty detector there can only be
+2. **`long_dwell` and `missed_stop` have one detector each**, so a faulty detector there can only be
    outvoted by lowering its reliability weight. Acceptable for now? (M4, M3)
 
 Resolved: `missed_stop` is now detected by `route-progress`; `off_route` and `wrong_direction` have a
 second judge (`route-progress`); `ml-anomaly` is not planned. dwell-time keeps where and when a stop
-began in `trip:{tripId}:dwell`, so it times stops longer than the 10 check-in window itself.
+began in `trip:{tripId}:dwell`, so it times stops longer than the 10 check-in window itself. The
+scenario list is the simulator's (`contracts/api.md`); silence, tunnels and out-of-order arrival are
+tested by the services that handle them.

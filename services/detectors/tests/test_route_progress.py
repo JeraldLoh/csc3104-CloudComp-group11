@@ -216,6 +216,18 @@ def test_bus_leaving_the_planned_path_after_the_stop_is_missed_stop():
     assert vote.verdict == "problem" and vote.problem_type == "missed_stop"
 
 
+def test_bus_turning_off_at_the_stop_is_missed_stop():
+    # turns east right at Stop B so every later fix projects back onto the bus path
+    points = [(1000 + 80 * i, 0) for i in range(4)] + [(1300, 80 * i) for i in range(1, 7)]
+    vote = bus_vote(points)
+    assert vote.verdict == "problem" and vote.problem_type == "missed_stop"
+
+
+def test_bus_leaving_the_route_before_the_stop_is_not_missed_stop():
+    points = [(400 + 80 * i, 0) for i in range(4)] + [(640, 80 * i) for i in range(1, 7)]
+    assert bus_vote(points).problem_type != "missed_stop"
+
+
 def test_riding_towards_the_stop_is_normal():
     vote = bus_vote([(400 + 80 * i, 0) for i in range(10)])
     assert vote.verdict == "normal" and vote.confidence > 0.8
@@ -296,6 +308,17 @@ def test_replay_problem_is_flagged_soon_and_only_as_itself(scenario, suffix):
     assert first_flag >= first_label, "flagged before the problem started"
     assert first_flag - first_label <= 6
     assert {v.problem_type for _, v in results if v.verdict == "problem"} == {scenario}
+
+
+@pytest.mark.parametrize("suffix", ["", "-browser"])
+def test_replay_missed_stop_is_flagged_once_past_the_stop(suffix):
+    results = list(replay("missed_stop" + suffix))
+    first_label = next(i for i, (expected, _) in enumerate(results) if expected == "missed_stop")
+    flagged = [i for i, (_, v) in enumerate(results) if v.problem_type == "missed_stop"]
+    assert flagged and flagged[0] >= first_label and flagged[0] - first_label <= 4
+    assert results[-1][1].problem_type == "missed_stop"
+    # leaving the route after the stop may show as off_route until it is far enough past
+    assert {v.problem_type for _, v in results if v.verdict == "problem"} <= {"missed_stop", "off_route"}
 
 
 @pytest.mark.parametrize("suffix", ["", "-browser"])

@@ -100,9 +100,16 @@ def _missed_stop(request, fixes, step, end_m, settings):
     run = fixes[-settings.corridor_consecutive:]
     margin = settings.missed_stop_m
 
-    # beyond the stop along the route and far from it
+    # at the stop or beyond it along the route
+    def reached(f):
+        return f.along_m >= end_m - f.limit_m or _distance(f.checkin, stop) <= f.limit_m
+
+    # passed the stop earlier in the window so a bus turning off the route still counts
+    passed = any(reached(f) for f in fixes[:-len(run)])
+
+    # beyond the stop and far from it
     def past(f):
-        return f.along_m >= end_m - f.limit_m and _distance(f.checkin, stop) > margin + f.accuracy_m
+        return (passed or reached(f)) and _distance(f.checkin, stop) > margin + f.accuracy_m
 
     if not all(past(f) for f in run):
         return None

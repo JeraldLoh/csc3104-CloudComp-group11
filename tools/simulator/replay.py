@@ -14,7 +14,12 @@ from tools.simulator.scenarios import INTERVAL_S, generate, strip_labels
 
 RECENT_MAX = 10
 # problem each detector owns and delay is only scored against it
-OWN_PROBLEM = {"route-corridor": "off_route", "heading-speed": "wrong_direction", "dwell-time": "long_dwell"}
+OWN_PROBLEM = {
+    "route-corridor": "off_route",
+    "heading-speed": "wrong_direction",
+    "dwell-time": "long_dwell",
+    "route-progress": "missed_stop"
+}
 
 Post = Callable[[str, dict], dict]
 

@@ -27,13 +27,18 @@ SCENARIOS = (
     "wrong_direction",
     "long_dwell",
     "normal_bus_wait",
-    "poor_gps"
+    "poor_gps",
+    "missed_stop"
 )
 
 # a drift only counts as off_route beyond the default corridor
 OFF_ROUTE_LABEL_M = 100
 # a stop only counts as long_dwell beyond the default walking limit
 LONG_DWELL_LABEL_S = 300
+# riding on only counts as missed_stop beyond the default missed stop distance
+MISSED_STOP_LABEL_M = 150
+# the bus carries on east after the stop, away from the bus path and the walk to the clinic
+MISSED_STOP_BEARING_DEG = 90
 FIXTURE_ONLY_FIELDS = ("scenario", "expected")
 
 
@@ -43,6 +48,7 @@ class _Tick:
     s: float  # metres along the route
     lateral_m: float = 0.0  # sideways from the route and positive is left of travel
     label: str = "normal"
+    past_m: float = 0.0  # carried on past the stop at s due MISSED_STOP_BEARING_DEG
     step: Optional[int] = None  # step the app shows when it lags the position
 
 
@@ -81,6 +87,14 @@ class _Planner:
             label = late_label if k * INTERVAL_S > late_after_s else "normal"
             self.ticks.append(_Tick(self.s, self.lateral, label, step=step))
 
+    # stay on the bus past the stop
+    def ride_past(self, distance: float) -> None:
+        past = 0.0
+        while past < distance:
+            past = min(distance, past + BUS_SPEED_MPS * INTERVAL_S * self._jitter())
+            label = "missed_stop" if past > MISSED_STOP_LABEL_M else "normal"
+            self.ticks.append(_Tick(self.s, label=label, past_m=past))
+
     # turn off the route and walk sideways then stand still
     def drift(self, distance: float, side: int) -> None:
         lateral = 0.0
@@ -103,6 +117,12 @@ def _plan(scenario: str, track: Track, rng: random.Random) -> List[_Tick]:
     elif scenario == "wrong_direction":
         p.move_to(0.4 * stop, WALK_SPEED_MPS)
         p.move_to(0.0, WALK_SPEED_MPS, label="wrong_direction")
+    elif scenario == "missed_stop":
+        p.move_to(stop, WALK_SPEED_MPS)
+        p.hold(60)
+        # just short of the stop so the app stays on the bus step
+        p.move_to(alight - 1, BUS_SPEED_MPS)
+        p.ride_past(rng.uniform(500, 700))
     else:
         if scenario == "long_dwell":
             p.move_to(0.45 * stop, WALK_SPEED_MPS)
@@ -125,6 +145,9 @@ def _true_position(track: Track, tick: _Tick):
     if tick.lateral_m:
         left = math.radians(track.bearing(tick.s) - 90)
         pos = offset(pos, tick.lateral_m * math.sin(left), tick.lateral_m * math.cos(left))
+    if tick.past_m:
+        ahead = math.radians(MISSED_STOP_BEARING_DEG)
+        pos = offset(pos, tick.past_m * math.sin(ahead), tick.past_m * math.cos(ahead))
     return pos
 
 

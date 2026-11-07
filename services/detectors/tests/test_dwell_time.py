@@ -193,7 +193,7 @@ def test_replay_long_dwell_with_real_window_never_guesses(suffix):
 
 
 @pytest.mark.parametrize("window_size", [10, 40])
-@pytest.mark.parametrize("scenario", ["normal", "normal_bus_wait", "normal_bus_wait-browser", "off_route", "poor_gps"])
+@pytest.mark.parametrize("scenario", ["normal", "normal_bus_wait", "normal_bus_wait-browser", "off_route", "poor_gps", "missed_stop"])
 def test_replay_other_scenarios_never_flag(scenario, window_size):
     assert not [v for _, v in replay(scenario, window_size) if v.verdict == "problem"]
 
@@ -247,6 +247,6 @@ def test_replay_long_dwell_is_flagged_with_the_real_window_and_redis(suffix):
     assert max(flagged) < end + 3
 
 
-@pytest.mark.parametrize("scenario", ["normal", "normal_bus_wait", "normal_bus_wait-browser", "off_route", "poor_gps"])
+@pytest.mark.parametrize("scenario", ["normal", "normal_bus_wait", "normal_bus_wait-browser", "off_route", "poor_gps", "missed_stop"])
 def test_replay_other_scenarios_never_flag_with_redis(scenario):
     assert not [v for _, v in replay(scenario, 10, fakeredis.FakeRedis()) if v.verdict == "problem"]

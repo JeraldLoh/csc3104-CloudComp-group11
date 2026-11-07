@@ -51,13 +51,21 @@ Must answer within **500 ms**. If a detector can't decide, it returns `"verdict"
 
 ## Simulator (Member 4)
 
-| Method | Path | Body | Returns |
-|---|---|---|---|
-| POST | `/api/sim/start` | `{"scenario": "wrong_direction", "travellers": 50}` | `{"runId": "..."}` |
-| POST | `/api/sim/stop` | — | `200` |
-| POST | `/api/sim/faults` | `{"detectorId": "detector-dwell", "mode": "wrong"}` | `200` |
+A command line tool, not a service: `python -m tools.simulator <command>` (`tools/simulator`).
 
-Scenarios: `normal`, `missed_stop`, `wrong_direction`, `long_dwell`, `silence`, `tunnel`, `out_of_order`.
+| Command | What it does |
+|---|---|
+| `live --scenario off_route` | One trip through the real services: Journey Service, then `POST /api/checkins`, then the incidents it raised |
+| `replay --scenario off_route` | Sends a scenario straight to the detectors, with the Redis keys the Check-in Service would write |
+| `load --travellers 50` | Many travellers at once, to load-test and autoscale the detectors |
+| `generate` | Writes the labelled test data in `services/detectors/tests/fixtures/` |
+
+Scenarios: `normal`, `off_route`, `wrong_direction`, `long_dwell`, `missed_stop`, `normal_bus_wait`, `poor_gps`.
+Each check-in is labelled with the decision it should get (`problem-definitions.md`).
+
+A wrong or slow detector is the fake detector (`services/fake-detector`), not a simulator command.
+Silence, tunnels and out-of-order arrival are tested where they're handled: the Heartbeat Monitor,
+the traveller app's outbox and the Check-in Service.
 
 
 ## Alert Service (Member 5)

@@ -63,7 +63,7 @@ The HPA shows `<unknown>` CPU until metrics-server is installed in the kind clus
 
 `compose.yaml` starts Redis, a one-shot `seed` job and the four detectors (8101 route-corridor,
 8102 heading-speed, 8103 dwell-time, 8104 route-progress). `dev/seed.py` writes one mock trip per simulator scenario
-(`off_route`, `wrong_direction`, `long_dwell`, `normal`, `normal_bus_wait`, `poor_gps`) into Redis,
+(`off_route`, `wrong_direction`, `long_dwell`, `missed_stop`, `normal`, `normal_bus_wait`, `poor_gps`) into Redis,
 using the same keys as `contracts/redis-keys.md`.
 
 ```bash

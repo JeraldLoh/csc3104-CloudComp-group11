@@ -34,7 +34,7 @@ INTERVAL=1
 
 usage() {
   echo "usage: bash scripts/macos/local-sim.sh [--setup] [--scenario NAME] [--caregiver G-...] [--interval SECONDS]"
-  echo "scenarios: normal off_route wrong_direction long_dwell normal_bus_wait poor_gps"
+  echo "scenarios: normal off_route wrong_direction long_dwell normal_bus_wait poor_gps missed_stop"
 }
 
 die() {
