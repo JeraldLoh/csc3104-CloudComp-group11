@@ -1,0 +1,16 @@
+{
+  "event": "where.answered",
+  "travellerId": "U-042",
+  "travellerName": "Alex",
+  "request": {
+    "requestId": "W-3F2A91C0",
+    "askedBy": "G-003",
+    "askedAt": "2026-10-12T08:20:00Z",
+    "status": "answered",
+    "answer": "ok",
+    "answeredAt": "2026-10-12T08:20:09Z",
+    "lat": 1.4052,
+    "lng": 103.9024
+  },
+  "sentAt": "2026-10-12T08:20:09Z"
+}

@@ -80,6 +80,8 @@ GPS (watchPosition) ──► latest position
 | App storage wiped mid-trip | `seq` restarts from the current time in seconds, above every seq already sent, so new check-ins aren't mistaken for old duplicates. |
 | Phone locked / app in background | One check-in with `status: "backgrounded"` goes out with `keepalive` as the page hides, so the Heartbeat Monitor knows silence is expected. |
 | Help pressed with no signal | The request is queued and retried, goes before anything else waiting, and can't be blocked by another failing request. The **Call Sam** button is there straight away and becomes the main action once the request has failed. |
+| Caregiver asks "Where are you?" | While travelling the app checks every 5 s (`src/lib/where.ts`) and shows a sheet with **I'm OK** and **I need help**, vibrating where the phone can. The answer goes through the request queue like Help, with the location; **I need help** also sends Help. The app has to be open: push notifications would reach it when closed. |
+| Caregiver asks with the app closed | With `firebase-web-config.json` in the repo root, "Start my trip" also asks to show notifications (`src/lib/push.ts`). A push then reaches the phone with the app closed, and a tap opens it at the question. Push needs a secure page: `localhost` or HTTPS, so not a phone opening `http://192.168…`; on an iPhone the app must be added to the Home Screen. |
 
 ## Working with no signal (issue 2.4)
 

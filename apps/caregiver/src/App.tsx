@@ -65,17 +65,43 @@ function readLink(search = location.search): { from: Point; to: Point; mode?: Tr
   };
 }
 
-// The pages. #dashboard or #travellers in the address opens that page directly. Alerts are on the dashboard
-// now, so the old #alerts link (services/demo-control uses it) goes there.
+// The pages. #dashboard or #travellers in the address opens that page directly, and #dashboard/U-042 opens that
+// traveller (a push notification's link). Alerts are on the dashboard now, so the old #alerts link
+// (services/demo-control uses it) goes there.
 type Page = "plan" | "dashboard" | "travellers";
 const pageFromHash = (): Page => {
-  const page = location.hash.slice(1);
+  const page = location.hash.slice(1).split("/")[0];
   return page === "dashboard" || page === "alerts" ? "dashboard" : page === "travellers" ? page : "plan";
 };
+const travellerFromHash = (): string | null => location.hash.slice(1).split("/")[1] || null;
 
 export default function App() {
   const [page, setPage] = useState<Page>(pageFromHash);
-  const [focusId, setFocusId] = useState<string | null>(null); // the traveller a dashboard button was about
+  const [focusId, setFocusId] = useState<string | null>(travellerFromHash); // the traveller a link or button was about
+  // A new object each time a link asks, so the dashboard opens the traveller again even if it's the same one.
+  const [linked, setLinked] = useState(() => ({ travellerId: travellerFromHash() }));
+  useEffect(() => {
+    const follow = () => {
+      setPage(pageFromHash());
+      setFocusId(travellerFromHash());
+      setLinked({ travellerId: travellerFromHash() });
+    };
+    // A tapped notification, with the app already open: the push worker says where to go.
+    const fromPush = (e: MessageEvent) => {
+      if (e.data?.type !== "careroute-open") return;
+      const url = new URL(e.data.url);
+      if (url.origin !== location.origin) return;
+      history.replaceState(null, "", url.pathname + url.search + url.hash);
+      follow();
+    };
+    window.addEventListener("hashchange", follow);
+    navigator.serviceWorker?.addEventListener("message", fromPush);
+    navigator.serviceWorker?.startMessages(); // deliver messages now, not only once the page has loaded
+    return () => {
+      window.removeEventListener("hashchange", follow);
+      navigator.serviceWorker?.removeEventListener("message", fromPush);
+    };
+  }, []);
   const openPage = (next: Page, travellerId: string | null = null) => {
     setPage(next);
     setFocusId(travellerId);
@@ -138,7 +164,7 @@ export default function App() {
         <DataSwitch api={api} />
       </header>
       <main className="shell__main">
-        {page === "dashboard" ? <DashboardPage key={me} caregiverId={me} my={myTravellers} journey={api}
+        {page === "dashboard" ? <DashboardPage key={me} caregiverId={me} my={myTravellers} journey={api} linked={linked}
             onOpenProfile={(travellerId) => openPage("travellers", travellerId)} />
           : page === "travellers" ? <TravellersPage key={me} caregiverId={me} my={myTravellers} initialTravellerId={focusId} />
           : <RoutePlanner

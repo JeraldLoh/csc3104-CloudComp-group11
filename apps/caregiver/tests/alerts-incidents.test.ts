@@ -1,5 +1,5 @@
 ﻿import { describe, expect, it } from "vitest";
-import { applyEvent, mergeIncidents, sortForDisplay, type AlertEvent, type Incident } from "../src/alerts/incidents";
+import { applyEvent, mergeIncidents, newerWhere, sortForDisplay, type AlertEvent, type Incident } from "../src/alerts/incidents";
 
 const base: Incident = {
   incidentId: "U-042#T-001#off_route#2",
@@ -63,5 +63,33 @@ describe("sortForDisplay", () => {
     const ids = sortForDisplay([resolved, older, newer, urgent]).map((i) => i.incidentId);
 
     expect(ids).toEqual(["urgent", "newer", "older", "r"]);
+  });
+});
+
+describe("newerWhere", () => {
+  const asked = { requestId: "W-1", askedBy: "G-1", askedAt: "2026-10-12T08:00:00Z", status: "asked" as const,
+                  answer: null, answeredAt: null, lat: null, lng: null };
+  const answered = { ...asked, status: "answered" as const, answer: "ok" as const, answeredAt: "2026-10-12T08:01:00Z" };
+
+  it("takes the answer to the same question", () => {
+    expect(newerWhere(asked, answered)).toBe(answered);
+  });
+
+  it("keeps an answer when a late copy of the question arrives", () => {
+    expect(newerWhere(answered, asked)).toBe(answered);
+  });
+
+  it("takes a newer question over an old answer, but not an older one", () => {
+    const later = { ...asked, requestId: "W-2", askedAt: "2026-10-12T09:00:00Z" };
+    expect(newerWhere(answered, later)).toBe(later);
+    expect(newerWhere(later, answered)).toBe(later);
+  });
+});
+
+describe("an escalated alert", () => {
+  it("keeps how often it's been sent again", () => {
+    const next = applyEvent({ [base.incidentId]: base }, event("escalated", { escalationLevel: 2, updatedAt: "2026-10-12T08:20:00Z" }));
+    expect(next[base.incidentId].escalationLevel).toBe(2);
+    expect(next[base.incidentId].state).toBe("open");
   });
 });

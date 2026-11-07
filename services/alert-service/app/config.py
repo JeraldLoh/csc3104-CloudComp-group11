@@ -27,6 +27,17 @@ class Settings:
     disruptions_queue_url: str | None = field(default_factory=lambda: os.getenv("DISRUPTIONS_QUEUE_URL") or None)
     disruptions_consumer_enabled: bool = field(default_factory=lambda: _bool("DISRUPTIONS_CONSUMER_ENABLED", True))
 
+    # The Firebase service account key file (push.py). Empty or missing = no push notifications.
+    firebase_credentials: str = field(default_factory=lambda: os.getenv("FIREBASE_CREDENTIALS", ""))
+
+    # Escalation (escalation.py): an urgent alert still open this long after it opened, or after its last
+    # escalation, is sent again, up to ESCALATE_MAX times. Checked every ESCALATION_CHECK_S.
+    escalation_enabled: bool = field(default_factory=lambda: _bool("ESCALATION_ENABLED", True))
+    escalate_after_s: int = field(default_factory=lambda: int(os.getenv("ESCALATE_AFTER_S", "120")))
+    escalate_max: int = field(default_factory=lambda: int(os.getenv("ESCALATE_MAX", "3")))
+    escalation_check_s: float = field(default_factory=lambda: float(os.getenv("ESCALATION_CHECK_S", "15")))
+    escalate_within_s: int = field(default_factory=lambda: int(os.getenv("ESCALATE_WITHIN_S", "3600")))  # recent only
+
     # A trip counts as live until its last check-in is this old (live.py).
     live_window_s: int = field(default_factory=lambda: int(os.getenv("LIVE_WINDOW_S", "1800")))
 

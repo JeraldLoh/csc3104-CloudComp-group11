@@ -1,0 +1,123 @@
+{
+  "status": 200,
+  "body": {
+    "requestParameters": {
+      "mode": "WALK",
+      "date": "10-22-2026",
+      "arriveBy": "false",
+      "walkReluctance": "10",
+      "showIntermediateStops": "true",
+      "fromPlace": "1.3,103.845",
+      "transferPenalty": "7200",
+      "toPlace": "1.299,103.847",
+      "time": "8:00 AM",
+      "maxTransfers": "3",
+      "numItineraries": "3"
+    },
+    "plan": {
+      "date": 1792627200000,
+      "from": {
+        "name": "Origin",
+        "lon": 103.845,
+        "lat": 1.3,
+        "vertexType": "NORMAL"
+      },
+      "to": {
+        "name": "Destination",
+        "lon": 103.847,
+        "lat": 1.299,
+        "vertexType": "NORMAL"
+      },
+      "itineraries": [
+        {
+          "duration": 211,
+          "startTime": 1792627200000,
+          "endTime": 1792627411000,
+          "walkTime": 211,
+          "transitTime": 0,
+          "waitingTime": 0,
+          "walkDistance": 292,
+          "walkLimitExceeded": false,
+          "generalizedCost": 2276,
+          "elevationLost": 0,
+          "elevationGained": 0,
+          "transfers": 0,
+          "fare": "0.00",
+          "legs": [
+            {
+              "startTime": 1792627200000,
+              "endTime": 1792627411000,
+              "departureDelay": 0,
+              "arrivalDelay": 0,
+              "realTime": false,
+              "distance": 292,
+              "generalizedCost": 2276,
+              "pathway": false,
+              "mode": "WALK",
+              "transitLeg": false,
+              "route": "",
+              "agencyTimeZoneOffset": 28800000,
+              "interlineWithPreviousLeg": false,
+              "from": {
+                "name": "Origin",
+                "lon": 103.845,
+                "lat": 1.3,
+                "departure": 1792627200000,
+                "vertexType": "NORMAL"
+              },
+              "to": {
+                "name": "Destination",
+                "lon": 103.847,
+                "lat": 1.299,
+                "arrival": 1792627411000,
+                "vertexType": "NORMAL"
+              },
+              "legGeometry": {
+                "points": "i{|F}eyxRHWFIDCPEH@T?FABABC@EBOFUF?FWFWDCBKH_@??BG\\}AFWFUBQDOBQE?BMIQ",
+                "length": 31
+              },
+              "steps": [
+                {
+                  "distance": 292,
+                  "relativeDirection": "DEPART",
+                  "streetName": "path",
+                  "absoluteDirection": "SOUTHEAST",
+                  "stayOn": false,
+                  "area": false,
+                  "bogusName": true,
+                  "lon": 103.8449513,
+                  "lat": 1.2998886,
+                  "elevation": "",
+                  "walkingBike": false
+                }
+              ],
+              "rentedBike": false,
+              "walkingBike": false,
+              "duration": 211
+            }
+          ],
+          "tooSloped": false,
+          "arrivedAtDestinationWithRentedBicycle": false
+        }
+      ]
+    },
+    "debugOutput": {
+      "precalculationTime": 20580,
+      "directStreetRouterTime": 5530021,
+      "transitRouterTime": 4272483,
+      "filteringTime": 70515,
+      "renderingTime": 34451,
+      "totalTime": 9938795,
+      "transitRouterTimes": {
+        "tripPatternFilterTime": 0,
+        "accessEgressTime": 0,
+        "raptorSearchTime": 0,
+        "itineraryCreationTime": 0
+      }
+    },
+    "elevationMetadata": {
+      "ellipsoidToGeoidDifference": 7.474262155254684,
+      "geoidElevation": false
+    }
+  }
+}
