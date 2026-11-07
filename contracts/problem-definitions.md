@@ -45,6 +45,12 @@ dwell-time also abstains when the whole history window is stationary, already a 
 to the limit, and Redis has no saved start for the stop (`trip:{tripId}:dwell`): it can't tell how much
 longer the traveller has been there.
 
+heading-speed also abstains when the traveller is further than `CORRIDOR_M` + GPS accuracy from the
+current step's part of the route: direction against a route they're not on means nothing, and
+route-corridor and route-progress judge that case. It compares each movement with the part of the route
+for the step the movement started on, so a route that passes near itself or turns back at a stop isn't
+mistaken for the wrong leg.
+
 ## Reported directly (no detector)
 
 | Problem type | Definition | Raised by |

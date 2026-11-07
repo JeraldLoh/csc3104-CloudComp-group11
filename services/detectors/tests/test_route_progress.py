@@ -8,7 +8,8 @@ from detectors.config import Settings
 from detectors.context import TripContext
 from detectors.models import CheckIn, DetectorRequest
 from detectors.geo import cumulative_m
-from detectors.route_progress import _locate, _step_ranges, detect
+from detectors.common import step_ranges
+from detectors.route_progress import _locate, detect
 
 FIXTURES = Path(__file__).parent / "fixtures"
 SETTINGS = Settings()  # corridor 100 m, 3 consecutive, progress 20 m, missed stop 150 m, unsure 0.3
@@ -183,7 +184,7 @@ def test_step_change_beyond_reach_trusts_the_step():
     usable = [checkin(0, 100), checkin(1, 110), checkin(2, 1050, step=1)]
     ctx = TripContext(path=PATH, steps=steps, step_index=1, route_version=3, recent=usable)
     cum = cumulative_m(PATH)
-    fixes = _locate(usable, ctx, cum, _step_ranges(steps, PATH, cum), SETTINGS)
+    fixes = _locate(usable, ctx, cum, step_ranges(steps, PATH, cum), SETTINGS)
     # matched inside step 1 where it is, not in the gap before it
     assert abs(fixes[-1].along_m - 1050) < 5 and fixes[-1].away_m < 5
 

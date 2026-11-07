@@ -186,7 +186,7 @@ Each env var is the field name in upper case. Defaults are in `detectors/config.
 | `DETECTOR_ID` | none | all |
 | `REDIS_URL` | `redis://localhost:6379/0` | all |
 | `GPS_MAX_ACCURACY_M` | 50 | all (abstain above this) |
-| `CORRIDOR_M`, `CORRIDOR_CONSECUTIVE` | 100, 3 | route-corridor, route-progress |
+| `CORRIDOR_M`, `CORRIDOR_CONSECUTIVE` | 100, 3 | route-corridor, route-progress; heading-speed abstains beyond `CORRIDOR_M` |
 | `MIN_MOVING_SPEED_MPS`, `WRONG_DIR_DEG` | 0.5, 120 | heading-speed |
 | `WALK_MAX_SPEED_MPS` | 4 | heading-speed, route-progress |
 | `DWELL_RADIUS_M`, `DWELL_WALK_S`, `DWELL_TRANSIT_S` | 30, 300, 1200 | dwell-time |

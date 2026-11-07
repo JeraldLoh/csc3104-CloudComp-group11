@@ -1,3 +1,6 @@
+import bisect
+
+from detectors.geo import bearing_deg, cumulative_m, project_onto_path
 from detectors.models import DetectorVote
 
 # step modes that ride a vehicle
@@ -34,6 +37,60 @@ def place_point(place):
         return float(place["lat"]), float(place["lng"])
     except (TypeError, KeyError, ValueError):
         return None
+
+
+# start and end along the path per step and end is None without a stop
+def step_ranges(steps, path, cum):
+    ranges = []
+    start = 0.0
+    for step in steps:
+        to = place_point(step.get("to")) if isinstance(step, dict) else None
+        end = project_onto_path(to, path, cum, lo_m=start)[0] if to else None
+        ranges.append((start, end))
+        if end is not None:
+            start = end
+    return ranges
+
+
+# one step part of the path so a route passing near itself is not mistaken for this step
+class StepSection:
+    # whole path when the step is unknown
+    def __init__(self, ctx, step_index):
+        self._path = ctx.path
+        self._cum = cumulative_m(ctx.path)
+        self._lo = self._hi = None
+        if step_at(ctx.steps, step_index) is not None:
+            self._lo, self._hi = step_ranges(ctx.steps, ctx.path, self._cum)[step_index]
+
+    # section for a check-in own step or the trip step when the check-in has none
+    @classmethod
+    def per_checkin(cls, ctx):
+        sections = {}
+
+        def section(c):
+            index = c.step_index if step_at(ctx.steps, c.step_index) is not None else ctx.step_index
+            if index not in sections:
+                sections[index] = cls(ctx, index)
+            return sections[index]
+        return section
+
+    def _project(self, c):
+        return project_onto_path((c.lat, c.lng), self._path, self._cum, lo_m=self._lo, hi_m=self._hi)
+
+    # metres from a check-in to this part of the path
+    def away_m(self, c):
+        return self._project(c)[1]
+
+    # direction of this part of the path at the point closest to a check-in
+    def bearing_deg(self, c):
+        along = self._project(c)[0]
+        i = bisect.bisect_right(self._cum, along) - 1
+        # at the step end take the segment arriving there not the one leaving
+        if self._hi is not None and self._cum[i] >= self._hi:
+            i -= 1
+        i = min(max(i, 0), len(self._path) - 2)
+        a, b = self._path[i], self._path[i + 1]
+        return bearing_deg(a[0], a[1], b[0], b[1])
 
 
 # mode of the current step or None

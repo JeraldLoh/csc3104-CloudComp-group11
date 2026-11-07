@@ -7,6 +7,7 @@ from detectors.common import (
     confidence,
     place_point,
     step_at,
+    step_ranges,
     usable_checkins,
     vote
 )
@@ -33,19 +34,6 @@ class _Fix:
     @property
     def accuracy_m(self):
         return self.checkin.accuracy_m or 0.0
-
-
-# start and end along the path per step and end is None without a stop
-def _step_ranges(steps, path, cum):
-    ranges = []
-    start = 0.0
-    for step in steps:
-        to = place_point(step.get("to")) if isinstance(step, dict) else None
-        end = project_onto_path(to, path, cum, lo_m=start)[0] if to else None
-        ranges.append((start, end))
-        if end is not None:
-            start = end
-    return ranges
 
 
 # place each check-in on the path within its own step and reach of the previous fix
@@ -178,7 +166,7 @@ def detect(request, ctx, settings):
     cum = cumulative_m(ctx.path)
     length = cum[-1]
     # where each step starts and ends on the path
-    ranges = _step_ranges(ctx.steps or [], ctx.path, cum)
+    ranges = step_ranges(ctx.steps or [], ctx.path, cum)
     step = step_at(ctx.steps, ctx.step_index)
     end_m = ranges[ctx.step_index][1] if step is not None else None
     fixes = _locate(usable, ctx, cum, ranges, settings)
