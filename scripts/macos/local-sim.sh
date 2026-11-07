@@ -18,10 +18,11 @@ IMAGES=(
   "cloud-detectors:services/detectors"
   "coordinator:services/coordinator"
   "aggregator:services/aggregator"
+  "heartbeat-monitor:services/heartbeat-monitor"
 )
 # deployments running the images built here
 BUILT=(cloud-fastapi checkin-service alert-service journey-service easyread-service coordinator aggregator
-  detector-route detector-heading detector-dwell detector-progress)
+  heartbeat-monitor detector-route detector-heading detector-dwell detector-progress)
 # what must be ready before a trip, ollama left out as it is optional and large
 DEPLOYMENTS=(cloud-redis cloud-localstack "${BUILT[@]}")
 # local address and the service behind it
@@ -154,7 +155,8 @@ start_app() {
     echo "caregiver app already running"
     return
   fi
-  (cd apps/caregiver && { [ -d node_modules ] || npm ci --no-audit --no-fund >/dev/null; })
+  # install again when a pull changed the packages, npm records what it installed in node_modules
+  (cd apps/caregiver && { [ node_modules/.package-lock.json -nt package-lock.json ] || npm ci --no-audit --no-fund >/dev/null; })
   # vite directly so stopping it stops the whole app
   (cd apps/caregiver && exec ./node_modules/.bin/vite --strictPort >/tmp/careroute-caregiver.log 2>&1) &
   APP_PID=$!

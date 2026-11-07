@@ -29,10 +29,11 @@ $Images = [ordered]@{
   "cloud-detectors"  = "services/detectors"
   "coordinator"      = "services/coordinator"
   "aggregator"       = "services/aggregator"
+  "heartbeat-monitor" = "services/heartbeat-monitor"
 }
 # deployments running the images built here
 $Built = @("cloud-fastapi", "checkin-service", "alert-service", "journey-service", "easyread-service",
-  "coordinator", "aggregator", "detector-route", "detector-heading", "detector-dwell", "detector-progress")
+  "coordinator", "aggregator", "heartbeat-monitor", "detector-route", "detector-heading", "detector-dwell", "detector-progress")
 # what must be ready before a trip, ollama left out as it is optional and large
 $Deployments = @("cloud-redis", "cloud-localstack") + $Built
 # local port and the service behind it
@@ -153,7 +154,9 @@ function Start-App {
     Write-Host "caregiver app already running"
     return $null
   }
-  if (-not (Test-Path apps/caregiver/node_modules)) {
+  # install again when a pull changed the packages, npm records what it installed in node_modules
+  $installed = "apps/caregiver/node_modules/.package-lock.json"
+  if (-not (Test-Path $installed) -or (Get-Item apps/caregiver/package-lock.json).LastWriteTime -gt (Get-Item $installed).LastWriteTime) {
     Push-Location apps/caregiver
     npm ci --no-audit --no-fund
     $code = $LASTEXITCODE
