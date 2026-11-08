@@ -20,6 +20,7 @@ Journey keys expire **24 hours** after their last update.
 | `hb:{tripId}:reported` | String | The `lastseen` value of the silence already reported as `no_response`, so each silence is reported once | Heartbeat (M1) | Heartbeat (M1) |
 | `risk:{travellerId}` | Hash | `score`, `level` (`normal`/`elevated`), `detectorsUsed`, `updatedAt` | Coordinator (M3) | Coordinator (M3), dashboard (M3) |
 | `detector:weights` | Hash | `detectorId` → reliability, 0–1 (default 1.0); 0 silences a faulty detector | Set by hand (operator, experiment) | Coordinator (M3) |
+| `untracked:{tripId}` | Hash | `since`: timestamp of the first check-in in the current run of check-ins that left problem types unchecked (poor GPS, detectors failed, route missing); deleted when every type can be checked again (`tracking_lost` after 120 s) | Coordinator (M3) | Coordinator (M3) |
 | `decided:{tripId}:{seq}` | String | `1` once that check-in has been decided, so a redelivered SQS message isn't decided twice (expires after 24 h) | Coordinator (M3) | Coordinator (M3) |
 | `decisions:{travellerId}` | List | Last 50 decisions for the traveller (JSON, newest first): votes, decision, risk before and after, incident | Coordinator (M3) | Coordinator dashboard and `/api/decisions` (M3), experiment |
 | `decisions:recent` | List | Last 200 decisions for everyone (same JSON) | Coordinator (M3) | Coordinator dashboard and `/api/decisions` (M3), experiment |

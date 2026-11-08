@@ -20,8 +20,9 @@ from datetime import datetime, timezone
 import httpx
 
 from .config import Settings
-from .reports import build_problem_reports, iso_z
+from .reports import build_problem_reports, build_tracking_lost_report, iso_z
 from .risk import Risk, detectors_failed, update_risk
+from .tracking import POOR_GPS, seconds_since, unchecked, untracked_key
 from .voting import Decision, aggregate
 
 log = logging.getLogger("coordinator")
@@ -67,8 +68,9 @@ def summary(d: Decision, risk_level: str | None) -> dict:
 
 def decision_record(request_id: str, checkin: dict, votes: list[dict], d: Decision, escalated: bool,
                     risk_before: Risk, risk_after: Risk, alerts: list[dict], now: datetime,
-                    situation: str | None = None) -> dict:
-    """One entry of decisions:{travellerId}: what the dashboard and the experiment read."""
+                    situation: str | None = None, cause: tuple[str, list[str]] | None = None) -> dict:
+    """One entry of decisions:{travellerId}: what the dashboard and the experiment read.
+    `cause`: tracking.unchecked(), why some problem types couldn't be checked, and which."""
     return {
         "requestId": request_id,
         "tripId": checkin.get("tripId"),
@@ -93,6 +95,8 @@ def decision_record(request_id: str, checkin: dict, votes: list[dict], d: Decisi
         "incidentId": alerts[0]["incidentId"] if alerts else None,
         "alertCreated": alerts[0]["created"] if alerts else None,
         "alerts": alerts,
+        "unchecked": cause[1] if cause else [],
+        "uncheckedReason": cause[0] if cause else None,
     }
 
 
@@ -127,10 +131,27 @@ class DecisionRecorder:
                 alerts.append({"problemType": report["problemType"], "incidentId": incident.get("incidentId"),
                                "created": incident.get("created")})
 
+        # Tracking lost (tracking.py): some problem types couldn't be checked, for too long.
+        trip_id = checkin["tripId"]
+        route = await self.redis.get(f"trip:{trip_id}:route") if d.decision == "inconclusive" else None
+        cause = unchecked(d, checkin, votes, route, self.s.gps_max_accuracy_m)
+        untracked_since = None
+        if cause:
+            reason, types = cause
+            timestamp = checkin.get("timestamp") or iso_z(now)
+            untracked_since = await self.redis.hget(untracked_key(trip_id), "since") or timestamp
+            if seconds_since(untracked_since, timestamp) >= self.s.tracking_lost_after_s:
+                if reason != POOR_GPS:   
+                    log.error("%s: %s unchecked since %s (%s)", request_id, ", ".join(types), untracked_since, reason)
+                report = build_tracking_lost_report(request_id, checkin, votes, reason, types, now)
+                incident = await self._report_problem(report)
+                alerts.append({"problemType": report["problemType"], "incidentId": incident.get("incidentId"),
+                               "created": incident.get("created")})
+
         before = Risk.from_hash(await self.redis.hgetall(risk_key(traveller_id)))
         after = update_risk(before, d, self.s.risk, failed=detectors_failed(votes))
         record = json.dumps(decision_record(request_id, checkin, votes, d, escalated, before, after, alerts, now,
-                                            situation))
+                                            situation, cause))
         ttl = self.s.key_ttl_s
 
         tx = self.redis.pipeline(transaction=True)
@@ -142,7 +163,12 @@ class DecisionRecorder:
         tx.expire(traveller_decisions_key(traveller_id), ttl)
         tx.lpush(RECENT_DECISIONS_KEY, record)
         tx.ltrim(RECENT_DECISIONS_KEY, 0, self.s.decisions_recent - 1)
-        tx.set(decided_key(checkin["tripId"], int(checkin["seq"])), "1", ex=self.s.decided_ttl_s)
+        if untracked_since:
+            tx.hset(untracked_key(trip_id), "since", untracked_since)
+            tx.expire(untracked_key(trip_id), ttl)
+        else:
+            tx.delete(untracked_key(trip_id))   # trackable again: the streak ends
+        tx.set(decided_key(trip_id, int(checkin["seq"])), "1", ex=self.s.decided_ttl_s)
         await tx.execute()
 
         log.info("%s -> %s (k=%d, risk %s -> %s%s)", request_id, d.decision, len(votes), before.level,

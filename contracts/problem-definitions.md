@@ -51,6 +51,7 @@ to the limit: it can't tell how much longer the traveller has been there (open q
 | `no_response` | The traveller's check-ins have gone silent for longer than their usual rhythm allows (φ accrual failure detector). | Heartbeat Monitor (M1) |
 | `help_requested` | The traveller pressed the help button. Always an alert. | Traveller app → Alert Service `POST /api/help` (M2, M5) |
 | `disruption` | A transport disruption (LTA DataMall) affects a step of the trip. | Disruption Lambda (M6) → `careroute-disruptions` |
+| `tracking_lost` | For at least `TRACKING_LOST_AFTER_S` (120 s) of check-ins, one or more problem types couldn't be checked at all: **poor GPS** (accuracy missing or worse than `GPS_MAX_ACCURACY_M`, 50 m, so every detector abstains; not on an underground step, same rule as the Heartbeat Monitor), **detectors failed** (every detector that reports a type timed out or errored, e.g. dwell-time down leaves `long_dwell` unchecked), or **route missing** (the trip's route isn't in Redis). Not urgent, one per trip (`stepIndex` null); the report adds `reason` and `unchecked` (the types). Tells the caregiver to ask "Where are you?". | Coordinator (M3), from its own decisions |
 
 ## From votes to a decision (Coordinator, M3)
 
@@ -67,7 +68,8 @@ failure, so the rules lean towards alerting (`services/coordinator/app/voting.py
 
 - A `problem` vote is ignored if the detector doesn't report that type, or if its weight is 0.
   Weight = confidence × the detector's reliability (`detector:weights`, default 1.0), so setting a
-  faulty detector's reliability to 0 silences it. If several types are raised at once, **each one is
+  faulty detector's reliability to 0 silences it: neither its `problem` nor its `normal` counts,
+  as if it hadn't answered. If several types are raised at once, **each one is
   reported**: one `problem-report.json` per type, strongest first, each with its own strongest
   weight as `confidence`. (Walking sideways off the road can look like the wrong direction too;
   reporting only the strongest could hide the off-route for the whole trip.)

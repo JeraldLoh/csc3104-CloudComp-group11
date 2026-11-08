@@ -54,6 +54,11 @@ class Settings:
         calm_checkins=int(os.getenv("RISK_CALM_CHECKINS", "3")),
     ))
 
+    # Tracking lost (tracking.py): GPS worse than this can't be judged (the detectors' own
+    # GPS_MAX_ACCURACY_M), and after this long of it the caregiver is told.
+    gps_max_accuracy_m: float = field(default_factory=lambda: _float("GPS_MAX_ACCURACY_M", "50"))
+    tracking_lost_after_s: float = field(default_factory=lambda: _float("TRACKING_LOST_AFTER_S", "120"))
+
     # How long a decided tripId+seq is remembered for dedup (journey keys live 24 h).
     decided_ttl_s: int = field(default_factory=lambda: int(os.getenv("DECIDED_TTL_S", "86400")))
     # Journey keys expire 24 h after their last update (contracts/redis-keys.md).

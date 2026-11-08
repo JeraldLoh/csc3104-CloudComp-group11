@@ -5,6 +5,7 @@ travellerId#tripId#problemType#stepIndex, so sending the same report again is sa
 """
 from datetime import datetime, timezone
 
+from .tracking import TRACKING_LOST
 from .voting import Decision
 
 # Detectors said "problem" but none gave a type. The alert still goes out (a missed alert
@@ -42,6 +43,16 @@ def build_problem_report(request_id: str, checkin: dict, votes: list[dict], deci
                          now: datetime | None = None) -> dict:
     """The report for the strongest problem raised."""
     return build_problem_reports(request_id, checkin, votes, decision, now)[0]
+
+
+def build_tracking_lost_report(request_id: str, checkin: dict, votes: list[dict], reason: str,
+                               unchecked: list[str], now: datetime | None = None) -> dict:
+    """tracking.py: some problem types couldn't be checked for too long. Raised by the Coordinator,
+    not a detector, so the confidence is 1.0: we're sure we can't check. No stepIndex, so the
+    Alert Service keeps one incident per trip however many steps it lasts. `reason` and
+    `unchecked` are extra fields (the Alert Service ignores them) for logs and the experiment."""
+    report = _report(request_id, checkin, votes, TRACKING_LOST, 1.0, now or datetime.now(timezone.utc))
+    return {**report, "stepIndex": None, "reason": reason, "unchecked": unchecked}
 
 
 def _report(request_id: str, checkin: dict, votes: list[dict], problem_type: str | None, confidence: float,

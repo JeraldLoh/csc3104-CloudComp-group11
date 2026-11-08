@@ -16,9 +16,10 @@ A missed alert is the unsafe failure, so the rules lean towards alerting:
   2. Inconclusive: too few detectors answered to call it normal. The Coordinator asks
      the rest if some weren't asked yet (needs_more_votes).
 
+A silenced detector (reliability 0 in detector:weights, set by an operator) is ignored
+completely: neither its "problem" nor its "normal" counts, as if it hadn't answered.
 A problem vote is ignored if the detector doesn't check that type (COVERAGE), or if its weight is 0.
-weight = vote confidence x detector reliability (detector:weights, default 1.0), setting a
-faulty detector's reliability to 0 silences it. When several types are raised at once, each one
+weight = vote confidence x detector reliability (detector:weights, default 1.0). When several types are raised at once, each one
 is reported (one problem-report per type, so the caregiver gets an incident for each); the
 strongest claim (highest weight) is the decision's problem_type and comes first.
 """
@@ -65,6 +66,14 @@ def vote_weight(vote: dict, reliability: dict[str, float]) -> float:
     return _clamp(vote.get("confidence")) * max(0.0, float(reliability.get(vote.get("detectorId"), 1.0)))
 
 
+def silenced(detector: str | None, reliability: dict[str, float]) -> bool:
+    """Reliability 0 (detector:weights): an operator has switched this detector off."""
+    try:
+        return float(reliability.get(detector, 1.0)) <= 0
+    except (TypeError, ValueError):
+        return False
+
+
 def checks(detector: str | None, problem_type: str, coverage: dict[str, frozenset] = COVERAGE) -> bool:
     """Does this detector judge this kind of problem?"""
     if problem_type == UNKNOWN:
@@ -83,7 +92,9 @@ def aggregate(votes: list[dict], reliability: dict[str, float] | None = None, qu
     reliability = reliability or {}
     asked = {v.get("detectorId") for v in votes}
     can_ask_more = any(d not in asked for d in all_detectors)
-    counted = [v for v in votes if v.get("verdict") in COUNTED]
+    # Silenced detectors are left out here, so they count for neither rule below.
+    counted = [v for v in votes
+               if v.get("verdict") in COUNTED and not silenced(v.get("detectorId"), reliability)]
 
     # Rule 1: one credible problem claim is enough.
     claims = [(vote_weight(v, reliability), _type_of(v)) for v in counted

@@ -117,6 +117,20 @@ def test_zero_reliability_silences_a_faulty_detector():
     assert aggregate(votes, reliability={ROUTE: 0}).decision == "normal"
 
 
+def test_a_silenced_detectors_normal_does_not_count_either():
+    # Start of a trip: two detectors can't judge yet. Only dwell-time and the silenced
+    # route-progress say normal; one trusted answer isn't enough to call it normal.
+    votes = asked_all(v(DWELL, "normal"), v(PROGRESS, "normal"))
+    assert aggregate(votes).decision == "normal"
+    d = aggregate(votes, reliability={PROGRESS: 0})
+    assert d.decision == "inconclusive" and d.reason == "quorum" and d.counted == 1
+
+
+def test_only_silenced_detectors_answering_is_inconclusive():
+    d = aggregate(asked_all(v(ROUTE, "normal"), v(PROGRESS, "normal")), reliability={ROUTE: 0, PROGRESS: 0})
+    assert d.decision == "inconclusive" and d.counted == 0
+
+
 def test_confidence_is_the_strongest_claim():
     d = aggregate([v(ROUTE, "problem", 0.84), v(PROGRESS, "problem", 0.72)], reliability={ROUTE: 0.5})
     assert d.confidence == pytest.approx(0.72)     # 0.84 x 0.5 = 0.42 < 0.72

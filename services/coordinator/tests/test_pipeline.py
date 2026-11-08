@@ -347,7 +347,8 @@ def test_no_one_left_to_ask_records_the_inconclusive():
     world = World()
     result, state = process(world, redis)
     assert result.k == 4 and not result.escalated
-    assert result.decision["decision"] == "inconclusive" and result.decision["reason"] == "no_weight"
+    # Every detector silenced: no trusted answer at all, so too few to call it normal.
+    assert result.decision["decision"] == "inconclusive" and result.decision["reason"] == "quorum"
     assert state["decisions"][0]["decision"] == "inconclusive"
 
 
@@ -475,3 +476,97 @@ def test_custom_waiting_speed():
 def test_unknown_strategy_is_rejected():
     with pytest.raises(ValueError):
         process(World(), new_redis(keys=ROUTE_KEY), checkin=at_step(0), pair_strategy="random")
+
+
+# --- tracking lost (tracking.py) --------------------------------------------------------------------------
+
+def checkin_at(n: int, seconds: int, accuracy=90, step=2) -> dict:
+    """Check-in n, `seconds` after 08:00:00; by default with GPS too poor for any detector."""
+    return {**CHECKIN, "seq": n, "accuracyM": accuracy, "stepIndex": step,
+            "timestamp": f"2026-10-12T08:{seconds // 60:02d}:{seconds % 60:02d}Z"}
+
+
+ALL_ABSTAIN = {d: "abstain" for d in HOSTS.values()}
+TWO_MINUTES = (0, 60, 120, 130)
+
+
+def track(world, seconds=TWO_MINUTES, redis=None, **checkin):
+    """Check-ins at these times, fixed4, on a trip whose route is in Redis unless `redis` says otherwise."""
+    return process_all(world, [checkin_at(i + 1, s, **checkin) for i, s in enumerate(seconds)],
+                       redis if redis is not None else new_redis(keys=ROUTE_KEY), redundancy_mode="fixed4")
+
+
+def test_poor_gps_for_two_minutes_reports_tracking_lost_once_it_lasts():
+    world = World(detector_votes=ALL_ABSTAIN)
+    results, state = track(world)
+    assert [r.decision["decision"] for r in results] == ["inconclusive"] * 4
+    assert [r["problemType"] for r in world.reports] == ["tracking_lost", "tracking_lost"]   # from 2 min on
+    assert world.reports[0]["reason"] == "poor GPS"
+    assert world.incidents == {"U-042#T-001#tracking_lost#None"}                           # one incident
+    assert state["decisions"][0]["alerts"][0]["problemType"] == "tracking_lost"
+    assert state["decisions"][0]["unchecked"] == ["long_dwell", "missed_stop", "off_route", "wrong_direction"]
+    assert state["risk"]["level"] == "normal"   # couldn't judge: risk unchanged
+
+
+def test_shorter_poor_gps_is_not_reported():
+    world = World(detector_votes=ALL_ABSTAIN)
+    _, state = track(world, seconds=(0, 110))
+    assert world.reports == []
+    assert state["decisions"][0]["uncheckedReason"] == "poor GPS"   # counted, just not long enough yet
+
+
+def test_a_trackable_checkin_ends_the_streak():
+    redis = new_redis(keys=ROUTE_KEY)
+    track(World(detector_votes=ALL_ABSTAIN), seconds=(0,), redis=redis)
+    _, state = process_all(World(), [checkin_at(2, 60, accuracy=10)], redis, redundancy_mode="fixed4")   # normal
+    assert state["decisions"][0]["unchecked"] == [] and state["decisions"][0]["uncheckedReason"] is None
+    world = World(detector_votes=ALL_ABSTAIN)
+    process_all(world, [checkin_at(3, 150)], redis, redundancy_mode="fixed4")
+    assert world.reports == []   # the streak restarted at 150 s
+    assert asyncio.run(redis.hget("untracked:T-001", "since")) == "2026-10-12T08:02:30Z"
+
+
+def test_no_tracking_lost_on_an_underground_step():
+    tunnel = {"trip:T-001:route": json.dumps({"steps": [{"stepIndex": i, "mode": "train", "underground": None}
+                                                        for i in range(3)], "path": ROUTE["path"]})}
+    world = World(detector_votes=ALL_ABSTAIN)
+    track(world, seconds=(0, 300), redis=new_redis(keys=tunnel))
+    assert world.reports == []
+
+
+def test_one_tracking_lost_incident_per_trip_across_steps():
+    world = World(detector_votes=ALL_ABSTAIN)
+    process_all(world, [checkin_at(1, 0, step=0), checkin_at(2, 130, step=0), checkin_at(3, 200, step=1)],
+                new_redis(keys=ROUTE_KEY), redundancy_mode="fixed4")
+    assert len(world.reports) == 2 and world.incidents == {"U-042#T-001#tracking_lost#None"}
+
+
+def test_route_missing_for_two_minutes_reports_tracking_lost():
+    # Good GPS, but without the route no detector can judge anything.
+    world = World(detector_votes={d: ("abstain", "no route in Redis for this trip") for d in HOSTS.values()})
+    track(world, redis=new_redis(), accuracy=10)
+    assert [r["reason"] for r in world.reports] == ["route missing", "route missing"]
+
+
+def test_every_detector_down_for_two_minutes_reports_tracking_lost(caplog):
+    world = World(detector_votes={d: "down" for d in HOSTS.values()})
+    results, state = track(world, accuracy=10)
+    assert [r.decision["decision"] for r in results] == ["inconclusive"] * 4
+    assert [r["reason"] for r in world.reports] == ["detectors failed"] * 2
+    assert world.reports[0]["unchecked"] == ["long_dwell", "missed_stop", "off_route", "wrong_direction"]
+    assert "unchecked since 2026-10-12T08:00:00Z (detectors failed)" in caplog.text   # for whoever runs it
+
+
+def test_the_only_detector_for_a_type_down_reports_tracking_lost_while_the_rest_decide():
+    world = World(detector_votes={"dwell-time": "down"})
+    results, state = track(world, accuracy=10)
+    assert [r.decision["decision"] for r in results] == ["normal"] * 4   # the others still decide
+    assert [r["problemType"] for r in world.reports] == ["tracking_lost", "tracking_lost"]
+    assert world.reports[0]["unchecked"] == ["long_dwell"]
+    assert state["decisions"][0]["unchecked"] == ["long_dwell"]
+
+
+def test_a_type_with_another_detector_still_answering_is_not_unchecked():
+    world = World(detector_votes={"route-corridor": "down"})   # route-progress still checks off_route
+    _, state = track(world, accuracy=10)
+    assert world.reports == [] and state["decisions"][0]["unchecked"] == []

@@ -81,10 +81,14 @@ def signal(d: Decision) -> float:
 FAILURE_REASONS = ("timeout", "error:", "internal error")
 
 
+def failed(vote: dict) -> bool:
+    """An abstain that came from a failure (timeout, error), not from "can't judge yet"."""
+    return vote.get("verdict") == "abstain" and str(vote.get("reason") or "").startswith(FAILURE_REASONS)
+
+
 def detectors_failed(votes: list[dict]) -> bool:
-    """True if any abstain came from a failure (timeout, error), not from "can't judge yet"."""
-    return any(v.get("verdict") == "abstain" and str(v.get("reason") or "").startswith(FAILURE_REASONS)
-               for v in votes)
+    """True if any detector failed for this decision."""
+    return any(failed(v) for v in votes)
 
 
 def update_risk(prev: Risk, d: Decision, policy: RiskPolicy = RiskPolicy(), failed: bool = True) -> Risk:

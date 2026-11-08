@@ -41,7 +41,7 @@ This folder is how our services agree on what they send each other. If your code
 - **Units in the name:** `accuracyM` (metres), `speedMps` (metres per second), `durationS` (seconds), `batteryPct` (percent)
 - **ID prefixes:** `U-` traveller, `G-` caregiver, `R-` route, `T-` trip, `I-` incident (built from parts, see `incident.json`), `D-` disruption
 - **Unknown values:** use `null`, don't leave the field out
-- **Problem types** (used everywhere): `off_route`, `wrong_direction`, `missed_stop`, `long_dwell`, `no_response`, `help_requested`, `disruption`
+- **Problem types** (used everywhere): `off_route`, `wrong_direction`, `missed_stop`, `long_dwell`, `no_response`, `help_requested`, `disruption`, `tracking_lost`
 
 ## Changing a contract later
 
