@@ -65,15 +65,52 @@ The workflow signs in to AWS through GitHub's OIDC provider, so no access keys a
 
    If the account already has a `token.actions.githubusercontent.com` identity provider, add
    `--parameter-overrides CreateOidcProvider=false`.
-2. In GitHub, go to Settings > Secrets and variables > Actions:
-   - **Variables:** `AWS_DEPLOY_ROLE_ARN` = the ARN printed above. Without it, merges still test and
-     build but don't deploy.
-   - **Secrets:** `LOCALSTACK_AUTH_TOKEN` = the same token as in `.env`. The alert-service tests
-     run against LocalStack.
+2. In GitHub, go to Settings > Secrets and variables > Actions > **Variables:** `AWS_DEPLOY_ROLE_ARN` =
+   the ARN printed above. Without it, merges still test and build but don't deploy. No secrets are
+   needed: the tests fake AWS with moto.
+3. Create the Cognito stack (next section). The Alert, Check-in and Journey Services need it.
 
 The role can only push to `careroute-*` ECR repositories and deploy into the `careroute` namespace.
 On each new cluster it adds itself as an EKS access entry with namespace-scoped edit rights, so
 nothing needs to be re-run after a teardown.
+
+## Logins (Cognito)
+
+Issue 1.5. [`cloudformation/careroute-cognito.yaml`](cloudformation/careroute-cognito.yaml) is a Cognito
+user pool with `caregiver` and `traveller` groups. It is its own stack, so teardown keeps everyone's
+accounts, and it costs nothing at this size.
+
+- **Caregivers** sign up in the caregiver app with their email. Once the emailed code is confirmed, a
+  Lambda gives them a `G-` ID and the `caregiver` group.
+- **Travellers** can't sign up. When a caregiver adds one, the Alert Service creates their account
+  (username = their `U-` ID) and shows the caregiver a **setup code**. The traveller app asks for the
+  ID and code once. "New setup code" on the traveller's page replaces it, for a new or lost phone.
+- **Services** (Alert, Check-in, Journey) run with `AUTH_MODE=cognito` on EKS and check every request's
+  ID token: signature, issuer, expiry, app client, the `custom:userId` claim and the group.
+
+Deploy it once per AWS account:
+
+```bash
+aws cloudformation deploy --stack-name careroute-cognito \
+  --template-file cloudformation/careroute-cognito.yaml \
+  --capabilities CAPABILITY_IAM --region ap-southeast-1
+aws cloudformation describe-stacks --stack-name careroute-cognito --region ap-southeast-1 \
+  --query "Stacks[0].Outputs" --output table
+```
+
+The service deploys (`deploy --service`, GitHub Actions) read the pool ID and client ID from this
+stack, and refuse to deploy a service that needs them if it doesn't exist. For the **apps**, set
+these environment variables (in Amplify: App settings > Environment variables, then redeploy; locally,
+in `apps/<app>/.env.local`):
+
+| Variable | Value |
+|---|---|
+| `VITE_COGNITO_REGION` | `ap-southeast-1` |
+| `VITE_COGNITO_CLIENT_ID` | the `UserPoolClientId` output |
+
+Without them the apps keep their local stand-ins: the caregiver app's "Act as" box and the
+traveller app's trip link (services with `AUTH_MODE=dev` or `off`). The pool has deletion protection
+on; to delete the stack, turn it off on the pool first.
 
 ## Deploy the infrastructure
 

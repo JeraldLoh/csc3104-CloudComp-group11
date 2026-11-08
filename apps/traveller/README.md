@@ -27,7 +27,8 @@ Open **http://localhost:5173/?demo=1&debug=1**.
   - **Change route** (during a trip): pretends the caregiver changed the route (bus 190 → bus 83).
   - **Reset demo**: forgets the demo trip on this device and goes back to "Hi Alex". Only works
     with `?demo=1`, so a real trip (which may hold unsent check-ins) can never be wiped.
-- A real trip link looks like `/?trip=T-001&traveller=U-042` (until login, issue 1.5).
+- A real trip link looks like `/?trip=T-001&traveller=U-042`. With logins on (`VITE_COGNITO_*`, README "Logins (Cognito)"),
+  the phone is first set up with the traveller ID and setup code from the caregiver app.
 
 The dev server forwards `/api/checkins` to the Check-in Service on `localhost:8001`, so start
 that first (see `services/checkin-service/README.md`). `/api/help` goes to port 8005 and
@@ -188,5 +189,6 @@ and nothing else, and the Help button never moves. Status messages are calm and 
   Until Profiles (M5) exists it sends `travellerName` and the caregiver's name and phone as `null`; the app
   accepts that, greets with "Hi there", and the Help sheet has no Call button (it tells the traveller to ask
   someone nearby if help can't get through).
-- Login: issue 1.5. `HttpTransport` already takes a `getToken` function for it.
+- Login (issue 1.5, `src/auth`): every request carries the signed-in traveller's token, refreshed when the phone
+  comes back online. A token refused anyway (401/403) stops sending until the phone is set up again.
 - Actually deploying to Amplify needs the team's AWS account (steps above).

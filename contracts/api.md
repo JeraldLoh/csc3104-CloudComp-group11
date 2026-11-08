@@ -69,14 +69,14 @@ Scenarios: `normal`, `missed_stop`, `wrong_direction`, `long_dwell`, `silence`, 
 | POST | `/api/incidents/{incidentId}/ack` | — | updated `incident.json` |
 | POST | `/api/incidents/{incidentId}/resolve` | — | updated `incident.json` |
 | GET | `/api/stream` | — | Live events (SSE), each one is `alert-event.json`, `arrival-event.json` or `where-event.json` |
-| POST | `/api/arrived` | `{"tripId": "T-001", "travellerId": "U-042"}` | `{"tripId", "arrivedAt"}`: the traveller pressed "I've arrived". Safe to repeat; only the first call tells caregivers. No login needed until Cognito |
-| POST | `/api/help` | `{"tripId": "T-001", "travellerId": "U-042", "stepIndex": 2, "lat": 1.40, "lng": 103.90}` | `{"incidentId": "..."}`: an urgent `help_requested` incident. Only `tripId` is required; the trip's check-in context fills in the rest. No login needed until Cognito |
+| POST | `/api/arrived` | `{"tripId": "T-001", "travellerId": "U-042"}` | `{"tripId", "arrivedAt"}`: the traveller pressed "I've arrived". Safe to repeat; only the first call tells caregivers. With Cognito, only the traveller |
+| POST | `/api/help` | `{"tripId": "T-001", "travellerId": "U-042", "stepIndex": 2, "lat": 1.40, "lng": 103.90}` | `{"incidentId": "..."}`: an urgent `help_requested` incident. Only `tripId` is required; the trip's check-in context fills in the rest. With Cognito, only the traveller |
 | POST | `/api/travellers/{travellerId}/where-are-you` | — | `202` the question (`requestId`, `askedBy`, `askedAt`, `status`, `answer`, `answeredAt`, `lat`, `lng`). One waits at a time; asking again returns it |
 | GET | `/api/travellers/{travellerId}/where-are-you` | — | the latest question, waiting or answered, or `null` |
-| GET | `/api/where-are-you?travellerId=U-042` | — | from the phone: the question waiting for an answer, or `null`. No login needed until Cognito |
+| GET | `/api/where-are-you?travellerId=U-042` | — | from the phone: the question waiting for an answer, or `null`. With Cognito, only the traveller |
 | POST | `/api/where-are-you/reply` | `{"travellerId", "requestId", "answer": "ok" \| "help", "lat", "lng"}` | the answered question. Safe to repeat: only the first reply counts. "help" is also sent as `POST /api/help` by the phone |
 | POST | `/api/devices` | `{"token": "<firebase token>"}` | `201` `{"registered": true, "pushEnabled": bool}`: a caregiver's browser, for urgent alerts by push. Safe to repeat |
-| POST | `/api/devices/traveller` | `{"travellerId": "U-042", "token": "<firebase token>"}` | `201`, as above: the traveller's phone, for "Where are you?" by push. No login needed until Cognito |
+| POST | `/api/devices/traveller` | `{"travellerId": "U-042", "token": "<firebase token>"}` | `201`, as above: the traveller's phone, for "Where are you?" by push. With Cognito, only the traveller |
 
 ## Profiles (Member 5)
 
@@ -84,7 +84,8 @@ Scenarios: `normal`, `missed_stop`, `wrong_direction`, `long_dwell`, `silence`, 
 |---|---|---|---|
 | GET | `/api/travellers` | — | caregiver's linked travellers |
 | GET | `/api/travellers/live` | — | `{"U-042": {"tripId", "stepIndex", "status", "lastSeenAt", "arrivedAt", "lat", "lng", "accuracyM", "batteryPct", "trail": [[lat, lng], ...]}}`: the caller's travellers with a check-in in the last 30 minutes |
-| POST | `/api/travellers` | `{"name": "Alex", "preferences": {...}}` | `201` traveller (new `U-` id); the caller is linked to them |
+| POST | `/api/travellers` | `{"name": "Alex", "preferences": {...}}` | `201` traveller (new `U-` id); the caller is linked to them. With Cognito also `"login": {"username": "U-1A2B3C", "setupCode": "k7mq-4rtx-9cwe"}` (the phone's login, shown once), or `"login": null` if it couldn't be made |
+| POST | `/api/travellers/{travellerId}/login` | — | `{"username", "setupCode"}`: a new setup code for the traveller's phone; the old one stops working and the traveller is signed out everywhere. A linked caregiver only. `409 logins_off` without Cognito |
 | DELETE | `/api/travellers/{travellerId}` | — | `{"travellerId", "removed": true, "profileDeleted": bool}`: off the caller's list; profile and safe locations deleted if no caregiver is left |
 | GET / POST | `/api/travellers/{travellerId}/safe-locations` | `{"name": "Home", "lat": ..., "lng": ...}` | safe locations / `201` the new one |
 | GET | `/api/travellers/{travellerId}/caregivers` | — | list of caregiver IDs linked to the traveller, sorted; the caller must be one of them |
@@ -97,7 +98,7 @@ can't tell the traveller exists. A link is made when a caregiver adds a travelle
 linked to them (`POST /api/links`), so nobody can attach themselves to a stranger. A traveller can read their
 own safe locations.
 
-**Login:** as for the Journey Service (`AUTH_MODE`): `X-Dev-User: G-003` locally, Cognito later. A browser's
+**Login:** as for the Journey Service (`AUTH_MODE`): `X-Dev-User: G-003` locally, Cognito ID tokens on AWS (issue 1.5, README "Logins (Cognito)"). A browser's
 `EventSource` can't send headers, so `/api/stream` also takes `?devUser=G-003` or `?token=<JWT>`.
 
 ## Journey Service (Member 6)

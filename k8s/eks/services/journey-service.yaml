@@ -33,7 +33,12 @@ spec:
             - { name: PACKS_BUCKET, value: "__FILES_BUCKET__" }   # packs go under packs/
             - { name: ONEMAP_MODE, value: "live" }
             - { name: LTA_MODE, value: "live" }
-            - { name: AUTH_MODE, value: "off" }
+            # Logins (issue 1.5): Cognito tokens from the careroute-cognito stack, whose IDs the deploy fills in.
+            # Never "dev" here: it would let anyone claim to be anyone.
+            - { name: AUTH_MODE, value: "cognito" }
+            - { name: COGNITO_REGION, value: "__REGION__" }
+            - { name: COGNITO_USER_POOL_ID, value: "__COGNITO_USER_POOL_ID__" }
+            - { name: COGNITO_CLIENT_ID, value: "__COGNITO_CLIENT_ID__" }
             - name: LTA_API_KEY
               valueFrom: { secretKeyRef: { name: journey-api-keys, key: LTA_API_KEY, optional: true } }
             - name: ONEMAP_API_KEY

@@ -51,8 +51,19 @@ class Settings:
     reconcile_batch: int = field(default_factory=lambda: int(os.getenv("RECONCILE_BATCH", "100")))
     # Leader lease length. Another replica takes over within about this + one interval.
     leader_lease_ms: int = field(default_factory=lambda: int(os.getenv("LEADER_LEASE_MS", "45000")))
-    # Login (Cognito, issue 1.5) isn't built yet. When true, a Bearer token is required.
-    auth_required: bool = field(default_factory=lambda: _bool("AUTH_REQUIRED", False))
+    # Who is sending (auth.py, issue 1.5); same settings as the Alert and Journey Services. AUTH_MODE: "off" = nobody
+    # is checked (the default), "dev" = trust an X-Dev-User header (local testing only), "cognito" = verify the
+    # traveller's Cognito JWT. With a login, a traveller can only send their own check-ins.
+    auth_mode: str = field(default_factory=lambda: os.getenv("AUTH_MODE", "off").strip().lower())
+    auth_id_claim: str = field(default_factory=lambda: os.getenv("AUTH_ID_CLAIM", "custom:userId"))
+    auth_role_claim: str = field(default_factory=lambda: os.getenv("AUTH_ROLE_CLAIM", "cognito:groups"))
+    auth_caregiver_group: str = field(default_factory=lambda: os.getenv("AUTH_CAREGIVER_GROUP", "caregiver"))
+    auth_traveller_group: str = field(default_factory=lambda: os.getenv("AUTH_TRAVELLER_GROUP", "traveller"))
+    auth_token_use: str = field(default_factory=lambda: os.getenv("AUTH_TOKEN_USE", "id").strip().lower())
+    cognito_region: str = field(default_factory=lambda: os.getenv("COGNITO_REGION", ""))
+    cognito_user_pool_id: str = field(default_factory=lambda: os.getenv("COGNITO_USER_POOL_ID", ""))
+    cognito_client_id: str = field(default_factory=lambda: os.getenv("COGNITO_CLIENT_ID", ""))
+    cognito_jwks_url: str = field(default_factory=lambda: os.getenv("COGNITO_JWKS_URL", ""))
 
 
 settings = Settings()

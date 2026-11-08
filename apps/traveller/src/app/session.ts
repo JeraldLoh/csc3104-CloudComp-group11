@@ -1,4 +1,4 @@
-// Which trip this phone is following. Until login exists (issue 1.5), the caregiver
+// Which trip this phone is following. The caregiver
 // shares a link like  https://<app>/?trip=T-001&traveller=U-042  and the phone remembers it.
 import type { Session } from "../types";
 

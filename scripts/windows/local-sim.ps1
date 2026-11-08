@@ -172,7 +172,9 @@ Run kubectl @("config", "use-context", "kind-$Cluster")
 if ($Setup) { Build-Images }
 Initialize-Secret
 Start-Stack
-foreach ($port in $Health.Keys) { Wait-Url "http://localhost:$port/health" $Health[$port] }
+# 127.0.0.1, not localhost: Windows PowerShell tries ::1 first, kind only listens on IPv4, and every check
+# would time out before falling back
+foreach ($port in $Health.Keys) { Wait-Url "http://127.0.0.1:$port/health" $Health[$port] }
 $app = Start-App
 
 try {

@@ -530,6 +530,12 @@ Resources:
                 Resource:
                   - !Sub arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ResourcePrefix}-*
                   - !Sub arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ResourcePrefix}-*/index/*
+              # The Alert Service makes a traveller's login when a caregiver adds them (issue 1.5). The pool lives in
+              # its own stack (careroute-cognito.yaml) and its ID is random, so this names any pool in the account.
+              - Effect: Allow
+                Action: [cognito-idp:AdminCreateUser, cognito-idp:AdminSetUserPassword, cognito-idp:AdminAddUserToGroup,
+                         cognito-idp:AdminUserGlobalSignOut, cognito-idp:AdminDeleteUser]
+                Resource: !Sub arn:${AWS::Partition}:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/*
 
   # -------------------------- CloudWatch Observability --------------------------
   # Container Insights: cluster-level CPU, memory, network metrics per pod.

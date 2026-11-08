@@ -36,9 +36,12 @@ spec:
             - { name: AWS_DEFAULT_REGION, value: "__REGION__" }
             - { name: DISRUPTIONS_QUEUE_URL, value: "__DISRUPTIONS_QUEUE_URL__" }
             - { name: CREATE_RESOURCES, value: "false" }   # the platform stack creates the tables and queue
-            # "off" until Cognito (issue 1.5) exists, as for the Journey Service; then "cognito" + COGNITO_* settings.
-            # Never "dev" here: it would let anyone claim to be any caregiver.
-            - { name: AUTH_MODE, value: "off" }
+            # Logins (issue 1.5): Cognito tokens from the careroute-cognito stack, whose IDs the deploy fills in.
+            # Never "dev" here: it would let anyone claim to be anyone.
+            - { name: AUTH_MODE, value: "cognito" }
+            - { name: COGNITO_REGION, value: "__REGION__" }
+            - { name: COGNITO_USER_POOL_ID, value: "__COGNITO_USER_POOL_ID__" }
+            - { name: COGNITO_CLIENT_ID, value: "__COGNITO_CLIENT_ID__" }
             # Push notifications (issue 5.4): the Firebase key from the firebase-service-account Secret, made from
             # secrets/firebase-service-account.json (never in Git). Without the Secret the pod still starts, with push off.
             - { name: FIREBASE_CREDENTIALS, value: /secrets/firebase/service-account.json }

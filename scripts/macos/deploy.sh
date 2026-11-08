@@ -17,6 +17,7 @@
 #                                 __REDIS_ENDPOINT__ __CHECKINS_QUEUE_URL__
 #                                 __DISRUPTIONS_QUEUE_URL__ __FILES_BUCKET__
 #                                 __ALB_SG_ID__ __ROLE_ARN__
+#                                 __COGNITO_USER_POOL_ID__ __COGNITO_CLIENT_ID__
 # The image goes to ECR repository careroute-NAME (created if missing).
 # __ROLE_ARN__ is read from the stack output <Name>RoleArn (e.g. checkin-service ->
 # CheckinServiceRoleArn), in the platform stack or any other stack in the region.
@@ -115,6 +116,16 @@ deploy_service() {
     info "Role: $role_arn"
   fi
 
+  # Logins (issue 1.5): the user pool lives in its own stack, kept between teardowns.
+  cognito_pool=""; cognito_client=""
+  if grep -q '__COGNITO_' "$manifest"; then
+    cognito_stack="careroute-cognito"
+    cognito_pool="$(aws cloudformation describe-stacks --stack-name "$cognito_stack" --region "$REGION"       --query "Stacks[0].Outputs[?OutputKey=='UserPoolId'].OutputValue" --output text 2>/dev/null || true)"
+    cognito_client="$(aws cloudformation describe-stacks --stack-name "$cognito_stack" --region "$REGION"       --query "Stacks[0].Outputs[?OutputKey=='UserPoolClientId'].OutputValue" --output text 2>/dev/null || true)"
+    [ -n "$cognito_pool" ] && [ -n "$cognito_client" ]       || die "$name needs the Cognito stack $cognito_stack (logins). Deploy it once: README, 'Logins (Cognito)'"
+    info "User pool: $cognito_pool"
+  fi
+
   # Created outside the stack, like the S3 bucket; teardown.sh removes careroute-* repos.
   step "[$name] Ensuring ECR repository $repo exists"
   if aws ecr describe-repositories --repository-names "$repo" --region "$REGION" >/dev/null 2>&1; then
@@ -139,7 +150,7 @@ deploy_service() {
       -e "s|__DISRUPTIONS_QUEUE_URL__|$(sed_value "$DISRUPTIONS_QUEUE_URL")|g" \
       -e "s|__FILES_BUCKET__|$(sed_value "$FILES_BUCKET")|g" \
       -e "s|__ALB_SG_ID__|$(sed_value "$ALB_SG_ID")|g" \
-      -e "s|__ROLE_ARN__|$(sed_value "$role_arn")|g" \
+      -e "s|__ROLE_ARN__|$(sed_value "$role_arn")|g"       -e "s|__COGNITO_USER_POOL_ID__|$(sed_value "$cognito_pool")|g"       -e "s|__COGNITO_CLIENT_ID__|$(sed_value "$cognito_client")|g" \
       "$manifest" > "$rendered"
   # A misspelled or unsupported placeholder would otherwise reach the cluster as
   # literal text. YAML comments are skipped, since they may mention placeholders.
