@@ -8,7 +8,7 @@ Service) is measured separately by Member 2 in [`evaluation/`](../README.md).
 | | Question | Compares | Status |
 |---|---|---|---|
 | **C1** | How many problems does the final decision catch, how late, and how many false alarms does it raise? | the Coordinator's decision vs each detector on its own | done ([RESULTS.md](RESULTS.md)) |
-| **C2** | Does the decision stay correct when one detector is slow (over 500 ms), wrong or down? | no fault vs each fault, and a wrong detector with its reliability set to 0 | planned |
+| **C2** | Does the decision stay correct when one detector is slow (over 500 ms), wrong or down? | no fault vs each fault, and a wrong detector with its reliability set to 0 | running |
 | **C3** | How long does a decision take as the check-in rate grows? | p50 / p95 decision time at increasing check-ins per second | planned |
 | **C4** | Is any check-in lost or decided twice, or any alert repeated, when a Coordinator replica is killed mid-run? | no crash vs a replica killed | planned |
 | **C5** | What does asking fewer detectors save, and what does it cost? | `fixed4` (deployed) vs `adaptive` (2 at normal risk) | optional |
@@ -21,8 +21,15 @@ Service) is measured separately by Member 2 in [`evaluation/`](../README.md).
   `contracts/problem-definitions.md`.
 - **Everything else is the real code**, on the local stack (`services/analysis-dev`): the
   Coordinator, the 4 detectors and the Alert Service, with ElasticMQ for SQS, Redis and DynamoDB
-  Local. C2 swaps in the fake detectors (`compose.fakes.yaml`), which can be made slow, wrong or
-  down while they run.
+  Local.
+- **C2 breaks one real detector at a time.** `compose.c2.yaml` puts a fault switch (our
+  `services/fault-switch`) in front of each real detector. Normally it passes
+  the real vote on unchanged; `run.py` tells one switch to be *slow* (2 s, over the 500 ms
+  timeout), *dead* (every request fails), or *wrong* (the real vote inverted), and for *wrong,
+  silenced* also sets that detector's reliability to 0. The same journeys as C1 are replayed for
+  each of the 17 conditions, 8 journeys at a time (a slow detector costs 500 ms per check-in).
+  `run.py` stops if a fault doesn't show in the votes, so it can't silently measure a healthy
+  stack.
 - **The results come from the system itself.** Every decision is logged in Redis
   (`decisions:recent`: votes, latency, k, decision, incident). Alerts are read back from the
   Alert Service (`/api/incidents`). Each is compared with the simulator's labels.
@@ -47,6 +54,10 @@ From the repo root, with the local stack up in `fixed4` (the default):
 docker compose -f services/analysis-dev/compose.yaml up --build -d
 pip install -r evaluation/coordinator/requirements.txt
 python evaluation/coordinator/run.py C1           # about 2 minutes; --seeds 1 for a quick check
+
+# C2 needs the fault switches too (restarts the Coordinator pointing at them):
+docker compose -f services/analysis-dev/compose.yaml -f evaluation/coordinator/compose.c2.yaml up --build -d
+python evaluation/coordinator/run.py C2           # about 45 minutes; --seeds 1 takes about 15
 python evaluation/coordinator/analyse.py          # -> results/summary.json and RESULTS.md
 python -m pytest evaluation/coordinator/tests     # the scoring definitions (no stack needed)
 ```

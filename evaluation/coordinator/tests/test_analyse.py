@@ -97,12 +97,20 @@ def test_summary_counts_alerts_from_the_alert_service():
     journeys = [{**off_route_journey(), "incidents": [{"problemType": "off_route"}]},
                 {"scenario": "normal", "rows": [row(0, "normal")], "incidents": [{"problemType": "long_dwell"}]}]
     s = c1({"runId": "t", "seeds": 1, "journeys": journeys})
-    assert s["alerts"] == {"withoutProblem": {"journeys": 1, "falseAlerts": 1},
-                           "cases": {"off_route": {"journeys": 1, "rightType": 1, "anyAlert": 1}}}
+    assert s["alerts"]["withoutProblem"] == {"journeys": 1, "falseAlerts": 1}
+    assert s["alerts"]["cases"] == {"off_route": {"journeys": 1, "rightType": 1, "anyAlert": 1}}
     assert s["judges"]["combined"]["problems"]["off_route"] == {"journeys": 1, "detected": 1, "medianDelayS": 20.0,
                                                                 "medianAnyDelayS": 20.0}
     assert s["judges"]["route-progress"]["problems"]["off_route"]["detected"] == 0
     assert "off_route" not in s["judges"]["dwell-time"]["problems"]
+
+
+def test_tracking_lost_is_not_a_false_alert():
+    poor = {"scenario": "poor_gps", "rows": [row(0, "abstain", "inconclusive")],
+            "incidents": [{"problemType": "tracking_lost"}]}
+    s = c1({"runId": "t", "seeds": 1, "journeys": [poor]})
+    assert s["alerts"]["withoutProblem"] == {"journeys": 1, "falseAlerts": 0}
+    assert s["alerts"]["trackingLost"] == {"poor_gps": [1, 1]}
 
 
 def test_near_leg_journeys_are_scored_as_their_own_case():
@@ -112,3 +120,34 @@ def test_near_leg_journeys_are_scored_as_their_own_case():
     assert set(s["judges"]["combined"]["problems"]) == {"off_route_near"}
     assert s["judges"]["route-corridor"]["problems"]["off_route_near"]["detected"] == 1
     assert s["alerts"]["cases"] == {"off_route_near": {"journeys": 1, "rightType": 0, "anyAlert": 1}}
+
+
+def test_c2_scores_each_condition_like_c1():
+    from analyse import c2
+    healthy = [{**off_route_journey(), "incidents": [{"problemType": "off_route"}]},
+               {"scenario": "normal", "rows": [row(0, "normal")], "incidents": []}]
+    broken = [{**off_route_journey(), "incidents": []},
+              {"scenario": "normal", "rows": [row(0, "normal")], "incidents": [{"problemType": "off_route"}]}]
+    s = c2({"runId": "t", "seeds": 1, "parallel": 8, "conditions": [
+        {"fault": "healthy", "detector": None, "journeys": healthy},
+        {"fault": "wrong", "detector": "route-corridor", "journeys": broken}]})
+    ok, bad = s["conditions"]
+    assert ok["caught"] == {"off_route": [1, 1]} and ok["alerted"] == [1, 1] and ok["falseAlerts"] == 0
+    assert bad["alerted"] == [0, 1] and bad["falseAlerts"] == 1 and bad["detector"] == "route-corridor"
+    assert ok["outageNoticed"] == [0, 2]   # nothing broken, nothing to notice
+
+
+def test_c2_outage_noticed_counts_tracking_lost_from_failed_detectors_but_not_from_poor_gps():
+    from analyse import c2
+    outage = row(0, "long_dwell", "normal")
+    outage["decision"].update(uncheckedReason="detectors failed", alerts=[{"problemType": "tracking_lost"}])
+    poor_gps = row(0, "abstain", "inconclusive")
+    poor_gps["decision"].update(uncheckedReason="poor GPS", alerts=[{"problemType": "tracking_lost"}])
+    s = c2({"runId": "t", "seeds": 1, "parallel": 8, "conditions": [
+        {"fault": "dead", "detector": "dwell-time", "journeys": [
+            {"scenario": "long_dwell", "rows": [outage], "incidents": [{"problemType": "tracking_lost"}]},
+            {"scenario": "poor_gps", "rows": [poor_gps], "incidents": [{"problemType": "tracking_lost"}]}]}]})
+    [dead] = s["conditions"]
+    assert dead["outageNoticed"] == [1, 2]   # the poor-GPS tracking_lost isn't an outage
+    # the dwell itself is still missed (its only detector is dead), but the caregiver was told
+    assert dead["caught"] == {"long_dwell": [0, 1]} and dead["alerted"] == [1, 1] and dead["falseAlerts"] == 0

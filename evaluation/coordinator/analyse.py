@@ -43,6 +43,7 @@ COVERS = {
     "route-progress": {"off_route", "wrong_direction"},
 }
 NOT_PROBLEMS = {"normal", "abstain"}
+TRACKING_LOST = "tracking_lost"   # raised by the Coordinator itself after 2 min of types it couldn't check
 
 
 def answer(row: dict, judge: str) -> tuple[str, set]:
@@ -125,14 +126,19 @@ def c1(data: dict) -> dict:
             "noAnswerRate": round(sum(s["noAnswer"] for s in scores) / checkins, 4),
             "problems": per_problem,
         }
-    # What caregivers actually got: the Alert Service's incidents per journey.
-    alerts = {"withoutProblem": {"journeys": 0, "falseAlerts": 0}, "cases": {}}
+    # What caregivers actually got: the Alert Service's incidents per journey. tracking_lost ("we
+    # can't fully check on them": poor GPS, detectors failed or route missing for 2 min) is counted
+    # on its own, per scenario: on poor_gps journeys it's the right answer, not a false alert.
+    alerts = {"withoutProblem": {"journeys": 0, "falseAlerts": 0}, "cases": {}, "trackingLost": {}}
     for j in journeys:
         problem = next((r["expected"] for r in j["rows"] if r["expected"] in PROBLEMS), None)
         types = {i["problemType"] for i in j["incidents"]}
+        lost = alerts["trackingLost"].setdefault(j.get("scenario") or "?", [0, 0])
+        lost[0] += TRACKING_LOST in types
+        lost[1] += 1
         if problem is None:
             alerts["withoutProblem"]["journeys"] += 1
-            alerts["withoutProblem"]["falseAlerts"] += len(j["incidents"])
+            alerts["withoutProblem"]["falseAlerts"] += sum(i["problemType"] != TRACKING_LOST for i in j["incidents"])
         else:
             c = alerts["cases"].setdefault(j.get("case") or problem, {"journeys": 0, "rightType": 0, "anyAlert": 0})
             c["journeys"] += 1
@@ -193,14 +199,74 @@ def c1_markdown(s: dict) -> str:
             c = a["cases"][case]
             lines.append(f"| {CASE_NAMES[case]} | {c['journeys']} | {c['rightType']} | {c['anyAlert']} |")
     w = a["withoutProblem"]
-    lines += ["", f"Journeys without a problem: {w['falseAlerts']} alerts on {w['journeys']} journeys."]
+    lines += ["", f"Journeys without a problem: {w['falseAlerts']} alerts on {w['journeys']} journeys "
+                  "(not counting *tracking lost*)."]
+    if a.get("trackingLost"):
+        lines.append("*Tracking lost* (some problem types couldn't be checked for 2 min) raised on: " +
+                     ", ".join(f"{sc} {n}/{total}" for sc, (n, total) in a["trackingLost"].items()) + " journeys.")
     if s["endToEndMs"]:
         lines.append(f"Check-in on the queue to decision recorded: p50 {s['endToEndMs']['p50']:.0f} ms, "
                      f"p95 {s['endToEndMs']['p95']:.0f} ms (one machine, light load; C3 measures load).")
     return "\n".join(lines)
 
 
-ANALYSES = {"C1": (c1, c1_markdown)}
+def outage_noticed(journey: dict) -> bool:
+    """The Coordinator told the caregiver it couldn't check (tracking_lost) because detectors failed."""
+    return any((r["decision"] or {}).get("uncheckedReason") == "detectors failed"
+               and any(a.get("problemType") == TRACKING_LOST for a in (r["decision"] or {}).get("alerts") or [])
+               for r in journey["rows"])
+
+
+def c2(data: dict) -> dict:
+    """Each condition scored exactly like C1; one row per condition."""
+    rows = []
+    for cond in data["conditions"]:
+        s = c1({"runId": data["runId"], "seeds": data["seeds"], "journeys": cond["journeys"]})
+        combined = s["judges"]["combined"]["problems"]
+        cases = s["alerts"]["cases"]
+        rows.append({
+            "fault": cond["fault"], "detector": cond["detector"],
+            "caught": {c: [combined[c]["detected"], combined[c]["journeys"]] for c in CASES if c in combined},
+            "delayS": {c: combined[c]["medianDelayS"] for c in CASES if c in combined},
+            "alerted": [sum(c["anyAlert"] for c in cases.values()), sum(c["journeys"] for c in cases.values())],
+            "falseAlerts": s["alerts"]["withoutProblem"]["falseAlerts"],
+            "journeysWithoutProblem": s["alerts"]["withoutProblem"]["journeys"],
+            "outageNoticed": [sum(outage_noticed(j) for j in cond["journeys"]), len(cond["journeys"])],
+            "falseAlarmRate": s["judges"]["combined"]["falseAlarmRate"],
+            "undecided": s["undecided"], "endToEndMs": s["endToEndMs"],
+        })
+    return {"runId": data["runId"], "seeds": data["seeds"], "parallel": data["parallel"], "conditions": rows}
+
+
+def c2_markdown(s: dict) -> str:
+    lines = ["## C2: the Coordinator's decision with one detector broken",
+             "",
+             f"Run `{s['runId']}`: the C1 journeys ({s['seeds']} per scenario) replayed once per condition, "
+             f"{s['parallel']} journeys at a time. Each fault is put on one real detector by a switch in front "
+             "of it (`compose.c2.yaml`): *slow* answers after 2 s (the Coordinator waits 500 ms), *dead* fails "
+             "every request, *wrong* inverts the real vote (problem ↔ normal), *wrong, silenced* is wrong with "
+             "its reliability set to 0 in `detector:weights`. Caught = journeys where the Coordinator raised the "
+             "right problem; alerted = journeys with a problem that got any alert (*tracking lost* included); "
+             "outage noticed = journeys where the caregiver was told *tracking lost* because detectors failed "
+             "(every detector for a type down for 2 min); false alerts = incidents other than *tracking lost* on "
+             "the journeys without a problem; p95 = check-in on the queue to decision recorded.",
+             "",
+             "| Fault | Detector | " + " | ".join(CASE_NAMES[c] for c in CASES) +
+             " | alerted | outage noticed | false alerts | false alarm rate | p95 |",
+             "|---|---|" + "---|" * len(CASES) + "---|---|---|---|---|"]
+    for r in s["conditions"]:
+        caught = [f"{r['caught'][c][0]}/{r['caught'][c][1]}" if c in r["caught"] else "–" for c in CASES]
+        p95 = f"{r['endToEndMs']['p95']:.0f} ms" if r["endToEndMs"] else "–"
+        lines.append(f"| {r['fault']} | {r['detector'] or 'all healthy'} | " + " | ".join(caught) +
+                     f" | {r['alerted'][0]}/{r['alerted'][1]} | {r['outageNoticed'][0]}/{r['outageNoticed'][1]}"
+                     f" | {r['falseAlerts']}/{r['journeysWithoutProblem']} "
+                     f"| {r['falseAlarmRate']:.1%} | {p95} |")
+    undecided = sum(r["undecided"] for r in s["conditions"])
+    lines += ["", f"Check-ins not decided in any condition: {undecided}."]
+    return "\n".join(lines)
+
+
+ANALYSES = {"C1": (c1, c1_markdown), "C2": (c2, c2_markdown)}
 
 
 def newest(experiment: str) -> Path | None:

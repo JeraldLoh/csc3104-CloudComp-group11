@@ -30,6 +30,11 @@ COORDINATOR_URL = os.getenv("COORDINATOR_URL", "http://localhost:8000")
 ALERT_URL = os.getenv("ALERT_SERVICE_URL", "http://localhost:8004")
 QUEUE = os.getenv("CHECKINS_QUEUE", "careroute-checkins")
 TTL_S = 86400
+DETECTORS = ("route-corridor", "heading-speed", "dwell-time", "route-progress")
+# C2's fault switches (compose.c2.yaml), one in front of each real detector.
+SWITCH_URLS = {"route-corridor": "http://localhost:9101", "dwell-time": "http://localhost:9102",
+               "heading-speed": "http://localhost:9103", "route-progress": "http://localhost:9104"}
+WEIGHTS_KEY = "detector:weights"
 
 
 def get_json(url: str, timeout: float = 5):
@@ -102,6 +107,23 @@ class Stack:
 
     def incidents(self, traveller: str) -> list[dict]:
         return get_json(f"{ALERT_URL}/api/incidents?travellerId={traveller}")
+
+    def switch(self, detector: str, **control) -> dict:
+        """Set one detector's fault switch, e.g. switch("dwell-time", mode="error")."""
+        req = urllib.request.Request(f"{SWITCH_URLS[detector]}/control", data=json.dumps(control).encode(),
+                                     headers={"content-type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                return json.load(resp)
+        except OSError as e:
+            raise SystemExit(f"no fault switch for {detector} at {SWITCH_URLS[detector]} ({e}): start the stack "
+                             "with evaluation/coordinator/compose.c2.yaml")
+
+    def set_weight(self, detector: str, reliability: float) -> None:
+        self.redis.hset(WEIGHTS_KEY, detector, reliability)
+
+    def clear_weights(self) -> None:
+        self.redis.delete(WEIGHTS_KEY)
 
 
 def play(stack: Stack, checkins: list[dict], timeout_s: float = 10) -> list[dict]:
