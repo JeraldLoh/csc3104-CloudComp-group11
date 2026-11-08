@@ -2,8 +2,11 @@
 import os
 from dataclasses import dataclass, field
 
+from .detectors import parse_urls
 from .risk import RiskPolicy
-from .selection import DEFAULT_PAIR, parse_urls
+
+# The experiment's pair at normal risk with PAIR_STRATEGY=fixed (adaptive.py).
+DEFAULT_PAIR = ("route-corridor", "dwell-time")
 
 
 def _bool(name: str, default: bool) -> bool:
@@ -27,26 +30,20 @@ class Settings:
     create_queue: bool = field(default_factory=lambda: _bool("CREATE_QUEUE", False))
 
     # fixed4 by default: every check-in is checked by every detector, because a missed alert is the
-    # unsafe failure. adaptive and fixed2 stay for the experiment (adaptive vs fixed4).
+    # unsafe failure. adaptive and fixed2 are the experiment's other arms (see the end of this class).
     redundancy_mode: str = field(default_factory=lambda: os.getenv("REDUNDANCY_MODE", "fixed4"))
-    # Which pair at normal risk: "step" (fits the journey step) or "fixed" (NORMAL_PAIR always).
-    pair_strategy: str = field(default_factory=lambda: os.getenv("PAIR_STRATEGY", "step"))
-    # On a bus/train step, slower than this counts as waiting at the stop, faster as riding.
-    waiting_below_mps: float = field(default_factory=lambda: float(os.getenv("WAITING_BELOW_MPS", "2.0")))
-    normal_pair: tuple[str, ...] = field(default_factory=lambda: tuple(
-        d.strip() for d in os.getenv("NORMAL_PAIR", ",".join(DEFAULT_PAIR)).split(",") if d.strip()))
     detector_urls: dict = field(default_factory=lambda: parse_urls(os.getenv("DETECTOR_URLS", "")))
     # contracts/api.md: detectors must answer within 500 ms.
     detector_timeout_s: float = field(default_factory=lambda: float(os.getenv("DETECTOR_TIMEOUT_MS", "500")) / 1000)
     # Real (non-abstain) votes needed to call a check-in normal (one is enough for a problem);
-    # fewer -> ask the remaining detectors too.
+    # fewer -> inconclusive (adaptive / fixed2: ask the remaining detectors too).
     quorum: int = field(default_factory=lambda: int(os.getenv("QUORUM", "2")))
 
     # contracts/api.md: http://alert-service:8000 inside the cluster.
     alert_url: str = field(default_factory=lambda: os.getenv("ALERT_SERVICE_URL", "http://alert-service:8000").rstrip("/"))
     alert_timeout_s: float = field(default_factory=lambda: _float("ALERT_TIMEOUT_S", "3"))
 
-    # Risk (risk.py): 2 or 4 detectors next, in adaptive mode.
+    # Risk (risk.py): shown on the dashboard; in adaptive mode it also picks 2 or 4 detectors.
     risk: RiskPolicy = field(default_factory=lambda: RiskPolicy(
         alpha=_float("RISK_ALPHA", "0.5"),
         escalate_at=_float("RISK_ESCALATE_AT", "0.4"),
@@ -68,6 +65,14 @@ class Settings:
     decisions_recent: int = field(default_factory=lambda: int(os.getenv("DECISIONS_RECENT", "200")))
     max_messages: int = field(default_factory=lambda: int(os.getenv("MAX_MESSAGES", "10")))
     consumer_enabled: bool = field(default_factory=lambda: _bool("CONSUMER_ENABLED", True))
+
+    # --- experiment only (REDUNDANCY_MODE adaptive / fixed2, evaluation C5; adaptive.py) ---------
+    # Which pair at normal risk: "step" (fits the journey step) or "fixed" (NORMAL_PAIR always).
+    pair_strategy: str = field(default_factory=lambda: os.getenv("PAIR_STRATEGY", "step"))
+    # On a bus/train step, slower than this counts as waiting at the stop, faster as riding.
+    waiting_below_mps: float = field(default_factory=lambda: float(os.getenv("WAITING_BELOW_MPS", "2.0")))
+    normal_pair: tuple[str, ...] = field(default_factory=lambda: tuple(
+        d.strip() for d in os.getenv("NORMAL_PAIR", ",".join(DEFAULT_PAIR)).split(",") if d.strip()))
 
 
 settings = Settings()

@@ -1,15 +1,9 @@
 import json
 import pytest
 
-from app.selection import (
-    ALL_DETECTORS,
-    DEFAULT_PAIR,
-    choose_detectors,
-    counted_votes,
-    needs_escalation,
-    parse_urls,
-    remaining,
-)
+from app.adaptive import choose_detectors, counted_votes, needs_escalation, remaining
+from app.config import DEFAULT_PAIR
+from app.detectors import ALL_DETECTORS, parse_urls
 
 
 def vote(verdict: str) -> dict:
@@ -117,7 +111,7 @@ def test_missing_url_is_rejected():
 
 # --- step-aware pairs -------------------------------------------------------------------------
 
-from app.selection import RIDING_PAIR, UNKNOWN_STEP_PAIR, WAITING_PAIR, WALKING_PAIR, pair_for_step, step_mode  # noqa: E402
+from app.adaptive import RIDING_PAIR, UNKNOWN_STEP_PAIR, WAITING_PAIR, WALKING_PAIR, pair_for_step, step_mode  # noqa: E402
 
 ROUTE = json.dumps({"steps": [{"stepIndex": 0, "mode": "walk"}, {"stepIndex": 1, "mode": "Bus"}], "path": []})
 

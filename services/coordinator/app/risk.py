@@ -1,5 +1,6 @@
-"""Per-traveller risk score: decides whether 2 or 4 detectors are asked next (adaptive mode).
-Pure functions, no I/O. Stored in Redis as risk:{travellerId} (contracts/redis-keys.md).
+"""Per-traveller risk score. Pure functions, no I/O. Stored in Redis as risk:{travellerId}
+(contracts/redis-keys.md) and shown on the dashboard. In fixed4 (the default) that's all it does;
+in adaptive mode (the experiment, adaptive.py) it also decides whether 2 or 4 detectors are asked next.
 
 After every final decision the score moves towards a signal (exponential moving average):
 

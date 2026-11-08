@@ -1,7 +1,11 @@
-"""Which detectors to ask about a check-in. Pure functions, no I/O.
+"""The experiment (evaluation C5): asking fewer detectors. Not used in fixed4, the default.
 
-k = 2 when the traveller's risk is normal, k = 4 (every detector) when it's elevated
-(adaptive mode).
+REDUNDANCY_MODE picks the arm; pipeline.py calls ask_pair_first() for any mode but fixed4:
+
+    adaptive   k = 2 when the traveller's risk is normal, k = 4 (every detector) when elevated
+    fixed2     k = 2 always
+
+Either way, too few real votes, or still undecided, asks the remaining detectors too.
 
 Which pair is asked at k = 2 depends on PAIR_STRATEGY:
 
@@ -13,18 +17,17 @@ Which pair is asked at k = 2 depends on PAIR_STRATEGY:
            A bus/train step covers both waiting at the stop and riding, so the check-in's
            speed tells them apart.
     fixed  the same pair for every check-in (NORMAL_PAIR, default route-corridor + dwell-time).
+
+The pair choice and escalation rules are pure functions; ask_pair_first() does the calls.
 """
 import json
+import logging
 
-# detectorId (contracts/examples/detector-vote.json) -> service name (contracts/api.md)
-DETECTOR_SERVICES = {
-    "route-corridor": "detector-route",
-    "heading-speed": "detector-heading",
-    "dwell-time": "detector-dwell",
-    "route-progress": "detector-progress",
-}
-ALL_DETECTORS = tuple(DETECTOR_SERVICES)
-DEFAULT_PAIR = ("route-corridor", "dwell-time")
+from .config import DEFAULT_PAIR, Settings
+from .detectors import ALL_DETECTORS, DetectorClient
+from .voting import Decision
+
+log = logging.getLogger("coordinator")
 
 MODES = ("adaptive", "fixed2", "fixed4")
 STRATEGIES = ("step", "fixed")
@@ -89,13 +92,46 @@ def remaining(already_called: list[str]) -> list[str]:
     return [d for d in ALL_DETECTORS if d not in already_called]
 
 
-def parse_urls(spec: str) -> dict[str, str]:
-    """DETECTOR_URLS="route-corridor=http://a:8000,dwell-time=http://b:8000" -> dict.
-    Detectors not listed use their in-cluster service name."""
-    urls = {d: f"http://{svc}:8000" for d, svc in DETECTOR_SERVICES.items()}
-    for part in filter(None, (p.strip() for p in spec.split(","))):
-        name, _, url = part.partition("=")
-        if name.strip() not in DETECTOR_SERVICES or not url.strip():
-            raise ValueError(f"bad DETECTOR_URLS entry {part!r}")
-        urls[name.strip()] = url.strip().rstrip("/")
-    return urls
+async def pair_for(redis, s: Settings, checkin: dict) -> tuple[tuple[str, ...], str]:
+    """The pair to ask at normal risk, and why (PAIR_STRATEGY)."""
+    if s.pair_strategy not in STRATEGIES:
+        raise ValueError(f"unknown PAIR_STRATEGY {s.pair_strategy!r}; expected one of {STRATEGIES}")
+    if s.pair_strategy == "fixed":
+        return s.normal_pair, "fixed"
+    # The step comes with the check-in; its mode from the trip's route (Journey Service).
+    route = await redis.get(f"trip:{checkin['tripId']}:route")
+    mode = step_mode(route, checkin.get("stepIndex"))
+    return pair_for_step(mode, checkin.get("speedMps"), s.waiting_below_mps)
+
+
+async def ask_pair_first(detectors: DetectorClient, decisions, redis, s: Settings, checkin: dict,
+                         risk_level: str, request: dict) -> tuple[list[dict], Decision, bool, str | None]:
+    """adaptive / fixed2: a pair first, then the rest if the pair can't decide.
+    Returns (votes, decision, escalated, situation); situation is why that pair (None = all asked)."""
+    request_id = request["requestId"]
+    asked = choose_detectors(risk_level, s.redundancy_mode, s.normal_pair)
+    situation = None
+    if len(asked) == 2:   # a pair, not everyone: pick the one that fits the journey step
+        pair, situation = await pair_for(redis, s, checkin)
+        asked = choose_detectors(risk_level, s.redundancy_mode, pair)
+    votes = await detectors.call_many(asked, request)
+    escalated = False
+
+    # Too few real votes: no point deciding yet.
+    if needs_escalation(votes, s.quorum):
+        extra = remaining(asked)
+        log.info("escalating %s: too few real votes, asking %s", request_id, extra)
+        votes += await detectors.call_many(extra, request)
+        asked += extra
+        escalated = True
+
+    d = await decisions.decide(votes)
+
+    # Still can't call it (e.g. the answers carry no weight): more evidence instead of a guess.
+    extra = remaining(asked)
+    if d.needs_more_votes and extra:
+        log.info("escalating %s: %s, asking %s", request_id, d.reason, extra)
+        votes += await detectors.call_many(extra, request)
+        escalated = True
+        d = await decisions.decide(votes)
+    return votes, d, escalated, situation

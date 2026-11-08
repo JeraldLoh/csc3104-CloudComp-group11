@@ -1,4 +1,5 @@
-"""Calls detectors: POST http://detector-<name>:8000/internal/detect (contracts/api.md).
+"""The detectors: which exist, where they are, and calling them:
+POST http://detector-<name>:8000/internal/detect (contracts/api.md).
 
 All chosen detectors are called at the same time, so a decision waits for the slowest
 one, not the sum. Each call has an overall deadline (500 ms by contract): httpx's own
@@ -17,6 +18,27 @@ import httpx
 log = logging.getLogger("coordinator.detectors")
 
 VERDICTS = {"problem", "normal", "abstain"}
+
+# detectorId (contracts/examples/detector-vote.json) -> service name (contracts/api.md)
+DETECTOR_SERVICES = {
+    "route-corridor": "detector-route",
+    "heading-speed": "detector-heading",
+    "dwell-time": "detector-dwell",
+    "route-progress": "detector-progress",
+}
+ALL_DETECTORS = tuple(DETECTOR_SERVICES)
+
+
+def parse_urls(spec: str) -> dict[str, str]:
+    """DETECTOR_URLS="route-corridor=http://a:8000,dwell-time=http://b:8000" -> dict.
+    Detectors not listed use their in-cluster service name."""
+    urls = {d: f"http://{svc}:8000" for d, svc in DETECTOR_SERVICES.items()}
+    for part in filter(None, (p.strip() for p in spec.split(","))):
+        name, _, url = part.partition("=")
+        if name.strip() not in DETECTOR_SERVICES or not url.strip():
+            raise ValueError(f"bad DETECTOR_URLS entry {part!r}")
+        urls[name.strip()] = url.strip().rstrip("/")
+    return urls
 
 
 def abstain(request_id: str, detector_id: str, reason: str, latency_ms: int) -> dict:

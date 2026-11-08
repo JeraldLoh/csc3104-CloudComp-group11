@@ -25,7 +25,7 @@ strongest claim (highest weight) is the decision's problem_type and comes first.
 """
 from dataclasses import dataclass
 
-from .selection import ALL_DETECTORS
+from .detectors import ALL_DETECTORS
 
 COUNTED = {"problem", "normal"}
 UNKNOWN = "unknown"             # a "problem" vote without a type

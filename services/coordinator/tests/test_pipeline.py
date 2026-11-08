@@ -13,7 +13,7 @@ from app.decision import RECENT_DECISIONS_KEY, WEIGHTS_KEY, DecisionRecorder, de
     traveller_decisions_key
 from app.detectors import DetectorClient
 from app.pipeline import Pipeline
-from app.selection import parse_urls
+from app.detectors import parse_urls
 
 CONTRACTS = Path(__file__).resolve().parents[3] / "contracts" / "examples"
 CHECKIN = json.loads((CONTRACTS / "checkin.json").read_text())        # T-001, seq 17, U-042, step 2

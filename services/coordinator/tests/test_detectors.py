@@ -7,7 +7,7 @@ from pathlib import Path
 import httpx
 
 from app.detectors import DetectorClient
-from app.selection import parse_urls
+from app.detectors import parse_urls
 
 CONTRACTS = Path(__file__).resolve().parents[3] / "contracts" / "examples"
 REQUEST = json.loads((CONTRACTS / "detector-request.json").read_text())
