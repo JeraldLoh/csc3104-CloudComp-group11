@@ -79,37 +79,35 @@ Observed with the real detectors (route-corridor needs 3 usable check-ins before
 | `docker compose stop alert-service`, send 3 off-route, `docker compose start alert-service` | `not processed, it will be retried` (`ConnectError`); ≤30 s after it's back, `decided` and the incident exists |
 | `docker compose stop detector-route`, send on-route | route-corridor `abstain` (`error: ConnectError`), k=4, the other three still decide |
 
-## Fault demos (fake detectors)
+## Faulty detectors on demand (fault switches)
 
 The real detectors can be stopped (`docker compose stop detector-route`), but they never
-answer slowly or wrongly. For that, run the same stack with fake detectors instead (`compose.fakes.yaml` replaces the
-four detector services; only one of each runs):
+answer slowly or wrongly. For that, add a fault switch (`services/fault-switch`) in front of each
+real detector; the Coordinator then calls the switches, which pass the real votes on:
 
 ```bash
-docker compose -f services/analysis-dev/compose.yaml -f services/analysis-dev/compose.fakes.yaml up --build -d
+docker compose -f services/analysis-dev/compose.yaml -f evaluation/coordinator/compose.c2.yaml up --build -d
 ```
 
-The fakes answer at once (no history needed) and take orders while they run:
+Each switch takes orders while it runs (the evaluation's C2 uses the same switches):
 
 ```bash
-curl -X POST localhost:9001/control -H 'Content-Type: application/json' -d '{"delayMs":2000}'  # route-corridor slow
-curl -X POST localhost:9001/control -H 'Content-Type: application/json' -d '{"mode":"wrong"}'  # route-corridor faulty
-curl -X POST localhost:9001/control -H 'Content-Type: application/json' -d '{"mode":"auto","delayMs":0}'  # back to normal
+curl -X POST localhost:9102/control -H 'Content-Type: application/json' -d '{"delayMs":2000}'  # dwell-time slow
+curl -X POST localhost:9102/control -H 'Content-Type: application/json' -d '{"mode":"wrong"}'   # dwell-time faulty
+curl -X POST localhost:9102/control -H 'Content-Type: application/json' -d '{"mode":"error"}'   # dwell-time dead
+curl -X POST localhost:9102/control -H 'Content-Type: application/json' -d '{"mode":"pass","delayMs":0}'  # back to normal
 ```
 
-Modes: `normal`, `problem`, `auto` (problem when outside the demo area), `wrong`, `abstain`, `error`.
-Ports: route 9001, dwell 9002, heading 9003, progress 9004.
+Modes: `pass` (the real vote), `wrong` (the real vote inverted), `error` (HTTP 500); `delayMs` on top.
+Ports: route 9101, dwell 9102, heading 9103, progress 9104.
 
 | Do | Expect in the logs |
 |---|---|
-| `send --seq 1` | `k=2 ... -> normal`, no incident |
-| `send --seq 2 --off-route` | `-> problem` (any detector that checks off_route saying so is enough), `ALERT`, risk `elevated` |
-| `send --seq 3` | `k=4` (risk is elevated) |
-| `send --seq 2 --off-route` again | `skip T-001#2: already decided`, no new incident |
-| 3 more on-route check-ins | risk back to `normal`, then `k=2` again |
-| detector-route `delayMs: 2000`, then send | `abstained ... (timeout, 501 ms)`, escalates, still decides |
+| dwell-time `delayMs: 2000`, then send | dwell-time `abstained ... (timeout, 501 ms)`, the other three still decide |
+| dwell-time `mode: error` for 2 min of check-ins | decisions still `normal`, then `long_dwell unchecked ... (detectors failed)` and a `tracking_lost` incident |
+| dwell-time `mode: wrong` | dwell-time votes `problem` on a moving traveller: a false `long_dwell` alert |
 
-To go back to the real detectors, run `compose.yaml` on its own again.
+To go back to calling the real detectors directly, run `compose.yaml` on its own again.
 
 ## Experiment modes
 

@@ -66,10 +66,10 @@
   <div class="row" id="services"><span class="group">Services</span>
     <span id="no-services" class="count">stop/start needs the Docker socket (see compose.yaml)</span></div>
   <div class="row">
-    <span class="group" title="Only when started with compose.fakes.yaml">Fakes only</span>
-    <button data-fault='{"target":"detector-route","delayMs":2000}' title="Needs the fake detectors"><span class="sq warn"></span>route-corridor slow</button>
-    <button data-fault='{"target":"detector-route","mode":"wrong"}' title="Needs the fake detectors"><span class="sq bad"></span>route-corridor faulty</button>
-    <button data-fault='{"target":"detector-route","mode":"auto","delayMs":0}' title="Needs the fake detectors"><span class="sq ok"></span>route-corridor normal</button>
+    <span class="group" title="Only when started with evaluation/coordinator/compose.c2.yaml">Fault switches</span>
+    <button data-fault='{"target":"detector-route","delayMs":2000}' title="Needs the fault switches"><span class="sq warn"></span>route-corridor slow</button>
+    <button data-fault='{"target":"detector-route","mode":"wrong"}' title="Needs the fault switches"><span class="sq bad"></span>route-corridor faulty</button>
+    <button data-fault='{"target":"detector-route","mode":"pass","delayMs":0}' title="Needs the fault switches"><span class="sq ok"></span>route-corridor normal</button>
     <span class="group" style="margin-left:12px">Other</span>
     <button id="dup">Send duplicate</button>
     <button id="reset">Reset demo</button>

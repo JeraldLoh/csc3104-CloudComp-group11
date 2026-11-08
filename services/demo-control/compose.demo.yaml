@@ -4,7 +4,7 @@
 #   docker compose -f services/analysis-dev/compose.yaml -f services/demo-control/compose.demo.yaml up --build -d
 #   open http://localhost:8005
 #
-# With the fake detectors too, add -f services/analysis-dev/compose.fakes.yaml.
+# For the Fault switches buttons, add -f evaluation/coordinator/compose.c2.yaml before this file.
 
 services:
   demo-control:

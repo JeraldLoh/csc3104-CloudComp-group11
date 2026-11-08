@@ -3,8 +3,8 @@
 #   docker compose -f services/analysis-dev/compose.yaml up --build -d
 #   docker compose -f services/analysis-dev/compose.yaml run --rm send --seq 1
 #
-# Fault demos with fake detectors instead (see compose.fakes.yaml):
-#   docker compose -f services/analysis-dev/compose.yaml -f services/analysis-dev/compose.fakes.yaml up --build -d
+# Detectors that misbehave on demand (a fault switch in front of each, services/fault-switch):
+#   docker compose -f services/analysis-dev/compose.yaml -f evaluation/coordinator/compose.c2.yaml up --build -d
 #
 # See README.md in this folder.
 name: careroute-analysis
@@ -53,8 +53,7 @@ services:
 
   # --- The detectors (Member 4): one image, DETECTOR_ID picks the detector ---------------
   # Service names match contracts/api.md, so the Coordinator finds them without extra config.
-  # For fault demos (slow / wrong / failing detectors on demand), swap in the fakes:
-  #   docker compose -f compose.yaml -f compose.fakes.yaml up -d
+  # For slow / wrong / failing detectors on demand, add the fault switches (evaluation/coordinator/compose.c2.yaml).
 
   detector-route:
     <<: *detector

@@ -7,8 +7,9 @@ GET  /api/demo/status       scenarios, whether one is running, last seq sent
 POST /api/demo/run          {"scenario": "walk"}  sends that scenario's check-ins, one every INTERVAL_S
 POST /api/demo/duplicate    sends the last check-in again (same seq: the Coordinator skips it)
 POST /api/demo/service      {"target": "alert-service", "action": "stop" | "start"}
-                            stops or starts that container (real or fake), through the Docker socket
-POST /api/demo/fault        {"target": "detector-route", "delayMs": 2000}   (fake detectors only)
+                            stops or starts that container, through the Docker socket
+POST /api/demo/fault        {"target": "detector-route", "delayMs": 2000}   sent to the fault switch in
+                            front of that detector (only when started with compose.c2.yaml)
 POST /api/demo/reset        clears Redis, re-seeds the trip, clears the Alert Service's incidents
 
 It stands in for the Check-in Service (Member 2) the same way send_checkin.py does: it writes
@@ -36,8 +37,12 @@ logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(asctime)s %(
 log = logging.getLogger("demo-control")
 
 PAGE = Path(__file__).parent / "static" / "demo.html"
-# Services the panel may stop or start, or (fakes only) send fault orders to. Compose service names.
-FAULT_TARGETS = {"alert-service", "detector-route", "detector-heading", "detector-dwell", "detector-progress"}
+# Services the panel may stop or start. Compose service names.
+SERVICE_TARGETS = {"alert-service", "detector-route", "detector-heading", "detector-dwell", "detector-progress"}
+# Detectors the panel may send fault orders to, and the fault switch in front of each
+# (services/fault-switch, evaluation/coordinator/compose.c2.yaml): the real detector stays behind it.
+SWITCHES = {"detector-route": "switch-route", "detector-heading": "switch-heading",
+            "detector-dwell": "switch-dwell", "detector-progress": "switch-progress"}
 SERVICE_LABEL = "com.docker.compose.service"
 
 
@@ -140,14 +145,14 @@ class DemoControl:
         return checkin
 
     async def fault(self, target: str, body: dict) -> tuple[int, dict]:
-        """Flip a fake's /control switch. Real detectors have none (404)."""
+        """Set the fault switch in front of this detector. No switch: the stack runs without them."""
+        switch = SWITCHES[target]
         try:
-            r = await self.http.post(f"http://{target}:8000/control", json=body, timeout=3)
-        except httpx.HTTPError as e:
-            return 502, {"error": {"code": "unreachable", "message": f"{target}: {type(e).__name__}"}}
-        if r.status_code == 404:
-            return 409, {"error": {"code": "not_a_fake",
-                                   "message": f"{target} is the real service; start the fakes to use this"}}
+            r = await self.http.post(f"http://{switch}:8000/control", json=body, timeout=3)
+        except httpx.HTTPError:
+            return 409, {"error": {"code": "no_switch",
+                                   "message": f"no fault switch in front of {target}: start the stack with "
+                                              "evaluation/coordinator/compose.c2.yaml to use this"}}
         return r.status_code, r.json()
 
     async def _containers(self) -> dict[str, list[dict]]:
@@ -169,7 +174,7 @@ class DemoControl:
         except httpx.HTTPError:
             return {}
         return {name: ("running" if any(c["State"] == "running" for c in found[name]) else found[name][0]["State"])
-                for name in sorted(FAULT_TARGETS) if name in found}
+                for name in sorted(SERVICE_TARGETS) if name in found}
 
     async def switch(self, target: str, action: str) -> tuple[int, dict]:
         """Stop or start a service's container(s): a real outage, not a simulated one."""
@@ -300,7 +305,7 @@ def create_app(control: DemoControl | None = None, s: Settings | None = None) ->
 
     @app.post("/api/demo/service")
     async def service(body: ServiceBody, request: Request):
-        if body.target not in FAULT_TARGETS:
+        if body.target not in SERVICE_TARGETS:
             return error(404, "unknown_target", f"can't control {body.target!r}")
         if body.action not in ("stop", "start"):
             return error(422, "invalid_request", "action is stop or start")
@@ -309,9 +314,9 @@ def create_app(control: DemoControl | None = None, s: Settings | None = None) ->
 
     @app.post("/api/demo/fault")
     async def fault(body: FaultBody, request: Request):
-        if body.target not in FAULT_TARGETS:
-            return error(404, "unknown_target", f"can't control {body.target!r}")
-        payload = {k: v for k, v in {"mode": body.mode, "delayMs": body.delayMs}.items() if v is not None}
+        if body.target not in SWITCHES:
+            return error(404, "unknown_target", f"can't send faults to {body.target!r}")
+        payload ={k: v for k, v in {"mode": body.mode, "delayMs": body.delayMs}.items() if v is not None}
         if not payload:
             return error(422, "invalid_request", "give mode or delayMs")
         code, result = await request.app.state.control.fault(body.target, payload)
