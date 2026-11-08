@@ -24,6 +24,7 @@ MESSAGES = {
     "no_response": "{name}'s phone has stopped responding.",
     "help_requested": "{name} has asked for help.",
     "disruption": "{name}'s journey is affected by a service disruption.",
+    "tracking_lost": "We can't fully check on {name} right now. You may want to ask them where they are.",
     "unknown": "Something may be wrong on {name}'s journey.",
 }
 

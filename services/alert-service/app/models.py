@@ -11,7 +11,7 @@ CAREGIVER_ID = r"^G-[A-Za-z0-9]{1,40}$"
 # detectors agree something is wrong but none says what. Rejecting it would lose the alert.
 ProblemType = Literal[
     "off_route", "wrong_direction", "missed_stop", "long_dwell", "no_response", "help_requested", "disruption",
-    "unknown",
+    "tracking_lost", "unknown",
 ]
 
 
