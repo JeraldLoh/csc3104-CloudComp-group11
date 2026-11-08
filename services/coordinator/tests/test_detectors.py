@@ -5,9 +5,9 @@ import time
 from pathlib import Path
 
 import httpx
+import pytest
 
-from app.detectors import DetectorClient
-from app.detectors import parse_urls
+from app.detectors import ALL_DETECTORS, DetectorClient, parse_urls
 
 CONTRACTS = Path(__file__).resolve().parents[3] / "contracts" / "examples"
 REQUEST = json.loads((CONTRACTS / "detector-request.json").read_text())
@@ -151,3 +151,35 @@ def test_abstain_vote_has_the_contract_fields():
     votes, _ = run({"detector-route": raises(httpx.ConnectError("down")), "detector-dwell": answers(vote())}, PAIR)
     assert set(votes[0]) == set(VOTE)
     assert votes[0]["requestId"] == "T-001#17"
+
+
+# --- which detectors exist and where (DETECTOR_URLS) ------------------------------------------
+
+def test_four_detectors_with_route_progress():
+    assert ALL_DETECTORS == ("route-corridor", "heading-speed", "dwell-time", "route-progress")
+
+
+def test_default_urls_use_service_names_from_the_contract():
+    urls = parse_urls("")
+    assert urls == {
+        "route-corridor": "http://detector-route:8000",
+        "heading-speed": "http://detector-heading:8000",
+        "dwell-time": "http://detector-dwell:8000",
+        "route-progress": "http://detector-progress:8000",
+    }
+
+
+def test_override_one_url_and_strip_trailing_slash():
+    urls = parse_urls(" route-corridor = http://localhost:9001/ ")
+    assert urls["route-corridor"] == "http://localhost:9001"
+    assert urls["dwell-time"] == "http://detector-dwell:8000"
+
+
+def test_unknown_detector_in_urls_is_rejected():
+    with pytest.raises(ValueError):
+        parse_urls("speed-detector=http://x:8000")
+
+
+def test_missing_url_is_rejected():
+    with pytest.raises(ValueError):
+        parse_urls("route-corridor=")
