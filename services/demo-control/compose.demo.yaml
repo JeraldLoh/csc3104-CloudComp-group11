@@ -1,0 +1,33 @@
+# Demo panel (local only, not committed): adds demo-control to the analysis-dev stack.
+# Run from the repo root; paths below are relative to services/analysis-dev (the first file):
+#
+#   docker compose -f services/analysis-dev/compose.yaml -f services/demo-control/compose.demo.yaml up --build -d
+#   open http://localhost:8005
+#
+# With the fake detectors too, add -f services/analysis-dev/compose.fakes.yaml.
+
+services:
+  demo-control:
+    build: ../demo-control
+    image: careroute-demo-control:dev
+    environment:
+      AWS_ENDPOINT_URL: http://elasticmq:9324   # local SQS
+      AWS_DEFAULT_REGION: ap-southeast-1
+      AWS_ACCESS_KEY_ID: local
+      AWS_SECRET_ACCESS_KEY: local
+      REDIS_URL: redis://redis:6379/0
+      CHECKINS_QUEUE: careroute-checkins
+      ROUTE_FILE: /tools/route.json
+      DASHBOARD_URL: http://localhost:8001/dashboard
+      DYNAMODB_ENDPOINT_URL: http://dynamodb:8000   # Reset demo clears the incidents here
+    # The Docker socket lets the panel's Services buttons stop and start containers of this stack
+    # (real outages). Local only: whoever holds the socket controls Docker, hence root.
+    user: root
+    volumes:
+      - ../../contracts/examples/route.json:/tools/route.json:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports: ["127.0.0.1:8005:8000"]
+    depends_on:
+      redis: { condition: service_healthy }
+      elasticmq: { condition: service_started }
+

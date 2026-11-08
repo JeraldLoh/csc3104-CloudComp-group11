@@ -13,7 +13,8 @@
       "underground": false,
       "photoUrl": "media/R-007/step0.jpg",
       "audioUrl": "media/R-007/step0.mp3",
-      "backup": null
+      "backup": null,
+      "landmarks": []
     },
     {
       "stepIndex": 1,
@@ -24,7 +25,8 @@
       "underground": false,
       "photoUrl": "media/R-007/step1.jpg",
       "audioUrl": "media/R-007/step1.mp3",
-      "backup": "If bus 190 does not come in 20 minutes, take bus 83 from the same stop."
+      "backup": "If bus 190 does not come in 20 minutes, take bus 83 from the same stop.",
+      "landmarks": [{"name": "Waterway Point", "photoUrl": "media/streetview/v2/1.40640_103.90220.jpg"}]
     }
   ],
   "path": [

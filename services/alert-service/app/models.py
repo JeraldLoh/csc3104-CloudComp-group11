@@ -1,8 +1,11 @@
 """Request bodies, matching contracts/examples/."""
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+TRAVELLER_ID = r"^U-[A-Za-z0-9]{1,40}$"  # contracts/README.md: U- traveller, G- caregiver
+CAREGIVER_ID = r"^G-[A-Za-z0-9]{1,40}$"
 
 # contracts/README.md: problem types used everywhere, plus "unknown": the Aggregator sends it when
 # detectors agree something is wrong but none says what. Rejecting it would lose the alert.
@@ -34,6 +37,50 @@ class ProblemReport(BaseModel):
     location: Location | None = None
     batteryPct: int | None = None
     timestamp: datetime  # when the problem was detected
+
+
+# The traveller app's own rule (session.ts), which also allows hyphens: anything it sends must be accepted.
+PHONE_TRAVELLER_ID = r"^U-[A-Za-z0-9-]+$"
+
+
+class ArrivalRequest(BaseModel):
+    """POST /api/arrived, from the traveller's phone when they press "I've arrived"."""
+
+    tripId: str = Field(min_length=1, max_length=64)
+    travellerId: str | None = Field(default=None, pattern=PHONE_TRAVELLER_ID, max_length=64)
+
+
+class NewDevice(BaseModel):
+    """POST /api/devices: a caregiver's browser, for push notifications (a Firebase registration token)."""
+
+    token: str = Field(min_length=20, max_length=4096)
+
+
+class TravellerDevice(NewDevice):
+    """POST /api/devices/traveller: the traveller's phone, which has no login yet."""
+
+    travellerId: str = Field(pattern=PHONE_TRAVELLER_ID, max_length=64)
+
+
+class WhereReply(BaseModel):
+    """POST /api/where-are-you/reply, from the traveller's phone. "help" also goes through POST /api/help on the phone,
+    so this only tells the caregiver what they answered. lat and lng aren't range checked, as for Help."""
+
+    travellerId: str = Field(pattern=PHONE_TRAVELLER_ID, max_length=64)
+    requestId: str = Field(min_length=1, max_length=32)
+    answer: Literal["ok", "help"]
+    lat: float | None = None
+    lng: float | None = None
+
+
+class HelpRequest(ArrivalRequest):
+    """POST /api/help, from the traveller's phone. Only tripId has to be there: an older queued request has no
+    travellerId or stepIndex, and the Check-in Service's trip context fills them in. lat and lng aren't range
+    checked, because a 422 would make the phone give up and a bad GPS reading must not lose the request."""
+
+    stepIndex: int | None = None
+    lat: float | None = None
+    lng: float | None = None
 
 
 class Disruption(BaseModel):
@@ -70,3 +117,27 @@ class Disruption(BaseModel):
             "affectedStations": self.affectedStations,
             "message": self.message,
         }
+
+
+# ---------------------------------------------------------------------------- profiles (issue 5.1)
+class NewTraveller(BaseModel):
+    """POST /api/travellers. The calling caregiver is linked to the new traveller automatically."""
+
+    name: str = Field(min_length=1, max_length=80)
+    preferences: dict[str, Any] = {}
+
+
+class NewLink(BaseModel):
+    """POST /api/links: add another caregiver to a traveller. Only a caregiver already linked to the
+    traveller may do this, so nobody can link themselves to a stranger and see their alerts."""
+
+    travellerId: str = Field(pattern=TRAVELLER_ID)
+    caregiverId: str = Field(pattern=CAREGIVER_ID)
+
+
+class NewSafeLocation(BaseModel):
+    """POST /api/travellers/{travellerId}/safe-locations, e.g. Home or School."""
+
+    name: str = Field(min_length=1, max_length=60)
+    lat: float = Field(ge=-90, le=90)
+    lng: float = Field(ge=-180, le=180)

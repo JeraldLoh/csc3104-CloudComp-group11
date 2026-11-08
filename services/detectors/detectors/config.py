@@ -32,6 +32,8 @@ class Settings(BaseModel):
     dwell_radius_m: float = Field(default=30, gt=0)
     dwell_walk_s: int = Field(default=300, gt=0)
     dwell_transit_s: int = Field(default=1200, gt=0)
+    # this close to the stop where the next step boards counts as waiting for it
+    dwell_stop_m: float = Field(default=50, gt=0)
 
     # route progress also uses corridor_m corridor_consecutive and walk_max_speed_mps
     # less than this on top of gps accuracy is not progress

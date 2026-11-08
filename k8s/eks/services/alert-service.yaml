@@ -24,6 +24,9 @@ spec:
           whenUnsatisfiable: ScheduleAnyway
           labelSelector:
             matchLabels: { app: alert-service }
+      volumes:
+        - name: firebase
+          secret: { secretName: firebase-service-account, optional: true }
       containers:
         - name: alert-service
           image: __IMAGE__
@@ -33,6 +36,14 @@ spec:
             - { name: AWS_DEFAULT_REGION, value: "__REGION__" }
             - { name: DISRUPTIONS_QUEUE_URL, value: "__DISRUPTIONS_QUEUE_URL__" }
             - { name: CREATE_RESOURCES, value: "false" }   # the platform stack creates the tables and queue
+            # "off" until Cognito (issue 1.5) exists, as for the Journey Service; then "cognito" + COGNITO_* settings.
+            # Never "dev" here: it would let anyone claim to be any caregiver.
+            - { name: AUTH_MODE, value: "off" }
+            # Push notifications (issue 5.4): the Firebase key from the firebase-service-account Secret, made from
+            # secrets/firebase-service-account.json (never in Git). Without the Secret the pod still starts, with push off.
+            - { name: FIREBASE_CREDENTIALS, value: /secrets/firebase/service-account.json }
+          volumeMounts:
+            - { name: firebase, mountPath: /secrets/firebase, readOnly: true }
             # No AWS_ENDPOINT_URL and no keys: boto3 uses real AWS and the service account's role.
           # Fargate sizes the pod from requests (minimum 0.25 vCPU / 0.5 GB).
           resources:

@@ -4,4 +4,8 @@ resources:
   - redis.yaml
   - localstack.yaml
   - fastapi.yaml
+  - checkin-service.yaml
+  - alert-service.yaml
+  - heartbeat-monitor.yaml
   - journey-service.yaml
+  - easyread-service.yaml

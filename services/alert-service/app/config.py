@@ -27,8 +27,36 @@ class Settings:
     disruptions_queue_url: str | None = field(default_factory=lambda: os.getenv("DISRUPTIONS_QUEUE_URL") or None)
     disruptions_consumer_enabled: bool = field(default_factory=lambda: _bool("DISRUPTIONS_CONSUMER_ENABLED", True))
 
+    # The Firebase service account key file (push.py). Empty or missing = no push notifications.
+    firebase_credentials: str = field(default_factory=lambda: os.getenv("FIREBASE_CREDENTIALS", ""))
+
+    # Escalation (escalation.py): an urgent alert still open this long after it opened, or after its last
+    # escalation, is sent again, up to ESCALATE_MAX times. Checked every ESCALATION_CHECK_S.
+    escalation_enabled: bool = field(default_factory=lambda: _bool("ESCALATION_ENABLED", True))
+    escalate_after_s: int = field(default_factory=lambda: int(os.getenv("ESCALATE_AFTER_S", "120")))
+    escalate_max: int = field(default_factory=lambda: int(os.getenv("ESCALATE_MAX", "3")))
+    escalation_check_s: float = field(default_factory=lambda: float(os.getenv("ESCALATION_CHECK_S", "15")))
+    escalate_within_s: int = field(default_factory=lambda: int(os.getenv("ESCALATE_WITHIN_S", "3600")))  # recent only
+
+    # A trip counts as live until its last check-in is this old (live.py).
+    live_window_s: int = field(default_factory=lambda: int(os.getenv("LIVE_WINDOW_S", "1800")))
+
     # Create the tables and queue on startup. Local only: on AWS the platform stack already has them.
     create_resources: bool = field(default_factory=lambda: _bool("CREATE_RESOURCES", False))
+
+    # Who is calling (auth.py). Same settings as the Journey Service, so both services identify callers alike.
+    # AUTH_MODE: "off" = nobody is checked (the default), "dev" = trust an X-Dev-User header (local testing
+    # only, never deploy it), "cognito" = verify a Cognito JWT (issue 1.5).
+    auth_mode: str = field(default_factory=lambda: os.getenv("AUTH_MODE", "off").strip().lower())
+    auth_id_claim: str = field(default_factory=lambda: os.getenv("AUTH_ID_CLAIM", "custom:userId"))
+    auth_role_claim: str = field(default_factory=lambda: os.getenv("AUTH_ROLE_CLAIM", "cognito:groups"))
+    auth_caregiver_group: str = field(default_factory=lambda: os.getenv("AUTH_CAREGIVER_GROUP", "caregiver"))
+    auth_traveller_group: str = field(default_factory=lambda: os.getenv("AUTH_TRAVELLER_GROUP", "traveller"))
+    auth_token_use: str = field(default_factory=lambda: os.getenv("AUTH_TOKEN_USE", "id").strip().lower())
+    cognito_region: str = field(default_factory=lambda: os.getenv("COGNITO_REGION", ""))
+    cognito_user_pool_id: str = field(default_factory=lambda: os.getenv("COGNITO_USER_POOL_ID", ""))
+    cognito_client_id: str = field(default_factory=lambda: os.getenv("COGNITO_CLIENT_ID", ""))
+    cognito_jwks_url: str = field(default_factory=lambda: os.getenv("COGNITO_JWKS_URL", ""))
 
 
 settings = Settings()

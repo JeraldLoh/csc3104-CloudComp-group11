@@ -1,6 +1,16 @@
 from dataclasses import dataclass
 
-from detectors.common import TRANSIT_MODES, abstain, abstain_reason, confidence, step_at, usable_checkins, vote
+from detectors.common import (
+    TRANSIT_MODES,
+    abstain,
+    abstain_reason,
+    confidence,
+    place_point,
+    step_at,
+    step_ranges,
+    usable_checkins,
+    vote
+)
 from detectors.geo import cumulative_m, haversine_m, project_onto_path
 from detectors.models import CheckIn
 
@@ -24,27 +34,6 @@ class _Fix:
     @property
     def accuracy_m(self):
         return self.checkin.accuracy_m or 0.0
-
-
-# lat lng of a stop or None
-def _point(place):
-    try:
-        return float(place["lat"]), float(place["lng"])
-    except (TypeError, KeyError, ValueError):
-        return None
-
-
-# start and end along the path per step and end is None without a stop
-def _step_ranges(steps, path, cum):
-    ranges = []
-    start = 0.0
-    for step in steps:
-        to = _point(step.get("to")) if isinstance(step, dict) else None
-        end = project_onto_path(to, path, cum, lo_m=start)[0] if to else None
-        ranges.append((start, end))
-        if end is not None:
-            start = end
-    return ranges
 
 
 # place each check-in on the path within its own step and reach of the previous fix
@@ -93,15 +82,22 @@ def _clear_margin(a, b, settings):
 def _missed_stop(request, fixes, step, end_m, settings):
     if step is None or end_m is None or step.get("mode") not in TRANSIT_MODES:
         return None
-    stop = _point(step.get("to"))
+    stop = place_point(step.get("to"))
     if stop is None:
         return None
     run = fixes[-settings.corridor_consecutive:]
     margin = settings.missed_stop_m
 
-    # beyond the stop along the route and far from it
+    # at the stop or beyond it along the route
+    def reached(f):
+        return f.along_m >= end_m - f.limit_m or _distance(f.checkin, stop) <= f.limit_m
+
+    # passed the stop earlier in the window so a bus turning off the route still counts
+    passed = any(reached(f) for f in fixes[:-len(run)])
+
+    # beyond the stop and far from it
     def past(f):
-        return f.along_m >= end_m - f.limit_m and _distance(f.checkin, stop) > margin + f.accuracy_m
+        return (passed or reached(f)) and _distance(f.checkin, stop) > margin + f.accuracy_m
 
     if not all(past(f) for f in run):
         return None
@@ -170,7 +166,7 @@ def detect(request, ctx, settings):
     cum = cumulative_m(ctx.path)
     length = cum[-1]
     # where each step starts and ends on the path
-    ranges = _step_ranges(ctx.steps or [], ctx.path, cum)
+    ranges = step_ranges(ctx.steps or [], ctx.path, cum)
     step = step_at(ctx.steps, ctx.step_index)
     end_m = ranges[ctx.step_index][1] if step is not None else None
     fixes = _locate(usable, ctx, cum, ranges, settings)

@@ -1,0 +1,46 @@
+# Aggregator (Member 3) on the local kind cluster: POST /internal/votes from the Coordinator, reports
+# problems to the Alert Service. Same shape as k8s/eks/services/aggregator.yaml.
+# Dashboard: kubectl port-forward svc/aggregator 8002:8000 -n csc3104   then open http://localhost:8002/dashboard
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aggregator
+  namespace: csc3104
+  labels: { app: aggregator }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: aggregator }
+  template:
+    metadata:
+      labels: { app: aggregator }
+    spec:
+      containers:
+        - name: aggregator
+          image: aggregator:local
+          imagePullPolicy: IfNotPresent   # kind: use the image loaded with `kind load`
+          ports: [{ containerPort: 8000 }]
+          env:
+            - { name: REDIS_URL, value: "redis://cloud-redis:6379/0" }
+            - { name: ALERT_SERVICE_URL, value: "http://alert-service:8000" }
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+          readinessProbe:
+            httpGet: { path: /ready, port: 8000 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /health, port: 8000 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aggregator   # the Coordinator's default AGGREGATOR_URL
+  namespace: csc3104
+spec:
+  type: ClusterIP
+  selector: { app: aggregator }
+  ports: [{ port: 8000, targetPort: 8000 }]

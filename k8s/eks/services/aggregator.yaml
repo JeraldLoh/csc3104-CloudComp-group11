@@ -1,5 +1,7 @@
 # Aggregator (Member 3): POST /internal/votes, called by the Coordinator.
 # Deploy: bash scripts/macos/deploy.sh --service aggregator   (fills the __PLACEHOLDERS__)
+# Dashboard (not exposed to the internet):
+#   kubectl -n careroute port-forward svc/aggregator 8001:8000   then open http://localhost:8001/dashboard
 apiVersion: apps/v1
 kind: Deployment
 metadata:

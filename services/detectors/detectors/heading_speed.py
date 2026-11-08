@@ -2,8 +2,8 @@ import math
 import statistics
 from datetime import timedelta
 
-from detectors.common import abstain, abstain_reason, confidence, step_mode, usable_checkins, vote
-from detectors.geo import angle_diff_deg, bearing_deg, haversine_m, nearest_segment
+from detectors.common import StepSection, abstain, abstain_reason, confidence, step_mode, usable_checkins, vote
+from detectors.geo import angle_diff_deg, bearing_deg, haversine_m
 
 DETECTOR_ID = "heading-speed"
 # moving check-ins needed to judge direction
@@ -17,43 +17,44 @@ NOISE_FACTOR = 1.5
 
 
 
-# bearing from an older fix when the check-in has no speed
+# bearing and the older fix it starts from when the check-in has no speed
 def _baseline_bearing(earlier, c, settings):
     cutoff = c.timestamp - timedelta(seconds=BASELINE_S)
     # newest fix that is at least BASELINE_S older
     ref = next((p for p in reversed(earlier) if p.timestamp <= cutoff), None)
     if ref is None:
-        return None
+        return None, None
     dist = haversine_m(ref.lat, ref.lng, c.lat, c.lng)
     elapsed = (c.timestamp - ref.timestamp).total_seconds()
     # too close to tell apart from gps jitter
     if dist <= NOISE_FACTOR * math.hypot(ref.accuracy_m, c.accuracy_m):
-        return None
+        return None, None
     # too slow to count as moving
     if dist / elapsed < settings.min_moving_speed_mps:
-        return None
-    return bearing_deg(ref.lat, ref.lng, c.lat, c.lng)
+        return None, None
+    return bearing_deg(ref.lat, ref.lng, c.lat, c.lng), ref
 
 
-# bearing of travel for each check-in that is actually moving
+# bearing of travel for each check-in that is actually moving with the fix the movement started from
 def _moving_bearings(usable, settings):
     moving = []
     for i, c in enumerate(usable):
         prev = usable[i - 1] if i else None
+        start = c
         # no speed so judge movement over a longer gap
         if c.speed_mps is None:
-            bearing = _baseline_bearing(usable[:i], c, settings)
+            bearing, start = _baseline_bearing(usable[:i], c, settings)
         # moving so use the step from the previous fix or the reported heading
         elif c.speed_mps >= settings.min_moving_speed_mps:
             bearing = None
             if prev is not None and haversine_m(prev.lat, prev.lng, c.lat, c.lng) >= MIN_BEARING_DISTANCE_M:
-                bearing = bearing_deg(prev.lat, prev.lng, c.lat, c.lng)
+                bearing, start = bearing_deg(prev.lat, prev.lng, c.lat, c.lng), prev
             elif c.heading_deg is not None:
                 bearing = c.heading_deg
         else:
             bearing = None
         if bearing is not None:
-            moving.append((bearing, c))
+            moving.append((bearing, c, start))
     return moving
 
 
@@ -71,6 +72,16 @@ def detect(request, ctx, settings):
     if reason:
         return abstain(request, DETECTOR_ID, reason)
 
+    # off this step part of the route direction against it means nothing, off route is judged elsewhere
+    section = StepSection.per_checkin(ctx)
+    away = section(request.checkin).away_m(request.checkin)
+    limit = settings.corridor_m + request.checkin.accuracy_m
+    if away > limit:
+        return abstain(
+            request, DETECTOR_ID,
+            f"{away:.0f} m from this step's part of the route (limit {limit:.0f} m), too far to judge direction"
+        )
+
     # standing still says nothing about direction so abstain
     usable = usable_checkins(ctx.recent, settings)
     moving = _moving_bearings(usable, settings)
@@ -81,11 +92,8 @@ def detect(request, ctx, settings):
             f"check-ins moving, need {MIN_MOVING_POINTS})"
         )
 
-    # angle between travel and the nearest path segment
-    diffs = []
-    for bearing, c in moving:
-        _, _, path_bearing = nearest_segment((c.lat, c.lng), ctx.path)
-        diffs.append(angle_diff_deg(bearing, path_bearing))
+    # angle between travel and the path of the step the movement began on so arriving at a stop is not judged as the next step
+    diffs = [angle_diff_deg(bearing, section(start).bearing_deg(c)) for bearing, c, start in moving]
     # median so a few noisy bearings do not decide
     median = statistics.median(diffs)
     note = _speed_note(request, ctx, settings)

@@ -6,9 +6,18 @@ POST /api/routes                         save a route (version 1, not approved)
 GET  /api/routes?travellerId=            a traveller's saved routes (not in the contract yet)
 GET/PUT /api/routes/{routeId}            load / edit a route (edit: version + 1, approval cleared)
 POST /api/routes/{routeId}/approve       approve a route
+POST /api/routes/{routeId}/easy-read     AI wording for every step, for the caregiver to review (nothing saved)
+GET  /api/easy-read/limits               the longest wording a step may have -> {maxChars} (for the editor)
+POST /api/routes/{routeId}/photos        upload the caregiver's own photo for a step -> {photoKey, photoUrl}
 POST /api/trips                          a trip on an approved route, on a date (planned)
 POST /api/trips/{tripId}/start           planned -> active; writes the Redis keys the detectors and checker read
 POST /api/trips/{tripId}/end             active -> completed; removes them
+POST /api/trips/{tripId}/bridge/send     send the proposed free bridging bus now (/dismiss: don't send it;
+                                         /use: work one out and use it now, also before the trip starts)
+POST /api/trips/{tripId}/replan          new routes from where the traveller is (/replan/apply {steps} or
+                                         {routeId}: send one, or a route saved for the trip)
+GET  /api/trips/{tripId}/location        where the traveller of a trip under way is (their check-ins)
+GET  /api/trips/{tripId}/plan            the steps they follow now, with map lines and where trains aren't running
 GET  /api/trips/{tripId}/pack            the offline route pack in S3: {packUrl, packVersion}
 GET  /api/trips/{tripId}, /api/trips?travellerId=   look trips up (not in the contract yet)
 GET  /api/places/search?q=               place/address search -> coordinates (OneMap)
@@ -26,15 +35,17 @@ Every /api/ endpoint knows who is calling (auth.py, AUTH_MODE) and JourneyClient
 a route belongs to its caregiver and its traveller, anyone else gets 404. /internal/, /health, /ready and
 /api/dev/ are not user endpoints and are not checked.
 """
+import json
 import logging
 import re
+import threading
 import time
 from contextlib import asynccontextmanager
 from datetime import date as date_type
 
 import boto3
 import redis
-from fastapi import Depends, FastAPI, Query, Request
+from fastapi import Depends, FastAPI, File, Query, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
@@ -44,9 +55,11 @@ from . import aws_resources
 from .auth import AuthUnavailable, Authenticator, Caller, Forbidden, Unauthorized
 from .config import Settings, settings as default_settings
 from .data_mode import DataMode
-from .journey_client import JourneyClient, OneMapAuthError, OneMapError, OneMapUnavailable, StorageNotReady
+from .easy_read import MAX_CHARS as EASY_READ_MAX_CHARS
+from .journey_client import (JourneyClient, OneMapAuthError, OneMapError, OneMapUnavailable, PhotoInvalid,
+                             StorageNotReady)
 from .lta import LtaAuthError, LtaUnavailable
-from .models import DataModeIn, DisruptionCheckIn, PlanRequest, RouteIn, RouteUpdate, TripIn
+from .models import DataModeIn, DisruptionCheckIn, PlanRequest, ReplanIn, RouteIn, RouteUpdate, TripIn
 from .pack_store import PackUnavailable, S3PackStorage
 from .replay import RecordedDataMissing, load_manifest
 from .route_store import DynamoRouteStore, RouteConflict, RouteInvalid, RouteNotFound
@@ -85,7 +98,35 @@ def build_journey(s: Settings, redis_client, mode: DataMode | None = None) -> Jo
         if s.create_resources:
             aws_resources.ensure_packs_bucket(pack_store.client, s.packs_bucket, s.aws_region)
     return JourneyClient(s, redis_client=redis_client, route_store=route_store,
-                         trip_store=trip_store, pack_store=pack_store, mode=mode)
+                         trip_store=trip_store, pack_store=pack_store, mode=mode, notify=queue_sender(s))
+
+
+def queue_sender(s: Settings):
+    """Sends a message to the disruptions queue (the caregiver's alerts, through the Alert Service), finding the
+    queue on first use so the API starts even when SQS isn't up yet."""
+    sqs = boto3.client("sqs", region_name=s.aws_region, endpoint_url=s.aws_endpoint_url)
+    url: list[str] = []
+
+    def send(event: dict) -> None:
+        if not url:
+            url.append(aws_resources.ensure_disruptions_queue(sqs, s.disruptions_queue) if s.create_resources
+                       else sqs.get_queue_url(QueueName=s.disruptions_queue)["QueueUrl"])
+        sqs.send_message(QueueUrl=url[0], MessageBody=json.dumps(event))
+    return send
+
+
+def watch_bridges_forever(journey: JourneyClient, r, every_s: int) -> None:
+    """The bridging-bus watcher (journey_client.watch_bridges), every `every_s`. A short Redis lock means one API
+    replica does each pass."""
+    while True:
+        time.sleep(every_s)
+        try:
+            if r.set("journey:bridge-watch", "1", nx=True, ex=max(1, every_s - 1)):
+                summary = journey.watch_bridges()
+                if any(summary.values()):
+                    log.info("bridging buses: %s", summary)
+        except Exception:  # noqa: BLE001
+            log.exception("bridging-bus watch failed")
 
 
 def create_app(
@@ -107,6 +148,11 @@ def create_app(
                         now["onemap"], now["lta"])
         if journey is None:
             app.state.journey = build_journey(s, r, mode)
+            # The bus route lists take ~9 s to fetch: get them now, not in the first plan that needs them.
+            threading.Thread(target=app.state.journey.lta.warm_bus_services, daemon=True).start()
+            if s.bridge_watch_s > 0:
+                threading.Thread(target=watch_bridges_forever, args=(app.state.journey, r, s.bridge_watch_s),
+                                 daemon=True).start()
         else:
             app.state.journey = journey
         yield
@@ -167,8 +213,12 @@ def create_app(
 
     @app.exception_handler(PackUnavailable)
     async def _pack_unavailable(_: Request, e: PackUnavailable):
-        log.error("route pack storage problem: %s", e)
-        return error(503, "upstream_unavailable", "The route pack can't be prepared right now. Please retry.")
+        log.error("pack/photo storage problem: %s", e)          # packs and step photos share the bucket
+        return error(503, "upstream_unavailable", "File storage isn't available right now. Please retry.")
+
+    @app.exception_handler(PhotoInvalid)
+    async def _photo_invalid(_: Request, e: PhotoInvalid):
+        return error(400, "invalid_photo", str(e))
 
     @app.exception_handler(RouteInvalid)
     async def _route_invalid(_: Request, e: RouteInvalid):
@@ -237,25 +287,30 @@ def create_app(
             raise RouteNotFound(route_id)
         return route_id
 
+    # Every route answer carries a temporary photoUrl per step (with_photo_urls); it is never stored.
     @app.post("/api/routes", status_code=201)
     def create_route(body: RouteIn, request: Request, caller: Caller | None = Depends(current_caller)):
-        return request.app.state.journey.create_route(body.model_dump(by_alias=True), caller)
+        journey = request.app.state.journey
+        return journey.with_photo_urls(journey.create_route(body.model_dump(by_alias=True), caller))
 
     @app.get("/api/routes")
     def list_routes(request: Request, travellerId: str = Query(min_length=1, max_length=64),
                     caller: Caller | None = Depends(current_caller)):
         """Not in contracts/api.md yet: a traveller's saved routes, newest first (only those the caller may see)."""
-        return {"routes": request.app.state.journey.list_routes(travellerId, caller)}
+        journey = request.app.state.journey
+        return {"routes": [journey.with_photo_urls(r) for r in journey.list_routes(travellerId, caller)]}
 
     @app.get("/api/routes/{route_id}")
     def get_route(route_id: str, request: Request, caller: Caller | None = Depends(current_caller)):
-        return request.app.state.journey.get_route(route_id_or_404(route_id), caller)
+        journey = request.app.state.journey
+        return journey.with_photo_urls(journey.get_route(route_id_or_404(route_id), caller))
 
     @app.put("/api/routes/{route_id}")
     def update_route(route_id: str, body: RouteUpdate, request: Request,
                      caller: Caller | None = Depends(current_caller)):
         data = body.model_dump(by_alias=True, exclude={"version"})
-        return request.app.state.journey.update_route(route_id_or_404(route_id), data, body.version, caller)
+        journey = request.app.state.journey
+        return journey.with_photo_urls(journey.update_route(route_id_or_404(route_id), data, body.version, caller))
 
     @app.delete("/api/routes/{route_id}", status_code=204)
     def delete_route(route_id: str, request: Request, version: int | None = Query(default=None, ge=1),
@@ -266,7 +321,27 @@ def create_app(
 
     @app.post("/api/routes/{route_id}/approve")
     def approve_route(route_id: str, request: Request, caller: Caller | None = Depends(current_caller)):
-        return request.app.state.journey.approve_route(route_id_or_404(route_id), caller)
+        journey = request.app.state.journey
+        return journey.with_photo_urls(journey.approve_route(route_id_or_404(route_id), caller))
+
+    @app.post("/api/routes/{route_id}/easy-read")
+    def suggest_easy_read(route_id: str, request: Request, caller: Caller | None = Depends(current_caller)):
+        """contracts/api.md, Easy-read Service: {"steps": [{stepIndex, easyRead, fallback}], "provider": "ollama" |
+        "template"}. Slow (the AI runs on CPU); always answers with usable wording."""
+        return request.app.state.journey.suggest_easy_read(route_id_or_404(route_id), caller)
+
+    @app.get("/api/easy-read/limits", dependencies=[Depends(current_caller)])    # any logged-in user
+    def easy_read_limits():
+        """The longest easy-read wording one step may have (EASYREAD_MAX_CHARS). The one setting: the caregiver
+        app's editor and the Easy-read Service (sent it with each request) both use it."""
+        return {"maxChars": EASY_READ_MAX_CHARS}
+
+    @app.post("/api/routes/{route_id}/photos", status_code=201)
+    def upload_photo(route_id: str, request: Request, photo: UploadFile = File(),
+                     caller: Caller | None = Depends(current_caller)):
+        """contracts/api.md, step photos: one image (multipart field `photo`). The file is read only after the route
+        and the caller are checked, and only one byte past the limit, so a huge upload isn't read whole."""
+        return request.app.state.journey.upload_photo(route_id_or_404(route_id), photo.file, caller)
 
     def trip_id_or_404(trip_id: str) -> str:
         if not TRIP_ID.match(trip_id):
@@ -296,6 +371,51 @@ def create_app(
     @app.post("/api/trips/{trip_id}/end")
     def end_trip(trip_id: str, request: Request, caller: Caller | None = Depends(current_caller)):
         return request.app.state.journey.end_trip(trip_id_or_404(trip_id), caller)
+
+    # Changing a trip under way (journey_client "trip changes"): the route's caregiver only.
+    @app.post("/api/trips/{trip_id}/bridge/send")
+    def send_bridge(trip_id: str, request: Request, caller: Caller | None = Depends(current_caller)):
+        """Send the proposed free bridging bus to the traveller now."""
+        return request.app.state.journey.send_bridge(trip_id_or_404(trip_id), caller)
+
+    @app.post("/api/trips/{trip_id}/bridge/dismiss")
+    def dismiss_bridge(trip_id: str, request: Request, caller: Caller | None = Depends(current_caller)):
+        """Don't send it (not by itself later either)."""
+        return request.app.state.journey.dismiss_bridge(trip_id_or_404(trip_id), caller)
+
+    @app.get("/api/trips/{trip_id}/location")
+    def trip_location(trip_id: str, request: Request, caller: Caller | None = Depends(current_caller)):
+        """Where the traveller is: {lat, lng, at, source, trail, stepIndex, stepCount, step}."""
+        return request.app.state.journey.trip_location(trip_id_or_404(trip_id), caller)
+
+    @app.get("/api/trips/{trip_id}/bridge/preview")
+    def preview_bridge(trip_id: str, request: Request, caller: Caller | None = Depends(current_caller)):
+        """The steps /bridge/use would give the trip, to read before choosing it (nothing is changed)."""
+        return request.app.state.journey.bridge_preview(trip_id_or_404(trip_id), caller)
+
+    @app.post("/api/trips/{trip_id}/bridge/use")
+    def use_bridge(trip_id: str, request: Request, caller: Caller | None = Depends(current_caller)):
+        """Switch the trip (under way or not started) to the free bus past a breakdown now."""
+        return request.app.state.journey.use_bridge(trip_id_or_404(trip_id), caller)
+
+    @app.post("/api/trips/{trip_id}/replan")
+    def replan_trip(trip_id: str, request: Request, caller: Caller | None = Depends(current_caller)):
+        """New routes from where the traveller is to the destination: {from, options, sortedBy}."""
+        return request.app.state.journey.replan_options(trip_id_or_404(trip_id), caller)
+
+    @app.post("/api/trips/{trip_id}/replan/apply")
+    def apply_replan(trip_id: str, body: ReplanIn, request: Request, caller: Caller | None = Depends(current_caller)):
+        """Send one of those routes to the traveller: its steps replace theirs from the current step on."""
+        journey = request.app.state.journey
+        if body.routeId:
+            return journey.send_route(trip_id_or_404(trip_id), body.routeId, caller)
+        steps = body.model_dump(by_alias=True)["steps"]
+        return journey.apply_replan(trip_id_or_404(trip_id), steps, caller, body.stepPaths)
+
+    @app.get("/api/trips/{trip_id}/plan")
+    def trip_plan(trip_id: str, request: Request, caller: Caller | None = Depends(current_caller)):
+        """The steps the traveller follows now: {planVersion, steps, stepPaths, affected}."""
+        return request.app.state.journey.trip_plan(trip_id_or_404(trip_id), caller)
 
     @app.get("/api/trips/{trip_id}/pack")
     def trip_pack(trip_id: str, request: Request, caller: Caller | None = Depends(current_caller)):

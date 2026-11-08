@@ -1,8 +1,8 @@
 """What the Aggregator does with one set of votes (POST /internal/votes).
 
     1. Already answered this requestId?     return the saved answer (SQS redelivery / retry)
-    2. Weighted vote                        voting.py, with reliability from detector:weights
-    3. Close call / too few votes?          needsMoreVotes: answer now, change nothing
+    2. Rule-based decision                  voting.py: any detector that checks it says problem
+    3. Too few votes to call it normal?     needsMoreVotes: answer now, change nothing
     4. Problem?                             problem-report.json -> Alert Service
     5. Update risk:{travellerId}            risk.py              \\  one Redis
     6. Save the decision record             for the dashboard    |  transaction
@@ -20,7 +20,7 @@ import httpx
 
 from .config import Settings
 from .reports import build_problem_report, iso_z
-from .risk import Risk, update_risk
+from .risk import Risk, detectors_failed, update_risk
 from .voting import Decision, aggregate
 
 log = logging.getLogger("aggregator")
@@ -67,7 +67,8 @@ def answer(d: Decision, risk_level: str | None) -> dict:
 
 
 def decision_record(request_id: str, checkin: dict, votes: list[dict], d: Decision, escalated: bool,
-                    risk_before: Risk, risk_after: Risk, incident: dict | None, now: datetime) -> dict:
+                    risk_before: Risk, risk_after: Risk, incident: dict | None, now: datetime,
+                    situation: str | None = None) -> dict:
     """One entry of decisions:{travellerId}: what the dashboard and the experiment read."""
     return {
         "requestId": request_id,
@@ -78,6 +79,7 @@ def decision_record(request_id: str, checkin: dict, votes: list[dict], d: Decisi
         "decidedAt": iso_z(now),
         "k": len(votes),
         "escalated": escalated,
+        "situation": situation,
         "votes": [{"detectorId": v.get("detectorId"), "verdict": v.get("verdict"),
                    "confidence": v.get("confidence"), "latencyMs": v.get("latencyMs"),
                    "reason": v.get("reason")} for v in votes],
@@ -106,7 +108,7 @@ class AggregatorService:
         return resp.json()
 
     async def handle(self, request_id: str, checkin: dict, votes: list[dict], escalated: bool = False,
-                     now: datetime | None = None) -> dict:
+                     now: datetime | None = None, situation: str | None = None) -> dict:
         now = now or datetime.now(timezone.utc)
         traveller_id = checkin["travellerId"]
 
@@ -116,7 +118,7 @@ class AggregatorService:
             return json.loads(saved)
 
         weights = parse_weights(await self.redis.hgetall(WEIGHTS_KEY))
-        d = aggregate(votes, weights, self.s.threshold, self.s.quorum, self.s.close_margin)
+        d = aggregate(votes, weights, self.s.quorum)
         if d.needs_more_votes:
             log.info("%s needs more votes (%s, %d counted)", request_id, d.reason, d.counted)
             return answer(d, None)
@@ -126,9 +128,10 @@ class AggregatorService:
             incident = await self._report_problem(build_problem_report(request_id, checkin, votes, d, now))
 
         before = Risk.from_hash(await self.redis.hgetall(risk_key(traveller_id)))
-        after = update_risk(before, d, self.s.risk)
+        after = update_risk(before, d, self.s.risk, failed=detectors_failed(votes))
         reply = answer(d, after.level)
-        record = json.dumps(decision_record(request_id, checkin, votes, d, escalated, before, after, incident, now))
+        record = json.dumps(decision_record(request_id, checkin, votes, d, escalated, before, after, incident, now,
+                                            situation))
         ttl = self.s.key_ttl_s
 
         tx = self.redis.pipeline(transaction=True)

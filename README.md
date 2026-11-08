@@ -33,6 +33,48 @@ Options: `-ImageTag` / `--tag` (default `v1`), `-StackName` / `--stack-name`,
 The deploy scripts fill in the `k8s/eks` placeholders in a temporary copy, so
 the committed manifests stay unchanged.
 
+## Automatic deployment (GitHub Actions)
+
+[`.github/workflows/services.yml`](.github/workflows/services.yml) runs for every change under
+`services/` or `k8s/eks/services/`, and only for the services that changed:
+
+- **Pull request:** runs the service's tests and builds its Docker image.
+- **Merge to `main`:** does the same, then pushes the image to ECR (tagged with the commit SHA) and
+  rolls it out on EKS. If the new pods never become ready, it rolls back to the previous version.
+- **Manual run:** Actions > Services > Run workflow, with one service name or `all`. Use it after
+  creating the stack, since merges made while the stack was torn down skip the deploy.
+
+A service is picked up when it has both `services/<name>/Dockerfile` and `k8s/eks/services/<name>.yaml`,
+with the same placeholders as `deploy --service` (see [scripts/README.md](scripts/README.md)).
+The frontends are not part of this workflow: Amplify builds them from `amplify.yml`.
+
+### One-time setup
+
+The workflow signs in to AWS through GitHub's OIDC provider, so no access keys are stored in GitHub.
+
+1. Create the deploy role, once per AWS account. It lives in its own stack, so teardown leaves it
+   in place, and it costs nothing:
+
+   ```bash
+   aws cloudformation deploy --stack-name careroute-github-deploy \
+     --template-file cloudformation/github-actions-deploy-role.yaml \
+     --capabilities CAPABILITY_NAMED_IAM --region ap-southeast-1
+   aws cloudformation describe-stacks --stack-name careroute-github-deploy --region ap-southeast-1 \
+     --query "Stacks[0].Outputs[?OutputKey=='DeployRoleArn'].OutputValue" --output text
+   ```
+
+   If the account already has a `token.actions.githubusercontent.com` identity provider, add
+   `--parameter-overrides CreateOidcProvider=false`.
+2. In GitHub, go to Settings > Secrets and variables > Actions:
+   - **Variables:** `AWS_DEPLOY_ROLE_ARN` = the ARN printed above. Without it, merges still test and
+     build but don't deploy.
+   - **Secrets:** `LOCALSTACK_AUTH_TOKEN` = the same token as in `.env`. The alert-service tests
+     run against LocalStack.
+
+The role can only push to `careroute-*` ECR repositories and deploy into the `careroute` namespace.
+On each new cluster it adds itself as an EKS access entry with namespace-scoped edit rights, so
+nothing needs to be re-run after a teardown.
+
 ## Deploy the infrastructure
 
 ### 1. Deploy the CloudFormation stack
@@ -252,9 +294,16 @@ instead of ElastiCache.
 
 ```powershell
 docker build -t cloud-fastapi:local .
-kind create cluster --name csc3104-local
-kind load docker-image cloud-fastapi:local --name csc3104-local
+docker build -t checkin-service:local services/checkin-service
+docker build -t alert-service:local services/alert-service
+docker build -t journey-service:local services/journey-service
+docker build -t easyread-service:local services/easyread-service
+kind create cluster --name csc3104-local --config k8s/local/kind-config.yaml
+kind load docker-image cloud-fastapi:local checkin-service:local alert-service:local journey-service:local easyread-service:local --name csc3104-local
 ```
+
+`k8s/local` also runs Ollama (for the caregiver app's "Simplify with AI"); it downloads its model (~1 GB) when its
+pod starts, and asks for 2 GB of memory.
 
 Create `.env` in the project root with your LocalStack token (the `*.env`
 pattern in `.gitignore` keeps it out of Git):
@@ -283,6 +332,64 @@ kubectl port-forward svc/cloud-fastapi 8000:8000 -n csc3104
 ```powershell
 curl.exe http://localhost:8000/health
 ```
+
+### Check-in analysis (Coordinator, Aggregator, detectors)
+
+Not part of `kubectl apply -k k8s/local`, so teammates without these images aren't affected. With them, the
+local cluster runs the whole chain: app -> Check-in Service -> Redis and SQS -> Coordinator -> detectors ->
+Aggregator -> Alert Service -> caregiver app.
+
+```powershell
+docker build -t cloud-detectors:local services/detectors
+docker build -t coordinator:local services/coordinator
+docker build -t aggregator:local services/aggregator
+kind load docker-image cloud-detectors:local coordinator:local aggregator:local --name csc3104-local
+kubectl apply -k k8s/local/detectors
+kubectl apply -k k8s/local/analysis
+kubectl get pods -n csc3104 -w
+```
+
+With Podman instead of Docker, set `KIND_EXPERIMENTAL_PROVIDER=podman`, and load each image by its full name
+(`podman tag localhost/coordinator:local docker.io/library/coordinator:local`, then
+`kind load docker-image docker.io/library/coordinator:local --name csc3104-local`). Podman names a built image
+`localhost/...`, which the pods' `coordinator:local` doesn't match, so they would fail with `ErrImageNeverPull`.
+
+The Coordinator reads the `careroute-checkins` queue the Check-in Service creates on its start, so it reports
+not ready until that pod is up.
+
+### Reach the services from your machine
+
+A cluster made with `k8s/local/kind-config.yaml` opens these on localhost once you apply `k8s/local/expose`, so no
+`kubectl port-forward` is needed. A cluster made without the config can't; recreate it.
+
+```powershell
+kubectl apply -k k8s/local/expose
+```
+
+| Address | Service |
+|---|---|
+| <http://localhost:8001> | Check-in Service |
+| <http://localhost:8002/dashboard> | Aggregator dashboard |
+| <http://localhost:8005> | Alert Service |
+| <http://localhost:8006> | Journey Service |
+
+The caregiver app's dev server (`apps/caregiver`, `npm run dev`) already calls these addresses.
+
+### Everything in one command, with a simulated trip
+
+`local-sim` does all of the above: it creates the cluster with the config, builds and loads every image, makes the
+LocalStack secret from `.env`, applies everything, waits until it's ready, starts the caregiver app and can send a
+simulated trip through the whole chain. Run it from the repo root.
+
+| | Windows (PowerShell) | Mac or Linux |
+|---|---|---|
+| First time, and after changing service code | `.\scripts\windows\local-sim.ps1 -Setup` | `bash scripts/macos/local-sim.sh --setup` |
+| Start everything and send a trip | `.\scripts\windows\local-sim.ps1 -Scenario off_route -Caregiver G-777` | `bash scripts/macos/local-sim.sh --scenario off_route --caregiver G-777` |
+
+Then open <http://localhost:5174>, type the caregiver in **Act as** and open the traveller on the Dashboard. The
+script keeps the app running until Ctrl+C; the cluster keeps running after that. `-Setup` on a cluster made
+without the config deletes and recreates it, so its data is lost. Scenarios and the `live` command:
+`services/detectors/README.md`, "Watch a scenario in the caregiver app".
 
 ### Stop
 

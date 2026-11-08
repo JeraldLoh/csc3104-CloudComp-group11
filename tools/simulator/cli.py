@@ -1,12 +1,14 @@
-# command line for generate replay and load
+# command line for generate replay load and live
 
 import argparse
 import json
 import re
 import sys
+import time
 from pathlib import Path
 from typing import List, Optional
 
+from tools.simulator import live as live_mod
 from tools.simulator import load as load_mod
 from tools.simulator import replay as replay_mod
 from tools.simulator.route import build_route
@@ -112,6 +114,32 @@ def load_command(args) -> None:
         print(f"-> {load_mod.write_csv(rows, args.results)}")
 
 
+# run one scenario through the real services and list the incidents it raised
+def live_command(args) -> None:
+    endpoints = live_mod.Endpoints(args.journey, args.checkin, args.alert)
+    run = live_mod.LiveRun(endpoints, args.caregiver, live_mod.http_call(args.caregiver))
+    traveller = run.choose_traveller(args.traveller)
+    version = run.start_trip()
+    print(f"{args.scenario}: caregiver {args.caregiver}, traveller {traveller}, trip {run.trip_id}")
+    print(f"watch it at the caregiver app acting as {args.caregiver}\n")
+    try:
+        sent = run.send(args.scenario, version, args.interval, args.seed, args.browser,
+                        on_sent=lambda c: print(f"  #{c['seq']:>3} step {c['stepIndex']} expected {c['expected']}", flush=True))
+        print(f"\n{len(sent)} check-ins sent, waiting {args.settle:g} s for the analysis to finish")
+        time.sleep(args.settle)
+    finally:
+        if not args.keep_trip:
+            run.end_trip()
+    try:
+        found = run.incidents()
+    except live_mod.ServiceError as exc:
+        print(f"can't list incidents: {exc}")
+        return
+    print("incidents:" if found else "incidents: none")
+    for i in found:
+        print(f"  {i['incidentId']}  {i.get('severity', '')}")
+
+
 # parse arguments and run a command
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m tools.simulator")
@@ -148,7 +176,28 @@ def main(argv: Optional[List[str]] = None) -> int:
     load.add_argument("--browser", action=argparse.BooleanOptionalAction, default=True)
     load.add_argument("--results", type=Path, default=Path("results"), help="CSV output directory")
 
+    live = sub.add_parser("live", help="send a scenario through the real services, to watch in the caregiver app")
+    live.add_argument("--scenario", choices=SCENARIOS, required=True)
+    live.add_argument("--caregiver", default="G-003", help="caregiver id to act as and to watch as")
+    live.add_argument("--traveller", help="traveller id to use; default: the caregiver's first, or a new one")
+    live.add_argument("--journey", default="http://localhost:8006", help="Journey Service address")
+    live.add_argument("--checkin", default="http://localhost:8001", help="Check-in Service address, the load balancer on EKS")
+    live.add_argument("--alert", default="http://localhost:8005", help="Alert Service address")
+    live.add_argument("--interval", type=float, default=1.0,
+                      help="seconds between sends; timestamps stay 10 s apart, so 10 = real time")
+    live.add_argument("--settle", type=float, default=5.0, help="seconds to wait after the last check-in")
+    live.add_argument("--keep-trip", action="store_true", help="leave the trip active instead of ending it")
+    live.add_argument("--seed", type=int, help="default: a new one each run")
+    live.add_argument("--browser", action=argparse.BooleanOptionalAction, default=True)
+
     args = parser.parse_args(argv)
+    if args.command == "live":
+        if args.seed is None:
+            args.seed = int(time.time())
+        if args.interval <= 0 or args.interval > 10:
+            parser.error("--interval must be more than 0 and at most 10")
+        live_command(args)
+        return 0
     if args.command == "load":
         load_command(args)
         return 0

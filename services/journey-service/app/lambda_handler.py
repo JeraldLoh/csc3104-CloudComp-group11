@@ -7,7 +7,7 @@ The package needs only this file plus config.py, cache.py, lta.py, disruption.py
 last only for CREATE_RESOURCES=true, local development); not the API code. Third-party: httpx and redis
 (boto3 is already in the Lambda runtime).
 
-Local one-off run against docker compose:  python -m app.lambda_handler
+Local run against docker compose:  python -m app.lambda_handler
 """
 import json
 import logging

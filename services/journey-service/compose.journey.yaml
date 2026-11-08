@@ -1,4 +1,6 @@
-# Local dev/testing only: the Journey Service with its own Redis and LocalStack.
+# Local dev/testing only: the Journey Service with its own Redis and LocalStack, plus the Easy-read Service and Ollama
+# for the "Simplify with AI" button. Ollama downloads its model (~1 GB) on first start; until then the button gives
+# the standard wording. Planning, routes and trips never wait for it.
 # From the repo root (LTA_API_KEY, ONEMAP_API_EMAIL / ONEMAP_API_PASSWORD and LOCALSTACK_AUTH_TOKEN go in the root .env):
 #   docker compose --env-file .env -f services/journey-service/compose.journey.yaml up --build -d
 # (Paths here are relative to this folder. Redis takes host port 6379, as services/detectors/compose.yaml does,
@@ -32,6 +34,10 @@ services:
       S3_PUBLIC_ENDPOINT_URL: http://localhost:4566   # pack links are opened in your browser, outside Docker
       DEMO_UI: "true"                  # dev extras: the live/saved switch (/api/dev/data-mode) and app/demo_tools.py
       AUTH_MODE: ${AUTH_MODE:-off}     # off (default) | dev (trust an X-Dev-User header, local only) | cognito
+      EASYREAD_URL: http://easyread-service:8000          # AI wording; unreachable = the standard wording
+      EASYREAD_MAX_CHARS: ${EASYREAD_MAX_CHARS:-300}      # one step's wording: sent to the Easy-read Service and the app
+      GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY:-}      # Street View photos of each step; empty = none
+      STREETVIEW_MAX_AGE_YEARS: ${STREETVIEW_MAX_AGE_YEARS:-5}   # older photos are only a last resort ("check it")
     volumes:
       - ../../.env:/app/.env           # the root .env, so ONEMAP_TOKEN_ENV_FILE can update it
     depends_on:
@@ -39,6 +45,33 @@ services:
         condition: service_healthy
       cloud-localstack:
         condition: service_healthy
+
+  # Not in journey-service's depends_on on purpose: it starts without them and falls back to the standard wording.
+  easyread-service:
+    image: easyread-service:local
+    build: ../easyread-service
+    ports:
+      - "8007:8000"
+    environment:
+      OLLAMA_URL: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:1.5b}
+      EASYREAD_LANDMARKS: ${EASYREAD_LANDMARKS:-tools}   # tools (the model looks landmarks up) | given | off
+
+  ollama:
+    image: ollama/ollama:0.35.1
+    environment:
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:1.5b}
+      OLLAMA_KEEP_ALIVE: 30m           # keep the model loaded between requests
+    # Start the server, pull the model (a no-op once it is in the volume), then keep serving.
+    entrypoint: ["/bin/sh", "-c", "ollama serve & sleep 3 && ollama pull \"$$OLLAMA_MODEL\" && wait"]
+    volumes:
+      - ollama-models:/root/.ollama    # the model survives restarts, so it is downloaded once
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list | grep -q \"$$OLLAMA_MODEL\""]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 30s
 
   cloud-redis:
     image: redis:latest
@@ -71,3 +104,4 @@ services:
 
 volumes:
   cloud-redis-data:
+  ollama-models:

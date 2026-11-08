@@ -99,12 +99,24 @@ live APIs, so it needs the keys (they go into a Kubernetes Secret, never into th
 .\scripts\windows\deploy.ps1 -BudgetEmail <your email>                                          # the platform (25-35 min)
 powershell -ExecutionPolicy Bypass -File services\journey-service\deploy\windows\deploy-eks.ps1    # the Journey Service
 powershell -ExecutionPolicy Bypass -File services\journey-service\deploy\windows\deploy-lambda.ps1 # the disruption checker
+.\scripts\windows\deploy.ps1 -Service easyread-service                                          # Simplify with AI (Ollama)
 ```
 
 ```bash
 ./scripts/macos/deploy.sh --email <your email>                     # the platform (25-35 min)
 bash services/journey-service/deploy/macos/deploy-eks.sh            # the Journey Service
 bash services/journey-service/deploy/macos/deploy-lambda.sh         # the disruption checker
+bash scripts/macos/deploy.sh --service easyread-service             # Simplify with AI (Ollama)
+```
+
+The last line deploys the Easy-read Service and Ollama (`k8s/eks/services/easyread-service.yaml`). Skip it if you
+won't show **Simplify with AI**: without it the button says the AI isn't available and the editor keeps the
+standard wording. Ollama adds about **$0.12 an hour** (2 vCPU / 4 GB on Fargate) and downloads its model (~1 GB)
+when its pod starts, so deploy it at least 10 minutes before the demo. It is ready when this prints
+`qwen2.5:1.5b`:
+
+```powershell
+kubectl exec -n careroute deploy/ollama -- ollama list
 ```
 
 **2. Turn on the demo extras.** On AWS the service starts with `DEMO_UI` off, so the **Data** box and `demo_tools`
@@ -158,6 +170,11 @@ t="kubectl exec -n careroute deploy/journey-service -- python -m app.demo_tools"
 - **Nothing is forgotten on restart.** Routes and trips are in real DynamoDB tables (`careroute-routes`,
   `careroute-trips`) and packs are in the S3 bucket `careroute-files-<account id>`. They stay until you delete them or
   tear the environment down.
+- **Simplify with AI is slower.** Ollama runs on 2 vCPU with no GPU, so a long route can run past the 75-second
+  limit and keep the standard wording. In Demo C, the Ollama commands change: check the model with
+  `kubectl logs -n careroute deploy/ollama`, and instead of `docker compose ... stop ollama` use
+  `kubectl scale deployment/ollama -n careroute --replicas=0` (`--replicas=1` brings it back, and it downloads the
+  model again).
 - **No `docker exec`:** there is no local Redis container. The commands below go through `kubectl exec` (the image has
   no `redis-cli`, so they use Python) or your own AWS CLI.
 
@@ -183,7 +200,7 @@ the other options to compare.
 
 **Point out:**
 - Walking is a dashed grey line, buses blue, trains red. Click a step marker on the map for its instruction.
-- Each step is in plain words ("Get on and tap your card. Get off at ... after 5 stops").
+- Each step is in plain words, as a checklist ("Wait for bus number 45. Tap your card. Count 5 stops. Get off at ...").
 - Under bus steps, the next bus times from LTA (`Next bus 22 at stop 54009: 10 min (SEA), 25 min`). With saved
   data these were recorded earlier and shifted to now.
 - **Sort by** (*Least walking*, *Least crowded*, *Fastest*) and **Travel by** (*Bus only*, *Train only*):
@@ -272,6 +289,21 @@ will see.
    them anyway: a trip is pinned to the version it was made with, so a journey already under way can never change
    under the traveller.)
 5. **Approve** version 2 and press **New trip** again. Start it. This is the trip Demo D needs.
+
+**Simpler wording with AI and step photos** (needs the `ollama` container to have finished pulling its model:
+`docker compose -f services/journey-service/compose.journey.yaml logs ollama`; photos need `GOOGLE_MAPS_API_KEY` in
+`.env`):
+
+6. On the **Saved routes** tab, press **Simplify with AI** on the route. It says *Simplifying...* for a few seconds
+   to a minute, then the editor opens with shorter sentences, e.g. *Wait for bus number 45. Get on the bus. Tap your
+   card.* Bus numbers, stop names and stop counts are always kept: a step the AI got wrong shows the standard wording
+   instead, marked as such. Change any step by hand, then **Save changes** (a new version, approve it again).
+7. Each walk and bus step shows a Street View photo of where it ends. In the editor press **Replace photo** on one
+   step and pick your own picture; save, and the route shows it. **Use Street View photo** brings the automatic one
+   back on the next save.
+8. To show it fails safely: `docker compose -f services/journey-service/compose.journey.yaml stop ollama`, then
+   press **Simplify with AI** again. *You should see:* "The AI isn't available right now, so the editor shows the
+   standard wording." Planning, saving and trips carry on as normal.
 
 **Two caregivers at once.** Open **http://localhost:5174** in a second browser tab. In both tabs open the same
 saved route and press **Edit**. Save a change in tab 1. Now save a different change in tab 2:
@@ -501,7 +533,7 @@ three steps **in this order** and let each one finish first:
 |---|---|---|
 | 1. `teardown-lambda` | the disruption checker: stack `careroute-journey-lambda` (function, role, schedule, logs) and its zips in `s3://careroute-files-<account id>/lambda/` | `careroute-journey-lambda` |
 | 2. `teardown-eks` | our Deployment, Service and Secret, our `journey-*` images in ECR, the packs in `s3://.../packs/` | `journey-service` |
-| 3. the platform's `teardown` | everything else: the cluster, the DynamoDB tables (all saved routes and trips), Redis, the queues, the bucket, the load balancer, the VPC. Takes 15-25 minutes | `careroute-stack-1` |
+| 3. the platform's `teardown` | everything else: the cluster (with the Easy-read Service and Ollama), the `careroute-*` ECR repositories, the DynamoDB tables (all saved routes and trips), Redis, the queues, the bucket, the load balancer, the VPC. Takes 15-25 minutes | `careroute-stack-1` |
 
 Stop the port-forward (Ctrl+C in its window) first. Add `-Yes` (PowerShell) or `--yes` (bash) to any of them to
 skip the question.
@@ -547,10 +579,10 @@ branch**, so it is not part of this demo. To show it, check that branch out in a
 `npm run dev` (port 5173), and open the **traveller link** from step 6 of Demo B. Its dev server forwards
 `/api/trips` to port 8006, so it reads the same pack. Be ready for two honest caveats:
 
-- The pack builder is partly done: the pack has every step's easy-read wording, the path and the standard messages,
-  but the traveller and caregiver **names and phone are null**, and **photos and audio are not produced yet**
-  (`photoUrl` / `audioUrl` are null). Check that the traveller app accepts this before
-  promising it works.
+- The pack builder is partly done: the pack has every step's easy-read wording, photo link (`photoUrl`, valid for
+  7 days; null for train steps and where Street View has nothing), the path and the standard messages, but the
+  traveller and caregiver **names and phone are null**, and **audio is not produced yet** (`audioUrl` is null). Check
+  that the traveller app accepts this before promising it works.
 - Starting the trip from the traveller's phone calls the same Start endpoint the caregiver's **Start** button
   does, and is safe to repeat.
 
@@ -595,5 +627,7 @@ laptop and the service has no public address. That needs the Ingress the team ha
 - **A public AWS address:** on AWS the service is reached through a port-forward (section 2b). There is no Ingress or
   HTTPS yet, so the traveller's phone and an Amplify-hosted app can't reach it.
 - **AI wording:** the plain-language steps come from fixed rules, not an AI, so they can't make facts up. The caregiver can rewrite any step by hand (Demo C).
-- **Replacing a route's steps with a new plan**, and a **live dashboard of travellers**: not built yet. Today a different journey is a new route.
+- **Replacing a route's steps with a new plan**: not built yet. Today a different journey is a new route.
+- **The Dashboard and Travellers tabs:** these need the Alert Service, which this demo doesn't start
+  (`services/alert-service/README.md`).
 - **Names in the route pack** (traveller, caregiver) are empty until the Profiles service exists.

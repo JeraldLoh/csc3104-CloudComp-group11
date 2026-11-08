@@ -1,4 +1,4 @@
-"""IncidentStore against LocalStack: one incident per problem, and the open/acknowledged/resolved states."""
+"""IncidentStore against DynamoDB (moto, or LocalStack): one incident per problem, and the open/acknowledged/resolved states."""
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone

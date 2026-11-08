@@ -52,6 +52,9 @@ spec:
               valueFrom: { secretKeyRef: { name: journey-api-keys, key: ONEMAP_API_EMAIL, optional: true } }
             - name: ONEMAP_API_PASSWORD
               valueFrom: { secretKeyRef: { name: journey-api-keys, key: ONEMAP_API_PASSWORD, optional: true } }
+            - { name: EASYREAD_URL, value: "http://easyread-service:8000" }   # AI wording; down = standard wording
+            - name: GOOGLE_MAPS_API_KEY       # Street View photos of each step; absent = no photos
+              valueFrom: { secretKeyRef: { name: journey-api-keys, key: GOOGLE_MAPS_API_KEY, optional: true } }
           # Fargate sizes the pod from requests, so set them explicitly (requests = limits, as the platform does).
           resources:
             requests: { cpu: 250m, memory: 512Mi }

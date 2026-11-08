@@ -39,15 +39,16 @@ printing them.
 | `lambda/disruption-lambda.yaml` | Our own CloudFormation stack (`careroute-journey-lambda`): the function, its role (SQS send + VPC/logs), a 14-day log group, an EventBridge rule `rate(1 minute)`. |
 | `lambda/make_zip.py` | Lists our 8 app files and writes the zip (run inside the build container). The zip goes to `lambda/dist/` (gitignored). |
 | `windows/` and `macos/`, one script each (`.ps1` / `.sh`): | |
-| `deploy-eks` | Reads the stack outputs, sets the pack bucket's CORS rule, creates the Secret `journey-api-keys` from `.env`, builds and pushes our image to the stack's ECR repository as tag `journey-<tag>`, fills in the manifest's four placeholders (image, Redis, bucket, prefix) in a temporary copy, applies it, waits for the rollout and checks `/ready` through a port-forward. `-RenderOnly` / `--render-only` just renders the manifest (no AWS). |
+| `deploy-eks` | Reads the stack outputs, sets the pack bucket's CORS rule, creates the Secret `journey-api-keys` from `.env` (LTA, OneMap and, for step photos, `GOOGLE_MAPS_API_KEY`), builds and pushes our image to the stack's ECR repository as tag `journey-<tag>`, fills in the manifest's four placeholders (image, Redis, bucket, prefix) in a temporary copy, applies it, waits for the rollout and checks `/ready` through a port-forward. `-RenderOnly` / `--render-only` just renders the manifest (no AWS). |
+| (AI easy-read) | Not deployed by these scripts: the Easy-read Service and Ollama go out with the platform script, `deploy.ps1 -Service easyread-service` / `deploy.sh --service easyread-service` (see `services/easyread-service/README.md`). Until then the Journey Service's `EASYREAD_URL` can't be reached and **Simplify with AI** gives the standard wording. |
 | `teardown-eks` | Deletes our Deployment, Service and Secret, our `journey-*` ECR tags and the `packs/` objects. Nothing of the platform's. |
 | `build-lambda` | Builds `lambda/dist/disruption-lambda.zip` in a `python:3.12` Linux container: our 8 files plus httpx and redis (about 1 MB). `-Verify` / `--verify` imports it in a clean container and fails if FastAPI or PyJWT came along. |
 | `deploy-lambda` | Reads the platform outputs, builds the zip (`build-lambda`), uploads it to the shared bucket (`lambda/disruption-checker-<hash>.zip`), deploys the stack, invokes the function once. |
 | `teardown-lambda` | Deletes the Lambda stack and the uploaded zips. |
 | `resource-names` | Shared by the others (dot-sourced / `source`d): finds the stack's resource prefix (warns if it isn't `careroute`) and derives the shared bucket name. |
 
-What each set needs: Windows: `aws`, `kubectl`, Docker Desktop. macOS: the same plus `curl` and `shasum` (both come
-with macOS). On Apple Silicon, Docker builds the `linux/amd64` image and zip by emulation, which is what Fargate and
+What each set needs: Windows: `aws`, `kubectl`, Docker Desktop. macOS / Linux: the same plus `curl` and `shasum`
+or `sha256sum` (macOS has `shasum`, most Linux distributions `sha256sum`). On Apple Silicon, Docker builds the `linux/amd64` image and zip by emulation, which is what Fargate and
 the Lambda run.
 
 ## Names: the team prefix is `careroute`

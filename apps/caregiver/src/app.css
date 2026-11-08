@@ -1,12 +1,27 @@
 html, body, #root { height: 100%; margin: 0; }
-body { background: #fff; color: #111; font: 14px/1.4 system-ui, sans-serif; }
+body { background: #fff; color: #0f172a; font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
 .shell { display: flex; flex-direction: column; height: 100%; }
-.shell__bar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 8px 14px; border-bottom: 1px solid #ddd; }
-.shell__bar label { display: flex; align-items: center; gap: 6px; font-weight: 600; }
-.shell__bar input { width: 110px; padding: 4px 6px; font: inherit; }
-.shell__bar select { padding: 3px 4px; font: inherit; }
-.shell__bar small { font-weight: 400; color: #555; }
+.shell__bar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 14px; padding: 10px 20px;
+  background: #fff; border-bottom: 1px solid #e2e8f0; box-shadow: 0 1px 3px rgba(15, 23, 42, 0.05); position: relative; z-index: 2;
+}
+.shell__bar > strong { font-size: 1.05rem; font-weight: 700; letter-spacing: -0.01em; margin-right: 8px; }
+.shell__bar > strong::before {
+  content: ""; display: inline-block; width: 12px; height: 12px; margin-right: 8px; border-radius: 4px;
+  background: linear-gradient(135deg, #2563eb, #7c3aed); vertical-align: -1px;
+}
+.shell__bar label { display: flex; align-items: center; gap: 6px; font-size: 0.85rem; font-weight: 600; color: #475569; }
+.shell__bar input {
+  width: 110px; padding: 5px 8px; border: 1px solid #cbd5e1; border-radius: 7px; font: inherit; color: #0f172a; font-weight: 500;
+}
+.shell__bar input:focus { outline: none; border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15); }
+.shell__bar select { padding: 4px 6px; border: 1px solid #cbd5e1; border-radius: 7px; font: inherit; }
+.shell__bar small { font-weight: 400; color: #64748b; }
 .shell__main { flex: 1; min-height: 0; }
-.shell__tabs { display: flex; gap: 4px; }
-.shell__tabs button { padding: 4px 10px; border: 1px solid #ccc; border-radius: 6px; background: #f6f6f6; font: inherit; cursor: pointer; }
-.shell__tabs button[aria-pressed="true"] { background: #1d4ed8; border-color: #1d4ed8; color: #fff; font-weight: 600; }
+.shell__tabs { display: flex; gap: 2px; padding: 3px; margin-right: auto; border-radius: 9px; background: #f1f5f9; }
+.shell__tabs button {
+  padding: 5px 14px; border: none; border-radius: 7px; background: transparent; color: #475569;
+  font: inherit; font-weight: 600; cursor: pointer; transition: background-color 0.15s, color 0.15s;
+}
+.shell__tabs button:hover { color: #0f172a; }
+.shell__tabs button[aria-pressed="true"] { background: #fff; color: #1d4ed8; box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12); }

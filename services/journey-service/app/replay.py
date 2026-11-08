@@ -9,13 +9,14 @@ Times are moved to "now": LTA bus arrivals are timestamps from the capture time,
 day they were planned, so without that every bus would show "Arr" and every trip would start in the past.
 """
 import json
-import math
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable
 
 import httpx
+
+from .geo import distance_m
 
 DATA_DIR = Path(__file__).parent / "saved_data"      # gitignored: a fresh clone runs scripts/capture_data.py first
 SST = timezone(timedelta(hours=8))
@@ -48,12 +49,6 @@ def _read(directory: Path, name: str) -> Any:
 def _json(request: httpx.Request, body: Any, status: int = 200) -> httpx.Response:
     return httpx.Response(status, json=body, request=request)
 
-
-def distance_m(a: tuple[float, float], b: tuple[float, float]) -> float:
-    lat = math.radians((a[0] + b[0]) / 2)
-    dy = (a[0] - b[0]) * 111_320
-    dx = (a[1] - b[1]) * 111_320 * math.cos(lat)
-    return math.hypot(dx, dy)
 
 
 def _point(text: str) -> tuple[float, float]:

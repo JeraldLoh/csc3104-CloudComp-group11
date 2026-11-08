@@ -1,0 +1,12 @@
+# kind cluster for local development. Opens the services the laptop needs on localhost, so no port-forwards:
+#   kind create cluster --name csc3104-local --config k8s/local/kind-config.yaml
+# Each hostPort reaches the NodePort Service of the same number in k8s/local/expose.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - { containerPort: 30001, hostPort: 8001, listenAddress: "127.0.0.1" }   # Check-in Service
+      - { containerPort: 30002, hostPort: 8002, listenAddress: "127.0.0.1" }   # Aggregator dashboard
+      - { containerPort: 30005, hostPort: 8005, listenAddress: "127.0.0.1" }   # Alert Service
+      - { containerPort: 30006, hostPort: 8006, listenAddress: "127.0.0.1" }   # Journey Service

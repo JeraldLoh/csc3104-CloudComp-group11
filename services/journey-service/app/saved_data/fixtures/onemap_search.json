@@ -1,0 +1,47 @@
+{
+  "status": 200,
+  "body": {
+    "error": "Authentication token missing. Please create an account and generate or renew your API Token.",
+    "found": 3,
+    "totalNumPages": 1,
+    "pageNum": 1,
+    "results": [
+      {
+        "SEARCHVAL": "TAMPINES MALL",
+        "BLK_NO": "4",
+        "ROAD_NAME": "TAMPINES CENTRAL 5",
+        "BUILDING": "TAMPINES MALL",
+        "ADDRESS": "4 TAMPINES CENTRAL 5 TAMPINES MALL SINGAPORE 529510",
+        "POSTAL": "529510",
+        "X": "40395.36058725417",
+        "Y": "37181.40528376773",
+        "LATITUDE": "1.352527372785196",
+        "LONGITUDE": "103.9446987510717"
+      },
+      {
+        "SEARCHVAL": "TAMPINES MALL (CAR PARK ENTRANCE A)",
+        "BLK_NO": "",
+        "ROAD_NAME": "NIL",
+        "BUILDING": "TAMPINES MALL (CAR PARK ENTRANCE A)",
+        "ADDRESS": "TAMPINES MALL (CAR PARK ENTRANCE A)",
+        "POSTAL": "NIL",
+        "X": "40445.15002814215",
+        "Y": "37207.04838010855",
+        "LATITUDE": "1.352759258679618",
+        "LONGITUDE": "103.9451461508028"
+      },
+      {
+        "SEARCHVAL": "TAMPINES MALL (CAR PARK ENTRANCE B)",
+        "BLK_NO": "",
+        "ROAD_NAME": "NIL",
+        "BUILDING": "TAMPINES MALL (CAR PARK ENTRANCE B)",
+        "ADDRESS": "TAMPINES MALL (CAR PARK ENTRANCE B)",
+        "POSTAL": "NIL",
+        "X": "40361.85704688169",
+        "Y": "37215.07832484879",
+        "LATITUDE": "1.352831913092814",
+        "LONGITUDE": "103.94439771475"
+      }
+    ]
+  }
+}

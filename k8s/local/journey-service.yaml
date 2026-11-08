@@ -1,6 +1,7 @@
 # The LTA and OneMap keys come from a Secret, created from the root .env like localstack-auth:
 #   kubectl create secret generic journey-api-keys --from-env-file=.env -n csc3104
-# (the .env needs LTA_API_KEY= and ONEMAP_API_EMAIL= / ONEMAP_API_PASSWORD= (or ONEMAP_API_KEY=) lines; other lines are ignored by the pod)
+# (the .env needs LTA_API_KEY= and ONEMAP_API_EMAIL= / ONEMAP_API_PASSWORD= (or ONEMAP_API_KEY=) lines, and optionally
+# GOOGLE_MAPS_API_KEY= for step photos; other lines are ignored by the pod)
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -49,6 +50,13 @@ spec:
                 secretKeyRef:
                   name: journey-api-keys
                   key: ONEMAP_API_PASSWORD
+                  optional: true
+            - { name: EASYREAD_URL, value: "http://easyread-service:8000" }   # AI wording; down = standard wording
+            - name: GOOGLE_MAPS_API_KEY       # Street View photos of each step; absent = no photos
+              valueFrom:
+                secretKeyRef:
+                  name: journey-api-keys
+                  key: GOOGLE_MAPS_API_KEY
                   optional: true
           resources:
             # Requests are needed for the Horizontal Pod Autoscaler (issue 3.4) to work.

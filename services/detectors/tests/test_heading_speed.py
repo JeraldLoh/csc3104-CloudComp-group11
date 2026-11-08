@@ -6,7 +6,7 @@ import pytest
 
 from detectors.config import Settings
 from detectors.context import TripContext
-from detectors.heading_speed import detect
+from detectors.heading_speed import _moving_bearings, detect
 from detectors.models import CheckIn, DetectorRequest
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -136,6 +136,65 @@ def test_abstain_on_poor_current_accuracy():
 def test_abstain_on_route_version_mismatch():
     vote = vote_for(walk(-1), route_version_mismatch=True)
     assert vote.verdict == "abstain" and "version mismatch" in vote.reason
+
+
+# walk 1000 m north to a stop, then the bus runs back south 200 m to the east
+M_LAT, M_LNG = 1 / 111_195, 1 / 111_160
+
+
+def xy(north_m, east_m):
+    return 1.40 + north_m * M_LAT, 103.9 + east_m * M_LNG
+
+
+LOOP = [xy(0, 0), xy(1000, 0), xy(1000, 200), xy(0, 200)]
+LOOP_STEPS = [
+    {"stepIndex": 0, "mode": "walk", "to": {"name": "Stop", "lat": LOOP[1][0], "lng": LOOP[1][1]}},
+    {"stepIndex": 1, "mode": "bus", "to": {"name": "End", "lat": LOOP[3][0], "lng": LOOP[3][1]}}
+]
+
+
+def walk_north_at(east_m, count=6, step=0):
+    return [checkin(i + 1, 0).model_copy(update={"lat": xy(300 + 13 * i, east_m)[0], "lng": xy(0, east_m)[1],
+                                                 "step_index": step})
+            for i in range(count)]
+
+
+def loop_vote(recent, steps=LOOP_STEPS, step_index=0):
+    ctx = TripContext(path=LOOP, steps=steps, step_index=step_index, route_version=3, recent=recent)
+    return detect(DetectorRequest(request_id="T-001#x", risk_level="normal", checkin=recent[-1]), ctx, SETTINGS)
+
+
+def test_off_this_steps_part_of_the_route_abstains():
+    # 180 m off the walk but 20 m from the southbound bus leg, so the bus leg would look reversed
+    vote = loop_vote(walk_north_at(180))
+    assert vote.verdict == "abstain"
+    assert vote.reason == "180 m from this step's part of the route (limit 110 m), too far to judge direction"
+
+
+def test_on_this_steps_part_of_the_route_is_still_judged():
+    assert loop_vote(walk_north_at(0)).verdict == "normal"
+    assert loop_vote(walk_north_at(200, step=1), step_index=1).problem_type == "wrong_direction"
+
+
+def test_earlier_checkins_are_judged_against_their_own_step():
+    # walked north to the stop on step 0, now on the bus step: the walk is not compared with the bus leg
+    at_stop = checkin(7, 0).model_copy(update={"lat": LOOP[1][0], "lng": LOOP[1][1], "step_index": 1})
+    vote = loop_vote(walk_north_at(0) + [at_stop], step_index=1)
+    assert vote.verdict == "normal"
+
+
+def test_a_movement_belongs_to_the_step_it_started_on():
+    # the check-in arriving at the stop already says step 1 but the walk there was step 0
+    walked = walk_north_at(0, count=3)
+    arrived = walked[-1].model_copy(update={"seq": 4, "lat": walked[-1].lat + 13 * M_LAT, "step_index": 1,
+                                            "timestamp": walked[-1].timestamp + timedelta(seconds=10)})
+    moving = _moving_bearings(walked + [arrived], SETTINGS)
+    assert [start.step_index for _, _, start in moving][-1] == 0
+
+
+def test_unknown_step_measures_against_the_whole_route():
+    # without the step it can't tell the legs apart, as before
+    assert loop_vote(walk_north_at(180), steps=None).problem_type == "wrong_direction"
 
 
 # Replay: feed each simulator scenario one check-in at a time, with a sliding window

@@ -4,6 +4,10 @@ metadata:
   name: cloud-fastapi
   namespace: careroute
   annotations:
+    # One ALB for every service (IngressGroup). Each service adds its own Ingress with this
+    # group.name and a lower group.order; this catch-all "/" is evaluated last.
+    alb.ingress.kubernetes.io/group.name: careroute
+    alb.ingress.kubernetes.io/group.order: "1000"
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip        # required for Fargate
     # TODO: AlbSecurityGroupId output from the stack (otherwise the controller makes its own SG)

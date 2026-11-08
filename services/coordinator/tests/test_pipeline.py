@@ -15,7 +15,7 @@ CONTRACTS = Path(__file__).resolve().parents[3] / "contracts" / "examples"
 CHECKIN = json.loads((CONTRACTS / "checkin.json").read_text())        # T-001, seq 17, U-042
 DETECTOR_REQUEST_FIELDS = set(json.loads((CONTRACTS / "detector-request.json").read_text()))
 HOSTS = {"detector-route": "route-corridor", "detector-heading": "heading-speed",
-         "detector-dwell": "dwell-time", "detector-ml": "ml-anomaly"}
+         "detector-dwell": "dwell-time", "detector-progress": "route-progress"}
 
 
 class FakeRedis:
@@ -37,6 +37,10 @@ class FakeRedis:
         self._check()
         return self.hashes.get(key, {}).get(field)
 
+    async def get(self, key):
+        self._check()
+        return self.keys.get(key)
+
     async def set(self, key, value, ex=None):
         self._check()
         self.keys[key] = value
@@ -49,7 +53,7 @@ class World:
 
     def __init__(self, detector_votes=None, agg_replies=None):
         self.detector_votes = {"route-corridor": "normal", "heading-speed": "normal",
-                               "dwell-time": "normal", "ml-anomaly": "normal", **(detector_votes or {})}
+                               "dwell-time": "normal", "route-progress": "normal", **(detector_votes or {})}
         self.agg_replies = list(agg_replies or [{"decision": "normal", "problemType": None, "confidence": 1.0}])
         self.detector_calls = []   # (detectorId, request body)
         self.agg_calls = []        # request bodies
@@ -78,8 +82,9 @@ class World:
 
 
 def settings(**overrides) -> Settings:
-    base = dict(redundancy_mode="adaptive", detector_urls=parse_urls(""), detector_timeout_s=0.1,
-                quorum=2, aggregator_url="http://aggregator:8000", decided_ttl_s=86400)
+    # The general tests use the fixed pair (route-corridor + dwell-time); step-aware pairs below.
+    base = dict(redundancy_mode="adaptive", pair_strategy="fixed", detector_urls=parse_urls(""),
+                detector_timeout_s=0.1, quorum=2, aggregator_url="http://aggregator:8000", decided_ttl_s=86400)
     return Settings(**{**base, **overrides})
 
 
@@ -132,7 +137,8 @@ def test_aggregator_receives_votes_and_context():
     world = World(detector_votes={"route-corridor": "problem"}, agg_replies=[PROBLEM])
     result, _ = process(world)
     [body] = world.agg_calls
-    assert set(body) == {"requestId", "checkin", "votes", "riskLevel", "escalated"}
+    assert set(body) == {"requestId", "checkin", "votes", "riskLevel", "escalated", "situation"}
+    assert body["situation"] == "fixed"
     assert body["requestId"] == "T-001#17"
     assert body["checkin"] == CHECKIN
     assert sorted(v["detectorId"] for v in body["votes"]) == ["dwell-time", "route-corridor"]
@@ -142,10 +148,10 @@ def test_aggregator_receives_votes_and_context():
 
 # --- risk and modes ------------------------------------------------------------------------------
 
-def test_elevated_risk_asks_all_four():
+def test_elevated_risk_asks_every_detector():
     world = World()
     result, _ = process(world, FakeRedis(hashes=ELEVATED))
-    assert sorted(world.asked) == ["dwell-time", "heading-speed", "ml-anomaly", "route-corridor"]
+    assert sorted(world.asked) == ["dwell-time", "heading-speed", "route-corridor", "route-progress"]
     assert result.k == 4 and not result.escalated
     assert world.detector_calls[0][1]["riskLevel"] == "elevated"
 
@@ -156,7 +162,7 @@ def test_fixed2_ignores_elevated_risk():
     assert len(world.asked) == 2
 
 
-def test_fixed4_asks_all_four_at_normal_risk():
+def test_fixed4_asks_every_detector_at_normal_risk():
     world = World()
     process(world, redundancy_mode="fixed4")
     assert len(world.asked) == 4
@@ -206,7 +212,7 @@ def test_close_call_asks_the_rest_and_resubmits():
     assert len(world.agg_calls[0]["votes"]) == 2
     assert len(world.agg_calls[1]["votes"]) == 4
     assert world.agg_calls[1]["escalated"] is True
-    assert sorted(world.asked) == ["dwell-time", "heading-speed", "ml-anomaly", "route-corridor"]
+    assert sorted(world.asked) == ["dwell-time", "heading-speed", "route-corridor", "route-progress"]
     assert result.decision == PROBLEM and result.k == 4 and result.escalated
 
 
@@ -221,7 +227,7 @@ def test_no_resubmit_when_everyone_was_already_asked():
 def test_no_detector_is_asked_twice():
     world = World(detector_votes={"dwell-time": "timeout"}, agg_replies=[NEEDS_MORE, PROBLEM])
     process(world)
-    assert sorted(world.asked) == ["dwell-time", "heading-speed", "ml-anomaly", "route-corridor"]
+    assert sorted(world.asked) == ["dwell-time", "heading-speed", "route-corridor", "route-progress"]
 
 
 # --- failures: raise so the message is retried -----------------------------------------------------------
@@ -258,3 +264,87 @@ def test_invalid_checkin_raises_before_calling_anyone(bad):
     with pytest.raises(ValueError):
         process(world, checkin=bad)
     assert world.detector_calls == [] and world.agg_calls == []
+
+
+# --- step-aware pair (PAIR_STRATEGY=step) ------------------------------------------------------
+
+ROUTE = json.loads((CONTRACTS / "route.json").read_text())   # step 0 walk, step 1 bus
+ROUTE_KEY = {"trip:T-001:route": json.dumps({"steps": ROUTE["steps"], "path": ROUTE["path"]})}
+
+
+def at_step(step, speed=1.3):
+    return {**CHECKIN, "stepIndex": step, "speedMps": speed}
+
+
+@pytest.mark.parametrize("step, speed, pair, situation", [
+    (0, 1.3, ["heading-speed", "route-corridor"], "walking"),
+    (1, 0.2, ["dwell-time", "route-corridor"], "waiting"),
+    (1, None, ["dwell-time", "route-corridor"], "waiting"),       # no speed: assume still at the stop
+    (1, 9.0, ["route-corridor", "route-progress"], "riding"),
+])
+def test_pair_fits_the_journey_step(step, speed, pair, situation):
+    world = World()
+    result, _ = process(world, FakeRedis(keys=ROUTE_KEY), checkin=at_step(step, speed), pair_strategy="step")
+    assert sorted(world.asked) == pair
+    assert result.situation == situation and result.k == 2
+
+
+@pytest.mark.parametrize("redis, checkin", [
+    (FakeRedis(), at_step(0)),                                  # no route in Redis
+    (FakeRedis(keys=ROUTE_KEY), at_step(7)),                   # step index beyond the route
+    (FakeRedis(keys=ROUTE_KEY), {**at_step(0), "stepIndex": None}),
+    (FakeRedis(keys={"trip:T-001:route": "{not json"}), at_step(0)),
+])
+def test_unknown_step_falls_back_to_route_corridor_and_route_progress(redis, checkin):
+    world = World()
+    result, _ = process(world, redis, checkin=checkin, pair_strategy="step")
+    assert sorted(world.asked) == ["route-corridor", "route-progress"]
+    assert result.situation == "unknown step"
+
+
+def test_elevated_risk_still_asks_everyone_and_skips_the_route_lookup():
+    class Counting(FakeRedis):
+        gets = 0
+        async def get(self, key):
+            Counting.gets += 1
+            return await super().get(key)
+    world = World()
+    result, _ = process(world, Counting(hashes=ELEVATED, keys=ROUTE_KEY), checkin=at_step(0), pair_strategy="step")
+    assert result.k == 4 and result.situation is None
+    assert Counting.gets == 0
+
+
+def test_fixed_strategy_ignores_the_step():
+    world = World()
+    result, _ = process(world, FakeRedis(keys=ROUTE_KEY), checkin=at_step(1, 9.0), pair_strategy="fixed")
+    assert sorted(world.asked) == ["dwell-time", "route-corridor"]
+    assert result.situation == "fixed"
+
+
+def test_fixed2_also_uses_the_step_pair():
+    world = World()
+    process(world, FakeRedis(hashes=ELEVATED, keys=ROUTE_KEY), checkin=at_step(0), redundancy_mode="fixed2",
+            pair_strategy="step")
+    assert sorted(world.asked) == ["heading-speed", "route-corridor"]
+
+
+def test_custom_waiting_speed():
+    world = World()
+    result, _ = process(world, FakeRedis(keys=ROUTE_KEY), checkin=at_step(1, 1.5), pair_strategy="step",
+                        waiting_below_mps=1.0)
+    assert result.situation == "riding"
+
+
+def test_unknown_strategy_is_rejected():
+    with pytest.raises(ValueError):
+        process(World(), FakeRedis(keys=ROUTE_KEY), checkin=at_step(0), pair_strategy="random")
+
+
+def test_escalation_from_a_step_pair_asks_the_other_two():
+    # Walking, route-corridor says off route: heading-speed can't judge it, route-progress can.
+    world = World(detector_votes={"route-corridor": "problem"},
+                  agg_replies=[{"decision": "inconclusive", "needsMoreVotes": True, "reason": "single_voter"},
+                               PROBLEM])
+    result, _ = process(world, FakeRedis(keys=ROUTE_KEY), checkin=at_step(0), pair_strategy="step")
+    assert sorted(world.asked) == ["dwell-time", "heading-speed", "route-corridor", "route-progress"]
+    assert result.escalated and result.decision == PROBLEM

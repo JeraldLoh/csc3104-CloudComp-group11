@@ -1,14 +1,14 @@
 # Check-in analysis: local run
 
 Runs the Coordinator and Aggregator on your laptop with stand-ins for everything else:
-Redis, ElasticMQ (a local SQS, no account needed), the real detectors and a fake Alert
-Service. No AWS, no cost.
+Redis, ElasticMQ (a local SQS, no account needed), the real detectors and the real Alert
+Service (Member 5) with a local DynamoDB. No AWS, no cost.
 
 ```
-send ──► ElasticMQ ──► coordinator ──► detector-route / -dwell / -heading (real)
+send ──► ElasticMQ ──► coordinator ──► detector-route / -heading / -dwell / -progress (real)
                            │
                            ▼
-           Redis ◄── aggregator ──► alert-service (fake)
+           Redis ◄── aggregator ──► alert-service (real) ──► DynamoDB (local)
 ```
 
 Run all commands from the repo root.
@@ -29,7 +29,6 @@ The detectors read the trip from Redis. A `seed` job writes the route and contex
 `T-001` (standing in for the Journey Service), and `send` also writes `trip:{id}:recent` and `:context`
 (standing in for the Check-in Service). They also need a *stream* of check-ins: route-corridor
 abstains until it has 3 usable ones, so send `--seq 1` to `--seq 5` before expecting a verdict.
-There is no ML detector yet, so `ml-anomaly` always abstains (the Coordinator records the failed call).
 
 ## Send check-ins
 
@@ -42,9 +41,15 @@ Each check-in needs a new `--seq` (the same `--seq` again counts as a duplicate 
 
 ## See what happened
 
+**Dashboard: http://localhost:8001/dashboard** (served by the Aggregator, refreshes every 2 s):
+risk per traveller, and every decision with its detectors, votes, latency, escalations and alerts.
+Click a traveller to see only their decisions.
+
+Or from the terminal:
+
 ```bash
 docker compose -f services/analysis-dev/compose.yaml logs -f coordinator aggregator alert-service
-curl localhost:8004/api/incidents                                                    # alerts
+curl 'localhost:8004/api/incidents?travellerId=U-042'                              # alerts (M5's service)
 docker compose -f services/analysis-dev/compose.yaml exec redis redis-cli hgetall risk:U-042
 docker compose -f services/analysis-dev/compose.yaml exec redis redis-cli lindex decisions:U-042 0
 ```
@@ -58,14 +63,9 @@ ElasticMQ's web UI (queue depths, dead-letter queue): http://localhost:9325
 | detector-route | 9001 | real route-corridor detector |
 | detector-dwell | 9002 | real dwell-time detector |
 | detector-heading | 9003 | real heading-speed detector |
-| alert-service | 8004 | fake: creates one incident per problem |
-
-Change the fake Alert Service while it runs:
-
-```bash
-curl -X POST localhost:8004/control -H 'Content-Type: application/json' -d '{"mode":"error"}'  # Alert Service down
-curl -X POST localhost:8004/control/reset                                                       # clear incidents
-```
+| detector-progress | 9004 | real route-progress detector (second judge of off-route and wrong direction; missed stops) |
+| alert-service | 8004 | real (Member 5): one incident per problem, kept in DynamoDB |
+| dynamodb | – | DynamoDB Local, in memory (empty after a restart) |
 
 ## Scenarios to try
 
@@ -73,14 +73,53 @@ Observed with the real detectors (route-corridor needs 3 usable check-ins before
 
 | Do | Expect in the logs |
 |---|---|
-| `send --seq 1`, `--seq 2` (on route) | route-corridor abstains, `escalating ... too few real votes`, `ml-anomaly abstained (error: ConnectError)`, `k=4 ... -> inconclusive`, risk goes `elevated` |
+| `send --seq 1`, `--seq 2` (on route) | route-corridor abstains (not enough history yet), `escalating ... too few real votes`, `k=4 ... -> inconclusive` |
 | `send --seq 3`, `--seq 4` (on route) | `k=4 ... -> normal` |
 | `send --seq 5`, `6`, `7` with `--off-route` | `normal`, `normal`, then `-> problem`, `ALERT` (route-corridor needs 3 usable check-ins to flag) |
 | `send --seq 7 --off-route` again | `skip T-001#7: already decided`, no new incident |
-| alert-service `mode: error`, send off-route, then `mode: ok` | `not processed, it will be retried`; ~30 s after it's back, `decided` |
+| `docker compose stop alert-service`, send 3 off-route, `docker compose start alert-service` | `not processed, it will be retried` (Aggregator 503); ≤30 s after it's back, `decided` and the incident exists |
+| `docker compose stop detector-route`, send on-route | route-corridor `abstain` (`error: ConnectError`), k=4, the other three still decide |
 
-Compare the experiment's modes by restarting with `REDUNDANCY_MODE=fixed2` or `fixed4`:
+## Fault demos (fake detectors)
+
+The real detectors can be stopped (`docker compose stop detector-route`), but they never
+answer slowly or wrongly. For that, run the same stack with fake detectors instead (`compose.fakes.yaml` replaces the
+four detector services; only one of each runs):
 
 ```bash
-REDUNDANCY_MODE=fixed4 docker compose -f services/analysis-dev/compose.yaml up -d coordinator
+docker compose -f services/analysis-dev/compose.yaml -f services/analysis-dev/compose.fakes.yaml up --build -d
 ```
+
+The fakes answer at once (no history needed) and take orders while they run:
+
+```bash
+curl -X POST localhost:9001/control -H 'Content-Type: application/json' -d '{"delayMs":2000}'  # route-corridor slow
+curl -X POST localhost:9001/control -H 'Content-Type: application/json' -d '{"mode":"wrong"}'  # route-corridor faulty
+curl -X POST localhost:9001/control -H 'Content-Type: application/json' -d '{"mode":"auto","delayMs":0}'  # back to normal
+```
+
+Modes: `normal`, `problem`, `auto` (problem when outside the demo area), `wrong`, `abstain`, `error`.
+Ports: route 9001, dwell 9002, heading 9003, progress 9004.
+
+| Do | Expect in the logs |
+|---|---|
+| `send --seq 1` | `k=2 ... -> normal`, no incident |
+| `send --seq 2 --off-route` | `-> problem` (any detector that checks off_route saying so is enough), `ALERT`, risk `elevated` |
+| `send --seq 3` | `k=4` (risk is elevated) |
+| `send --seq 2 --off-route` again | `skip T-001#2: already decided`, no new incident |
+| 3 more on-route check-ins | risk back to `normal`, then `k=2` again |
+| detector-route `delayMs: 2000`, then send | `abstained ... (timeout, 501 ms)`, escalates, still decides |
+
+To go back to the real detectors, run `compose.yaml` on its own again.
+
+## Experiment modes
+
+The Coordinator asks all 4 detectors for every check-in by default (`REDUNDANCY_MODE=fixed4`):
+a missed alert is the unsafe failure. The experiment compares it with `adaptive` (2 detectors at
+normal risk, 4 when elevated or uncertain) and `fixed2`. Restart the Coordinator in another mode:
+
+```bash
+REDUNDANCY_MODE=adaptive docker compose -f services/analysis-dev/compose.yaml up -d coordinator
+```
+
+The k=2 rows in the tables above are what `adaptive` does; in `fixed4` every row has k=4.

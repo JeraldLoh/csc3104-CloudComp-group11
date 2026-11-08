@@ -28,7 +28,7 @@ class PlanRequest(BaseModel):
     sortBy: Literal["walking", "crowding", "time"] = "walking"
 
 
-# --- saved routes (contracts/examples/route.json) -------------------------------------
+# Saved routes
 # Unknown top-level fields are ignored (so a plan option can be posted as-is); unknown step
 # fields are kept (contracts/README.md: adding an optional field is safe, e.g. a train step's `stops`).
 
@@ -51,6 +51,24 @@ class Backup(BaseModel):
     line: str | None = None
 
 
+# A photo in the pack bucket's media/ folder only (a Street View photo or an upload): the API hands out a presigned
+# link to it, so any other key (e.g. another route's pack) must be refused.
+PHOTO_KEY = r"^media/(?:[A-Za-z0-9_-]+/)+[A-Za-z0-9_.-]+\.(jpg|jpeg|png|webp)$"
+
+
+class Landmark(BaseModel):
+    """A building the step's wording tells the traveller to look out for (AI easy-read, landmarks.py), with a Street
+    View photo of it. Kept only while the wording still names it."""
+    name: str = Field(min_length=1, max_length=100)
+    kind: str | None = Field(default=None, max_length=40)
+    lat: float = Field(ge=1.1, le=1.5)
+    lng: float = Field(ge=103.5, le=104.1)
+    seenFrom: tuple[float, float] | None = None       # the traveller's spot on the route: its photo is taken from here
+    photoKey: str | None = Field(default=None, max_length=200, pattern=PHOTO_KEY)
+    # No photo of its own: it would look the same as the step's photo ("step") or another landmark's (its name).
+    sameView: str | None = Field(default=None, max_length=100)
+
+
 class Step(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="allow")
 
@@ -63,9 +81,10 @@ class Step(BaseModel):
     line: str | None = None
     expectedDurationS: int | None = Field(default=None, ge=0)
     underground: bool | None = None
-    photoKey: str | None = None
+    photoKey: str | None = Field(default=None, max_length=200, pattern=PHOTO_KEY)
     audioKey: str | None = None
     backup: Backup | None = None
+    landmarks: list[Landmark] | None = Field(default=None, max_length=4)
 
 
 class RouteIn(BaseModel):
@@ -79,6 +98,8 @@ class RouteIn(BaseModel):
     destination: Place
     steps: list[Step] = Field(min_length=1, max_length=50)
     path: list[tuple[float, float]] = Field(default_factory=list, max_length=5000)
+    # A new route for a trip under way (planned from where the traveller is), to send to it once approved.
+    forTripId: str | None = Field(default=None, pattern=r"^T-[0-9A-F]{6}$")
 
     @model_validator(mode="after")
     def _steps_in_order(self):
@@ -91,6 +112,21 @@ class TripIn(BaseModel):
     """Body of POST /api/trips."""
     routeId: str = Field(pattern=r"^R-[0-9A-F]{6}$")
     date: date_type                       # "2026-10-12"
+
+
+class ReplanIn(BaseModel):
+    """Body of POST /api/trips/{id}/replan/apply: a saved, approved route made for the trip (`routeId`: its own
+    wording and photos go to the traveller), or one option's steps from POST /api/trips/{id}/replan."""
+    routeId: str | None = Field(default=None, pattern=r"^R-[0-9A-F]{6}$")
+    steps: list[Step] | None = Field(default=None, min_length=1, max_length=50)
+    # The option's `stepPaths` ([lat, lng] lines, one per step), so the caregiver's map can draw the new route.
+    stepPaths: list[list[list[float]]] | None = Field(default=None, max_length=50)
+
+    @model_validator(mode="after")
+    def _one_of(self):
+        if (self.routeId is None) == (self.steps is None):
+            raise ValueError("send either routeId or steps")
+        return self
 
 
 class DisruptionCheckIn(BaseModel):

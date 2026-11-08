@@ -52,9 +52,27 @@ def test_normal_and_bus_wait_never_expect_a_problem():
 
 
 def test_normal_bus_wait_is_stationary_for_8_minutes():
+    route = build_route()
+    stop = route["steps"][0]["to"]
     checkins = generate("normal_bus_wait")
-    waiting = [c for c in checkins if c["stepIndex"] == 1 and c["speedMps"] < 0.5]
+    waiting = [c for c in checkins if c["stepIndex"] in (0, 1) and c["speedMps"] < 0.5
+               and distance_m((c["lat"], c["lng"]), (stop["lat"], stop["lng"])) < 60]
     assert len(waiting) * 10 >= 8 * 60
+    # the app is still on the walk step for the first 6 minutes at the stop
+    assert sum(c["stepIndex"] == 0 for c in waiting) * 10 >= 6 * 60
+
+
+def test_missed_stop_rides_on_past_the_stop_on_the_bus_step():
+    route = build_route()
+    stop = route["steps"][1]["to"]
+    checkins = generate("missed_stop")
+    labels = [c["expected"] for c in checkins]
+    first = labels.index("missed_stop")
+    assert set(labels[:first]) == {"normal"} and set(labels[first:]) == {"missed_stop"}
+    riding = checkins[first:]
+    assert all(c["stepIndex"] == 1 and c["speedMps"] > 4 for c in riding)
+    assert distance_m((riding[-1]["lat"], riding[-1]["lng"]), (stop["lat"], stop["lng"])) > 450
+    assert all(c["stepIndex"] <= 1 for c in checkins)
 
 
 def test_off_route_drifts_150_to_250_m():

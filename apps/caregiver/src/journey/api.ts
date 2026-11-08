@@ -1,8 +1,8 @@
-// Talking to the Journey Service. The planner only depends on the PlannerApi interface, so a
-// host app can pass its own client (its own login, base URL or caching) or a fake in tests.
+// For talking to the Journey Planner service (the backend). The service is in apps/journey-service. 
+// It is a REST API, and the types here match the JSON it sends and receives. 
 import type {
-  DataModeInfo, DataSource, DisruptionCheck, PackLink, PlaceResult, PlanOption, PlanRequest, RouteDraft, RouteStep,
-  RouteUpdate, SavedRoute, Trip,
+  DataModeInfo, DataSource, DisruptionCheck, EasyReadSuggestion, PackLink, PlaceResult, PlanOption, PlanRequest,
+  BridgePreview, LatLngTuple, Replan, RouteDraft, RouteStep, RouteUpdate, SavedRoute, Trip, TripLocation, TripPlan, UploadedPhoto,
 } from "./types";
 
 /** What the route planner needs from the backend. */
@@ -29,17 +29,44 @@ export interface SavedRoutesApi {
    * refused (409) instead of deleted. Refused too while one of its trips is under way (409).
    */
   deleteRoute(routeId: string, version?: number): Promise<void>;
+  /**
+   * AI wording for every step, for the caregiver to check and edit. Nothing is saved. Slow (the AI runs on
+   * CPU); when the AI is unavailable the answer has the standard wording and `provider: "template"`.
+   */
+  suggestEasyRead(routeId: string): Promise<EasyReadSuggestion>;
+  /** The longest wording one step may have: the service's own setting (EASYREAD_MAX_CHARS), so the editor matches it. */
+  getEasyReadLimits?(): Promise<{ maxChars: number }>;
+  /** Stores a photo for a step (JPEG, PNG or WebP, up to 5 MB). The route only changes when it is saved with the key. */
+  uploadStepPhoto(routeId: string, photo: File): Promise<UploadedPhoto>;
 }
 
 /** What the trips list needs from the backend. */
 export interface TripsApi {
   /** A traveller's trips, newest day first (only those the caller may see). */
   listTrips(travellerId: string): Promise<Trip[]>;
+  // one trip, to find the route it follows
+  getTrip(tripId: string): Promise<Trip>;
   /** Needs an approved route. `date` is YYYY-MM-DD. */
   createTrip(routeId: string, date: string): Promise<Trip>;
   startTrip(tripId: string): Promise<Trip>;
   endTrip(tripId: string): Promise<Trip>;
   tripPack(tripId: string): Promise<PackLink>;
+  /** Changing a trip under way (the route's caregiver only): send or dismiss the proposed bridging bus. */
+  sendBridge?(tripId: string): Promise<Trip>;
+  dismissBridge?(tripId: string): Promise<Trip>;
+  /** New routes from where the traveller is, and sending one of them to the traveller. */
+  replanTrip?(tripId: string): Promise<Replan>;
+  applyReplan?(tripId: string, steps: RouteStep[], stepPaths?: LatLngTuple[][]): Promise<Trip>;
+  /** What the free bus past a breakdown would change the trip's steps to (nothing is changed). */
+  previewBridge?(tripId: string): Promise<BridgePreview>;
+  /** Switch the trip (under way or not started) to the free bus past a breakdown now. */
+  applyBridge?(tripId: string): Promise<Trip>;
+  /** Send a route saved (and approved) for the trip: it replaces the traveller's steps from the current one on. */
+  sendRoute?(tripId: string, routeId: string): Promise<Trip>;
+  /** Where the traveller of a trip under way is (their check-ins). */
+  tripLocation?(tripId: string): Promise<TripLocation>;
+  /** The steps the traveller follows now, with their lines on the map and where trains aren't running. */
+  tripPlan?(tripId: string): Promise<TripPlan>;
 }
 
 /** Re-checking planned or saved steps against LTA's alerts (used by the plan tab, saved routes and trips). */
@@ -122,9 +149,27 @@ export class JourneyApi implements PlannerApi, SavedRoutesApi, TripsApi, Disrupt
     await this.request<null>(`/api/routes/${encodeURIComponent(routeId)}${query}`, { method: "DELETE" });
   }
 
+  suggestEasyRead(routeId: string): Promise<EasyReadSuggestion> {
+    return this.request<EasyReadSuggestion>(`/api/routes/${encodeURIComponent(routeId)}/easy-read`, { method: "POST" });
+  }
+
+  getEasyReadLimits(): Promise<{ maxChars: number }> {
+    return this.request<{ maxChars: number }>("/api/easy-read/limits");
+  }
+
+  uploadStepPhoto(routeId: string, photo: File): Promise<UploadedPhoto> {
+    const form = new FormData();
+    form.append("photo", photo);
+    return this.request<UploadedPhoto>(`/api/routes/${encodeURIComponent(routeId)}/photos`, { method: "POST", body: form });
+  }
+
   async listTrips(travellerId: string): Promise<Trip[]> {
     const body = await this.request<{ trips: Trip[] }>(`/api/trips?travellerId=${encodeURIComponent(travellerId)}`);
     return body.trips;
+  }
+
+  getTrip(tripId: string): Promise<Trip> {
+    return this.request<Trip>(`/api/trips/${encodeURIComponent(tripId)}`);
   }
 
   createTrip(routeId: string, date: string): Promise<Trip> {
@@ -141,6 +186,44 @@ export class JourneyApi implements PlannerApi, SavedRoutesApi, TripsApi, Disrupt
 
   tripPack(tripId: string): Promise<PackLink> {
     return this.request<PackLink>(`/api/trips/${encodeURIComponent(tripId)}/pack`);
+  }
+
+  sendBridge(tripId: string): Promise<Trip> {
+    return this.request<Trip>(`/api/trips/${encodeURIComponent(tripId)}/bridge/send`, { method: "POST" });
+  }
+
+  dismissBridge(tripId: string): Promise<Trip> {
+    return this.request<Trip>(`/api/trips/${encodeURIComponent(tripId)}/bridge/dismiss`, { method: "POST" });
+  }
+
+  replanTrip(tripId: string): Promise<Replan> {
+    return this.request<Replan>(`/api/trips/${encodeURIComponent(tripId)}/replan`, { method: "POST" });
+  }
+
+  applyReplan(tripId: string, steps: RouteStep[], stepPaths?: LatLngTuple[][]): Promise<Trip> {
+    return this.request<Trip>(`/api/trips/${encodeURIComponent(tripId)}/replan/apply`,
+      { method: "POST", body: JSON.stringify({ steps, stepPaths }) });
+  }
+
+  previewBridge(tripId: string): Promise<BridgePreview> {
+    return this.request<BridgePreview>(`/api/trips/${encodeURIComponent(tripId)}/bridge/preview`);
+  }
+
+  applyBridge(tripId: string): Promise<Trip> {
+    return this.request<Trip>(`/api/trips/${encodeURIComponent(tripId)}/bridge/use`, { method: "POST" });
+  }
+
+  sendRoute(tripId: string, routeId: string): Promise<Trip> {
+    return this.request<Trip>(`/api/trips/${encodeURIComponent(tripId)}/replan/apply`,
+      { method: "POST", body: JSON.stringify({ routeId }) });
+  }
+
+  tripPlan(tripId: string): Promise<TripPlan> {
+    return this.request<TripPlan>(`/api/trips/${encodeURIComponent(tripId)}/plan`);
+  }
+
+  tripLocation(tripId: string): Promise<TripLocation> {
+    return this.request<TripLocation>(`/api/trips/${encodeURIComponent(tripId)}/location`);
   }
 
   checkDisruptions(steps: RouteStep[]): Promise<DisruptionCheck> {
@@ -162,7 +245,8 @@ export class JourneyApi implements PlannerApi, SavedRoutesApi, TripsApi, Disrupt
 
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const headers: Record<string, string> = {};
-    if (init.body) headers["Content-Type"] = "application/json";
+    // A FormData body (a photo) sets its own multipart Content-Type, boundary included.
+    if (init.body && !(init.body instanceof FormData)) headers["Content-Type"] = "application/json";
     const token = this.getToken();
     if (token) headers.Authorization = `Bearer ${token}`;
     const devUser = this.getDevUser()?.trim();

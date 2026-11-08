@@ -48,13 +48,21 @@ def mock_onemap(name: str):
     return respx.get(ROUTE).mock(return_value=httpx.Response(200, json=onemap_fixture(name)))
 
 
-def mock_lta(arrival=None, alerts=None, incidents=None, crowd=None, forecast=None):
+def mock_lta(arrival=None, alerts=None, incidents=None, crowd=None, forecast=None, bus_routes=None, bus_services=None):
+    # Where each bus goes and how often (BusRoutes / BusServices): none known unless a test gives some.
+    respx.get(f"{LTA}/BusRoutes").mock(return_value=httpx.Response(200, json={"value": bus_routes or []}))
+    respx.get(f"{LTA}/BusServices").mock(return_value=httpx.Response(200, json={"value": bus_services or []}))
     respx.get(f"{LTA}/PCDRealTime").mock(return_value=httpx.Response(200, json=crowd or {"value": []}))
     respx.get(f"{LTA}/PCDForecast").mock(return_value=httpx.Response(200, json=forecast or {"value": []}))
     respx.get(f"{LTA}/v3/BusArrival").mock(return_value=httpx.Response(200, json=arrival or {"Services": []}))
     respx.get(f"{LTA}/TrainServiceAlerts").mock(return_value=httpx.Response(200, json=alerts or {
         "value": {"Status": 1, "AffectedSegments": [], "Message": []}}))
     respx.get(f"{LTA}/TrafficIncidents").mock(return_value=httpx.Response(200, json=incidents or {"value": []}))
+
+
+def mock_station_search():
+    """OneMap's search for a station's exits finds nothing (a plan through a breakdown asks, to draw it)."""
+    return respx.get(SEARCH).mock(return_value=httpx.Response(200, json={"found": 0, "totalNumPages": 1, "results": []}))
 
 
 def plan(**kw):

@@ -1,0 +1,34 @@
+# Fault demos: replaces the real detectors in compose.yaml with fake ones you can control.
+#
+#   docker compose -f services/analysis-dev/compose.yaml -f services/analysis-dev/compose.fakes.yaml up --build -d
+#
+# Same service names as the real detectors, so only one of each ever runs. Each fake answers
+# like a detector but takes orders while it runs (services/fake-detector):
+#   curl -X POST localhost:9001/control -H 'Content-Type: application/json' -d '{"delayMs":2000}'  # slow -> timeout
+#   curl -X POST localhost:9001/control -H 'Content-Type: application/json' -d '{"mode":"wrong"}'  # faulty detector
+# Modes: normal, problem, auto (problem when off the demo area), wrong, abstain, error.
+#
+# Go back to the real detectors: run compose.yaml on its own again.
+
+x-fake-detector: &fake-detector
+  build: ../fake-detector
+  image: careroute-fake-detector:dev
+
+services:
+  detector-route:
+    <<: *fake-detector
+    environment: { DETECTOR_ID: route-corridor, MODE: auto, PROBLEM_TYPE: off_route, CONFIDENCE: "0.8" }
+
+  detector-dwell:
+    <<: *fake-detector
+    # Always "normal": it only judges long dwells, so it never outvotes an off-route.
+    environment: { DETECTOR_ID: dwell-time, MODE: normal, CONFIDENCE: "0.8" }
+
+  detector-heading:
+    <<: *fake-detector
+    environment: { DETECTOR_ID: heading-speed, MODE: auto, PROBLEM_TYPE: wrong_direction, CONFIDENCE: "0.7" }
+
+  detector-progress:
+    <<: *fake-detector
+    # Second judge of off_route, like the real route-progress.
+    environment: { DETECTOR_ID: route-progress, MODE: auto, PROBLEM_TYPE: off_route, CONFIDENCE: "0.75" }

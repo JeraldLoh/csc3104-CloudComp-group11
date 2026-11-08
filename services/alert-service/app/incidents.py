@@ -144,7 +144,8 @@ class IncidentStore:
         expr, names, vals = _set_clause({
             "updatedAt": now,
             "lastDetectedAt": detected_at,
-            "lastLocation": location,
+            # A report with no GPS fix must not wipe the last location the caregiver can see.
+            **({"lastLocation": location} if location else {}),
             "batteryPct": report.batteryPct,
             "confidence": report.confidence,
             "lastReportId": report.reportId,
@@ -175,7 +176,7 @@ class IncidentStore:
         expr, names, vals = _set_clause({
             "state": "open", "escalationLevel": 0, "acknowledgedBy": None, "updatedAt": now, "reopenedAt": now,
         })
-        for name in ("resolvedAt", "resolvedBy", "acknowledgedAt", "expiresAt"):
+        for name in ("resolvedAt", "resolvedBy", "acknowledgedAt", "expiresAt", "lastEscalatedAt"):
             names[f"#{name}"] = name
         vals[":resolved"] = _to_dynamo("resolved")
         vals[":seenResolvedAt"] = _to_dynamo(seen_resolved_at)
@@ -183,7 +184,8 @@ class IncidentStore:
             attrs = self.db.update_item(
                 TableName=self.table,
                 Key=_key(iid),
-                UpdateExpression=expr + " REMOVE #resolvedAt, #resolvedBy, #acknowledgedAt, #expiresAt",
+                # A reopened incident is escalated again from the start (escalation.py).
+                UpdateExpression=expr + " REMOVE #resolvedAt, #resolvedBy, #acknowledgedAt, #expiresAt, #lastEscalatedAt",
                 ConditionExpression="#state = :resolved AND #resolvedAt = :seenResolvedAt",
                 ExpressionAttributeNames=names,
                 ExpressionAttributeValues=vals,
@@ -213,6 +215,47 @@ class IncidentStore:
             Limit=limit,
         )
         return [_from_dynamo(item) for item in resp["Items"]]
+
+    def open_urgent(self, below_level: int) -> list[dict]:
+        """Urgent incidents nobody has acknowledged, escalated fewer than `below_level` times (escalation.py).
+
+        A filtered Scan reads the whole table. That's fine at this project's size and survives any restart; a large
+        deployment would keep a sparse index of open urgent incidents instead."""
+        found, kwargs = [], {
+            "TableName": self.table,
+            "FilterExpression": "#state = :open AND severity = :urgent AND escalationLevel < :below",
+            "ExpressionAttributeNames": {"#state": "state"},
+            "ExpressionAttributeValues": {":open": {"S": "open"}, ":urgent": {"S": "urgent"},
+                                          ":below": {"N": str(below_level)}},
+        }
+        while True:
+            resp = self.db.scan(**kwargs)
+            found += [_from_dynamo(item) for item in resp["Items"]]
+            if "LastEvaluatedKey" not in resp:
+                return found
+            kwargs["ExclusiveStartKey"] = resp["LastEvaluatedKey"]
+
+    def claim_escalation(self, iid: str, seen_level: int, now: str | None = None) -> dict | None:
+        """Moves the incident to the next escalation level, only if it's still open at `seen_level`. Exactly one of
+        several replicas (or caregivers acknowledging at that moment) wins, so each level is sent once.
+        `now` is the escalator's clock, so the next level is timed from the same clock that found this one due."""
+        now = now or now_iso()
+        try:
+            attrs = self.db.update_item(
+                TableName=self.table,
+                Key=_key(iid),
+                UpdateExpression="SET escalationLevel = :next, lastEscalatedAt = :now, updatedAt = :now",
+                ConditionExpression="#state = :open AND escalationLevel = :seen",
+                ExpressionAttributeNames={"#state": "state"},
+                ExpressionAttributeValues={":open": {"S": "open"}, ":seen": {"N": str(seen_level)},
+                                           ":next": {"N": str(seen_level + 1)}, ":now": {"S": now}},
+                ReturnValues="ALL_NEW",
+            )["Attributes"]
+            return _from_dynamo(attrs)
+        except ClientError as e:
+            if not _condition_failed(e):
+                raise
+            return None
 
     # ------------------------------------------------------------------ state changes
     def acknowledge(self, iid: str, user_id: str | None) -> dict:

@@ -1,0 +1,36 @@
+# NodePort Services, one per service the laptop calls. The node ports match k8s/local/kind-config.yaml.
+apiVersion: v1
+kind: Service
+metadata:
+  name: checkin-service-host
+spec:
+  type: NodePort
+  selector: { app: checkin-service }
+  ports: [{ port: 8000, targetPort: 8000, nodePort: 30001 }]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aggregator-host
+spec:
+  type: NodePort
+  selector: { app: aggregator }
+  ports: [{ port: 8000, targetPort: 8000, nodePort: 30002 }]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alert-service-host
+spec:
+  type: NodePort
+  selector: { app: alert-service }
+  ports: [{ port: 8000, targetPort: 8000, nodePort: 30005 }]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: journey-service-host
+spec:
+  type: NodePort
+  selector: { app: journey-service }
+  ports: [{ port: 8000, targetPort: 8000, nodePort: 30006 }]

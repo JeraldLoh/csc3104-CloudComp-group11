@@ -43,8 +43,8 @@ def test_values_match_the_contract_example(contract_case):
     for field in ("reportId", "source", "travellerId", "tripId", "stepIndex", "problemType",
                   "detectorsUsed", "votes", "location", "batteryPct", "timestamp"):
         assert report[field] == expected[field], field
-    # The example's 0.81 is illustrative; ours is computed from its votes.
-    assert report["confidence"] == round(2.33 / 2.93, 2)
+    # The example's 0.81 is illustrative; ours is the strongest problem claim among its votes.
+    assert report["confidence"] == max(x["confidence"] for x in votes if x["verdict"] == "problem")
 
 
 def test_is_json_serialisable(contract_case):
@@ -60,7 +60,7 @@ def test_detectors_used_counts_abstains_too():
         {"detectorId": "route-corridor", "verdict": "problem", "confidence": 0.9, "problemType": "off_route"},
         {"detectorId": "dwell-time", "verdict": "abstain", "confidence": 0.0},
         {"detectorId": "heading-speed", "verdict": "problem", "confidence": 0.8, "problemType": "off_route"},
-        {"detectorId": "ml-anomaly", "verdict": "problem", "confidence": 0.7, "problemType": "off_route"},
+        {"detectorId": "route-progress", "verdict": "problem", "confidence": 0.7, "problemType": "off_route"},
     ]
     report = build_problem_report("T-001#17", checkin, votes, aggregate(votes), NOW)
     assert report["detectorsUsed"] == 4

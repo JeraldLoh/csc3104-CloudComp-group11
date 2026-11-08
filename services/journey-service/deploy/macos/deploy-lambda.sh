@@ -63,9 +63,14 @@ case "$SCHEDULE_STATE" in ENABLED|DISABLED) ;; *) die "--schedule must be ENABLE
 
 # ---------------------------------------------------------------------------
 step "Checking prerequisites"
-for cmd in aws docker shasum; do
+for cmd in aws docker; do
   command -v "$cmd" >/dev/null 2>&1 || die "'$cmd' is not installed or not on PATH"
 done
+# macOS has shasum; many Linux installs (Fedora, Alpine, minimal Debian) only have sha256sum. Same output format.
+if command -v sha256sum >/dev/null 2>&1; then SHA256="sha256sum"
+elif command -v shasum >/dev/null 2>&1; then SHA256="shasum -a 256"
+else die "Neither 'sha256sum' nor 'shasum' is installed"
+fi
 docker info >/dev/null 2>&1 || die "Docker is not running. Start Docker Desktop and retry."
 ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text 2>/dev/null)" \
   || die "AWS credentials are not configured (run 'aws configure')"
@@ -111,7 +116,7 @@ bash "$SCRIPT_DIR/build-lambda.sh" --verify || die "The build failed"
 
 # ---------------------------------------------------------------------------
 step "Uploading the package"
-HASH="$(shasum -a 256 "$ZIP" | cut -c1-12)"
+HASH="$($SHA256 "$ZIP" | cut -c1-12)"
 CODE_KEY="lambda/disruption-checker-$HASH.zip"
 aws s3 cp "$ZIP" "s3://$BUCKET/$CODE_KEY" --region "$REGION" --only-show-errors
 info "s3://$BUCKET/$CODE_KEY"

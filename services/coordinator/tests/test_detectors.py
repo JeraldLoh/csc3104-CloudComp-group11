@@ -77,9 +77,9 @@ def test_our_ids_and_latency_win_over_the_detectors_own():
 
 
 def test_detectors_are_called_in_parallel():
-    slow = {h: answers(vote(), delay_s=0.1) for h in ("detector-route", "detector-heading", "detector-dwell", "detector-ml")}
+    slow = {h: answers(vote(), delay_s=0.1) for h in ("detector-route", "detector-heading", "detector-dwell", "detector-progress")}
     start = time.perf_counter()
-    votes, _ = run(slow, ["route-corridor", "heading-speed", "dwell-time", "ml-anomaly"], timeout_s=1)
+    votes, _ = run(slow, ["route-corridor", "heading-speed", "dwell-time", "route-progress"], timeout_s=1)
     elapsed = time.perf_counter() - start
     assert len(votes) == 4 and all(v["verdict"] == "normal" for v in votes)
     assert elapsed < 0.3   # ~0.1 s in parallel, not 0.4 s one after another

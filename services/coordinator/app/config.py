@@ -21,7 +21,13 @@ class Settings:
     # Local development only: create the queue on startup.
     create_queue: bool = field(default_factory=lambda: _bool("CREATE_QUEUE", False))
 
-    redundancy_mode: str = field(default_factory=lambda: os.getenv("REDUNDANCY_MODE", "adaptive"))
+    # fixed4 by default: every check-in is checked by every detector, because a missed alert is the
+    # unsafe failure. adaptive and fixed2 stay for the experiment (adaptive vs fixed4).
+    redundancy_mode: str = field(default_factory=lambda: os.getenv("REDUNDANCY_MODE", "fixed4"))
+    # Which pair at normal risk: "step" (fits the journey step) or "fixed" (NORMAL_PAIR always).
+    pair_strategy: str = field(default_factory=lambda: os.getenv("PAIR_STRATEGY", "step"))
+    # On a bus/train step, slower than this counts as waiting at the stop, faster as riding.
+    waiting_below_mps: float = field(default_factory=lambda: float(os.getenv("WAITING_BELOW_MPS", "2.0")))
     normal_pair: tuple[str, ...] = field(default_factory=lambda: tuple(
         d.strip() for d in os.getenv("NORMAL_PAIR", ",".join(DEFAULT_PAIR)).split(",") if d.strip()))
     detector_urls: dict = field(default_factory=lambda: parse_urls(os.getenv("DETECTOR_URLS", "")))

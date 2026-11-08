@@ -33,7 +33,9 @@ def v(detector, verdict, confidence=0.8, problem_type=None):
 
 BOTH_PROBLEM = [v("route-corridor", "problem", 0.9), v("dwell-time", "problem", 0.7)]
 BOTH_NORMAL = [v("route-corridor", "normal", 0.9), v("dwell-time", "normal", 0.7)]
-SPLIT = [v("route-corridor", "problem", 0.8), v("dwell-time", "normal", 0.8)]
+# The first pair on an off-route check-in: dwell-time can't judge the route, so the
+# Aggregator wants a second opinion from a detector that can (route-progress).
+FIRST_PAIR_OFF_ROUTE = [v("route-corridor", "problem", 0.8), v("dwell-time", "normal", 0.8)]
 
 
 class AlertService:
@@ -137,29 +139,65 @@ def test_keys_expire_after_a_day():
 
 # --- close calls change nothing -------------------------------------------------------------------
 
-def test_close_call_asks_for_more_votes_without_side_effects():
-    [reply], state, alert = run([("T-001#17", SPLIT)])
+def test_first_pair_alerts_on_off_route_at_once():
+    # One credible claim is enough: no second opinion before alerting.
+    [reply], state, alert = run([("T-001#17", FIRST_PAIR_OFF_ROUTE)])
+    assert reply["decision"] == "problem" and reply["needsMoreVotes"] is False
+    assert len(alert.reports) == 1
+
+
+ONE_ANSWER = [v("route-corridor", "normal", 0.9), {**v("dwell-time", "abstain", 0.0), "reason": "need history"}]
+
+
+def test_too_few_answers_asks_for_more_votes_without_side_effects():
+    [reply], state, alert = run([("T-001#17", ONE_ANSWER)])
     assert reply["decision"] == "inconclusive"
-    assert reply["needsMoreVotes"] is True and reply["reason"] == "split"
+    assert reply["needsMoreVotes"] is True and reply["reason"] == "quorum"
     assert alert.reports == []
     assert state["risk"] == {} and state["decisions"] == [] and state["answers"] == {}
 
 
-def test_close_call_then_four_votes_decides():
-    four = SPLIT + [v("heading-speed", "problem", 0.7), v("ml-anomaly", "problem", 0.6)]
-    replies, state, alert = run([("T-001#17", SPLIT), ("T-001#17", four, True)])
+def test_too_few_answers_then_four_votes_decides():
+    four = ONE_ANSWER + [v("heading-speed", "normal", 0.7), v("route-progress", "problem", 0.6)]
+    replies, state, alert = run([("T-001#17", ONE_ANSWER), ("T-001#17", four, True)])
     assert [r["decision"] for r in replies] == ["inconclusive", "problem"]
     assert len(alert.reports) == 1 and alert.reports[0]["detectorsUsed"] == 4
     assert len(state["decisions"]) == 1 and state["decisions"][0]["k"] == 4
 
 
-def test_final_inconclusive_records_and_raises_risk_without_alert():
-    blind = [v("route-corridor", "problem", 0.9)] + [v(d, "abstain", 0.0) for d in ("dwell-time", "heading-speed", "ml-anomaly")]
+def abstain(detector, reason):
+    return {**v(detector, "abstain", 0.0), "reason": reason}
+
+
+def test_final_inconclusive_because_detectors_failed_raises_risk_without_alert():
+    blind = [v("route-corridor", "normal", 0.9), abstain("dwell-time", "timeout"),
+             abstain("heading-speed", "error: ConnectError"), abstain("route-progress", "timeout")]
     [reply], state, alert = run([("T-001#17", blind)])
     assert reply["decision"] == "inconclusive" and reply["needsMoreVotes"] is False
     assert alert.reports == []
     assert state["risk"]["level"] == "elevated"
     assert state["decisions"][0]["decision"] == "inconclusive"
+
+
+def test_start_of_trip_inconclusive_leaves_risk_unchanged():
+    # First check-in: the detectors need history before they can judge (their own reasons).
+    warming_up = [v("dwell-time", "normal", 0.95),
+                  abstain("route-corridor", "only 1 usable check-in(s), need 3"),
+                  abstain("heading-speed", "not moving enough to judge direction (0 of 1 usable check-ins)"),
+                  abstain("route-progress", "only 1 usable check-in(s), need 3")]
+    [reply], state, alert = run([("T-001#17", warming_up)])
+    assert reply["decision"] == "inconclusive"
+    assert reply["riskLevel"] == "normal"
+    assert alert.reports == []
+    assert state["decisions"][0]["decision"] == "inconclusive"        # still recorded for the dashboard
+    assert state["decisions"][0]["riskAfter"] == {"level": "normal", "score": 0.0}
+
+
+def test_journey_start_then_normal_stays_at_normal_risk():
+    warming_up = [v("dwell-time", "normal", 0.95), abstain("route-corridor", "only 1 usable check-in(s), need 3"),
+                  abstain("route-progress", "only 1 usable check-in(s), need 3"), abstain("heading-speed", "not moving")]
+    replies, _, _ = run([("T-001#1", warming_up), ("T-001#2", warming_up), ("T-001#3", BOTH_NORMAL)])
+    assert [r["riskLevel"] for r in replies] == ["normal", "normal", "normal"]
 
 
 # --- repeats are safe ---------------------------------------------------------------------------
@@ -219,11 +257,13 @@ def test_alert_failure_saves_nothing_and_the_retry_succeeds_cleanly():
 # --- reliability weights ---------------------------------------------------------------------------
 
 def test_detector_weights_from_redis_are_used():
-    votes = [v("route-corridor", "problem", 0.5), v("dwell-time", "normal", 0.9)]
+    # route-corridor known to be faulty: reliability 0 in detector:weights silences it.
+    votes = [v("route-corridor", "problem", 0.9), v("route-progress", "normal", 0.9),
+             v("dwell-time", "normal", 0.9), v("heading-speed", "normal", 0.9)]
     [plain], _, _ = run([("T-001#17", votes)])
-    [weighted], _, _ = run([("T-001#17", votes)], seed={WEIGHTS_KEY: {"dwell-time": "0.3"}})
-    assert plain["decision"] == "normal"
-    assert weighted["decision"] == "problem"
+    [silenced], _, _ = run([("T-001#17", votes)], seed={WEIGHTS_KEY: {"route-corridor": "0"}})
+    assert plain["decision"] == "problem"
+    assert silenced["decision"] == "normal"
 
 
 def test_bad_weights_are_ignored():
@@ -245,3 +285,16 @@ def test_decision_lists_are_trimmed():
     _, state, _ = run(calls, decisions_per_traveller=3, decisions_recent=4)
     assert [d["seq"] for d in state["decisions"]] == [5, 4, 3]
     assert len(state["recent"]) == 4
+
+
+def test_situation_from_the_coordinator_is_kept_in_the_record():
+    async def go():
+        redis = fakeredis.FakeAsyncRedis(decode_responses=True)
+        async with httpx.AsyncClient(transport=httpx.MockTransport(AlertService().handler)) as http:
+            svc = AggregatorService(redis, http, settings())
+            await svc.handle("T-001#17", CHECKIN, BOTH_NORMAL, now=NOW, situation="walking")
+            await svc.handle("T-001#18", {**CHECKIN, "seq": 18}, BOTH_NORMAL, now=NOW)
+            return [json.loads(x) for x in await redis.lrange(traveller_decisions_key("U-042"), 0, -1)]
+    newest, oldest = asyncio.run(go())
+    assert oldest["situation"] == "walking"
+    assert newest["situation"] is None

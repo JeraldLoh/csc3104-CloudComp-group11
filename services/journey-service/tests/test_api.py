@@ -39,3 +39,9 @@ def test_route_lifecycle_over_http():
 
         listed = c.get("/api/routes", params={"travellerId": "U-042"}).json()["routes"]
         assert [r["routeId"] for r in listed] == [rid] and listed[0]["approved"] is True
+
+
+def test_easy_read_limit_comes_from_the_one_setting():
+    from app.easy_read import MAX_CHARS
+    with TestClient(make_app()) as c:
+        assert c.get("/api/easy-read/limits").json() == {"maxChars": MAX_CHARS}

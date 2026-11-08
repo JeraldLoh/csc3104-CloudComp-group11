@@ -29,7 +29,7 @@ spec:
             - { name: REDIS_URL, value: "redis://__REDIS_ENDPOINT__:6379/0" }
             - { name: CHECKINS_QUEUE_URL, value: "__CHECKINS_QUEUE_URL__" }
             - { name: AWS_DEFAULT_REGION, value: "__REGION__" }
-            - { name: REDUNDANCY_MODE, value: "adaptive" }   # adaptive | fixed2 | fixed4
+            - { name: REDUNDANCY_MODE, value: "fixed4" }     # fixed4 | adaptive | fixed2
             # Detector and Aggregator URLs default to the in-cluster service names.
           resources:                      # Fargate sizes the pod from these
             requests: { cpu: 250m, memory: 512Mi }

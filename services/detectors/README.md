@@ -44,7 +44,7 @@ One image for all four detectors; `DETECTOR_ID` picks which one runs. Deployment
 HPA 2-4 replicas at 60% CPU, preferred pod anti-affinity across nodes and zones) and one tiny
 kustomization per detector that names it and sets `DETECTOR_ID`. The Services are
 `detector-route`, `-heading`, `-dwell` and `-progress`. They are not part of
-`kubectl apply -k k8s/local` (so teammates without the image aren't affected, like `alert-service`); apply them
+`kubectl apply -k k8s/local` (so teammates without the image aren't affected); apply them
 with `kubectl apply -k k8s/local/detectors`. They read Redis from `cloud-redis`, so apply `k8s/local` first.
 
 ```bash
@@ -63,7 +63,7 @@ The HPA shows `<unknown>` CPU until metrics-server is installed in the kind clus
 
 `compose.yaml` starts Redis, a one-shot `seed` job and the four detectors (8101 route-corridor,
 8102 heading-speed, 8103 dwell-time, 8104 route-progress). `dev/seed.py` writes one mock trip per simulator scenario
-(`off_route`, `wrong_direction`, `long_dwell`, `normal`, `normal_bus_wait`, `poor_gps`) into Redis,
+(`off_route`, `wrong_direction`, `long_dwell`, `missed_stop`, `normal`, `normal_bus_wait`, `poor_gps`) into Redis,
 using the same keys as `contracts/redis-keys.md`.
 
 ```bash
@@ -76,7 +76,18 @@ docker compose down
 
 `--request <scenario>` prints a `detector-request.json` for the scenario's interesting moment; send it
 to any port. `dev/seed.py` also runs on the host (`python dev/seed.py --redis redis://localhost:6379/0`)
-to re-seed. `long_dwell` makes dwell-time abstain: Redis only keeps 10 check-ins (see the dwell-time docstring).
+to re-seed. `long_dwell` makes dwell-time abstain here: the seed only writes 10 check-ins and no `trip:{id}:dwell`.
+
+## Dwell-time
+
+`trip:{id}:recent` holds 10 check-ins, about 90 s, far shorter than the 300 s walking limit. So dwell-time keeps
+where and when the traveller stopped in `trip:{id}:dwell` (24 h expiry), and times the stop from there while the
+newest check-in stays within `DWELL_RADIUS_M` of that spot. Moving off starts a new stop. Without that key, as
+after a Redis restart, it falls back to the window and abstains when the whole window is stationary.
+
+The traveller app only moves to the next step when the traveller presses Next, so someone waiting at the
+bus stop is often still on the walk step. Within `DWELL_STOP_M` (50 m) plus GPS accuracy of the walk's end
+stop, when a bus or train boards there next, dwell-time uses the 20 minute transit limit.
 
 ### Replay a whole scenario
 
@@ -90,6 +101,49 @@ python -m tools.simulator replay --all                     # every scenario, the
 Flags: `--redis`, `--detectors` (comma-separated URLs), `--speed` (0 = fast, 1 = real time),
 `--no-browser` (clean check-ins), `--seed`. The summary lists true positives, false alarms, abstains and the
 detection delay in check-ins (only for the problem each detector owns). `results/` is git-ignored.
+
+### Watch a scenario in the caregiver app
+
+`replay` and `load` call the detectors directly. `live` goes through the real services instead, as a phone would:
+it starts a trip in the Journey Service, posts each check-in to the Check-in Service, and the Coordinator, detectors,
+Aggregator and Alert Service do the rest. The caregiver app shows the traveller moving and the alerts they raise.
+
+Locally, one script brings up the whole chain on kind, starts the caregiver app and sends the trip (repo README,
+"Everything in one command"):
+
+```powershell
+.\scripts\windows\local-sim.ps1 -Scenario off_route -Caregiver G-777       # Windows
+bash scripts/macos/local-sim.sh --scenario off_route --caregiver G-777        # Mac or Linux
+```
+
+While it runs, send more trips from another terminal at the repo root (only the standard library, no venv needed;
+on Windows use `py` if `python` isn't found):
+
+```powershell
+python -m tools.simulator live --scenario off_route --caregiver G-777
+```
+
+In the app, type the same caregiver in **Act as** and open the traveller on the Dashboard: the map shows the planned
+route dashed and the trail in blue. The command uses the caregiver's first traveller, or makes one called Sim Alex.
+It ends the trip after the last check-in (`--keep-trip` leaves it active) and lists the incidents it raised.
+
+| Flag | Default | What |
+|---|---|---|
+| `--interval` | 1 | seconds between sends; timestamps stay 10 s apart, so a 15 min dwell takes 90 s at 1, real time at 10 |
+| `--traveller` | caregiver's first | a traveller id to use instead |
+| `--journey`, `--checkin`, `--alert` | localhost 8006, 8001, 8005 | service addresses |
+| `--seed` | new each run | same seed, same check-ins |
+
+On EKS only the Check-in Service is public, and the Alert Service runs with login off, so it can't tell which
+caregiver is asking for profiles. Port-forward the Journey and Alert Services from the EKS cluster, point
+`--checkin` at the load balancer and give a traveller id:
+
+```powershell
+python -m tools.simulator live --scenario off_route --traveller U-SIM-001 --checkin http://LOAD-BALANCER-ADDRESS
+```
+
+The detection chain runs and the command lists the incidents, but the caregiver map stays empty until the cloud
+has a login (issue 1.5).
 
 ### Load test: many travellers at once, and watching the HPAs scale
 
@@ -132,7 +186,7 @@ Each env var is the field name in upper case. Defaults are in `detectors/config.
 | `DETECTOR_ID` | none | all |
 | `REDIS_URL` | `redis://localhost:6379/0` | all |
 | `GPS_MAX_ACCURACY_M` | 50 | all (abstain above this) |
-| `CORRIDOR_M`, `CORRIDOR_CONSECUTIVE` | 100, 3 | route-corridor, route-progress |
+| `CORRIDOR_M`, `CORRIDOR_CONSECUTIVE` | 100, 3 | route-corridor, route-progress; heading-speed abstains beyond `CORRIDOR_M` |
 | `MIN_MOVING_SPEED_MPS`, `WRONG_DIR_DEG` | 0.5, 120 | heading-speed |
 | `WALK_MAX_SPEED_MPS` | 4 | heading-speed, route-progress |
 | `DWELL_RADIUS_M`, `DWELL_WALK_S`, `DWELL_TRANSIT_S` | 30, 300, 1200 | dwell-time |
