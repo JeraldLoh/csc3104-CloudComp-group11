@@ -6,6 +6,7 @@ import { StepCard } from "./components/StepCard";
 import { HelpSheet } from "./components/HelpSheet";
 import { WhereSheet } from "./components/WhereSheet";
 import { DebugPanel } from "./components/DebugPanel";
+import { sentenceStart } from "./lib/easyRead";
 import type { Session } from "./types";
 
 export default function App() {
@@ -42,6 +43,7 @@ function Journey({ session, demo, debug }: { session: Session; demo: boolean; de
   }, [app.routeChangedAt]);
   const pack = app.loaded?.pack;
   const caregiver = pack?.caregiver.name ?? "your caregiver";
+  const Caregiver = sentenceStart(caregiver);
   const debugPanel = debug ? <DebugPanel app={app} /> : null;
 
   if (app.phase === "loading") {
@@ -90,7 +92,7 @@ function Journey({ session, demo, debug }: { session: Session; demo: boolean; de
           <Tick />
           <h1>You made it</h1>
           <p className="lead">
-            {told ? `${caregiver} knows you have arrived.` : `We are telling ${caregiver} you have arrived.`}
+            {told ? `${Caregiver} knows you have arrived.` : `We are telling ${caregiver} you have arrived.`}
           </p>
         </div>
         {debugPanel}

@@ -135,6 +135,22 @@ h1 { font-size: 1.75rem; line-height: 1.2; font-weight: 700; }
 /* Capped so the instruction and the main button stay on screen on a normal-sized phone. */
 .sign__photo { width: 100%; aspect-ratio: 16 / 10; max-height: 26dvh; object-fit: contain; border-radius: 12px; background: var(--paper); }
 .sign__text { font-size: 1.6rem; line-height: 1.28; font-weight: 700; }
+/* Several actions: one per line with a bullet, a little smaller so a 6-7 point bus step still fits. */
+.sign__points { font-size: 1.4rem; margin: 0; padding-left: 1.1em; display: flex; flex-direction: column; gap: 6px; }
+.sign__points li::marker { color: var(--band); }
+/* "Look for ..." photos of the landmarks the wording names: side by side when there are two or more. */
+.sign__landmarks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+}
+.sign__landmark { margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.sign__landmark-photo { width: 100%; aspect-ratio: 4 / 3; max-height: 22dvh; object-fit: cover; border-radius: 10px; background: var(--paper); }
+.sign__landmark figcaption { font-size: 1rem; line-height: 1.3; font-weight: 700; }
+.sign__landmark-note { font-size: 1rem; line-height: 1.3; font-weight: 700; }
 .sign__backup {
   font-size: 1rem;
   padding: 10px 12px;

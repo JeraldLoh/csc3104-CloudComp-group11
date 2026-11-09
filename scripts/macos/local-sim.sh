@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# local stack on kind plus the caregiver app and optionally one simulated trip, also for linux
+# local stack on kind plus the caregiver and traveller apps and optionally one simulated trip, also for linux
 #   bash scripts/macos/local-sim.sh --setup                          first time and after code changes
 #   bash scripts/macos/local-sim.sh --scenario off_route --caregiver G-777
 set -euo pipefail
@@ -8,6 +8,7 @@ CLUSTER=csc3104-local
 NS=csc3104
 CONFIG=k8s/local/kind-config.yaml
 APP_URL=http://localhost:5174
+TRAVELLER_URL=http://localhost:5173
 # image name and build folder
 IMAGES=(
   "cloud-fastapi:."
@@ -70,20 +71,37 @@ if docker --version 2>/dev/null | grep -qi podman || { ! command -v docker >/dev
 fi
 ENGINE=$([ "$PODMAN" = 1 ] && echo podman || echo docker)
 
-# cluster made from the config so its ports reach localhost
+# cluster made from the current config so its ports reach localhost (30566, LocalStack, is the newest one)
 cluster_ready() {
   kind get clusters 2>/dev/null | grep -qx "$CLUSTER" || return 1
-  "$ENGINE" port "$CLUSTER-control-plane" 30001/tcp >/dev/null 2>&1 || return 2
+  "$ENGINE" port "$CLUSTER-control-plane" 30566/tcp >/dev/null 2>&1 || return 2
+}
+
+# host ports in the config that something else already uses (a compose stack, another LocalStack), so kind
+# couldn't create the cluster; with an old cluster ($1 = 1), the ports it publishes itself are its own and skipped
+busy_ports() {
+  local have_cluster=$1 container host busy=""
+  while read -r container host; do
+    if [ "$have_cluster" = 1 ] && "$ENGINE" port "$CLUSTER-control-plane" "$container/tcp" >/dev/null 2>&1; then
+      continue
+    fi
+    # bash's /dev/tcp: connects only if something listens there
+    if (exec 3<>"/dev/tcp/127.0.0.1/$host") 2>/dev/null; then busy="$busy $host"; fi
+  done < <(sed -nE 's/.*containerPort: *([0-9]+), *hostPort: *([0-9]+).*/\1 \2/p' "$CONFIG")
+  echo "${busy# }"
 }
 
 ensure_cluster() {
-  local state=0
+  local state=0 busy
   cluster_ready || state=$?
   [ "$state" = 0 ] && return
   [ "$SETUP" = 1 ] || {
     [ "$state" = 1 ] && die "no kind cluster $CLUSTER yet, run once with --setup"
-    die "cluster $CLUSTER was made without $CONFIG, run with --setup to recreate it"
+    die "cluster $CLUSTER was made with an older $CONFIG (it has no port 4566 for LocalStack's pack and photo links). Run with --setup to recreate it; its data (Redis, LocalStack) is lost"
   }
+  # before deleting anything: a port kind needs that is taken would leave no cluster at all
+  busy=$(busy_ports "$([ "$state" = 2 ] && echo 1 || echo 0)")
+  [ -z "$busy" ] || die "port(s) $busy on localhost are already in use, e.g. by services/journey-service/compose.journey.yaml (Journey Service on 8006, LocalStack on 4566). Stop it first (docker compose ... down); $CLUSTER was not changed"
   if [ "$state" = 2 ]; then
     echo "recreating $CLUSTER with $CONFIG, its data is lost"
     # rootless podman can report a network clean up error after removing the cluster
@@ -145,8 +163,10 @@ wait_for() {
 }
 
 APP_PID=""
+TRAVELLER_PID=""
 stop_app() {
   [ -n "$APP_PID" ] && kill "$APP_PID" 2>/dev/null || true
+  [ -n "$TRAVELLER_PID" ] && kill "$TRAVELLER_PID" 2>/dev/null || true
 }
 
 start_app() {
@@ -162,6 +182,19 @@ start_app() {
   wait_for "$APP_URL" "the caregiver app (log in /tmp/careroute-caregiver.log)"
 }
 
+# the traveller app, where the caregiver app's trip links lead
+start_traveller_app() {
+  if curl -sf -m 2 -o /dev/null "$TRAVELLER_URL"; then
+    echo "traveller app already running"
+    return
+  fi
+  (cd apps/traveller && { [ -d node_modules ] || npm ci --no-audit --no-fund >/dev/null; })
+  (cd apps/traveller && exec ./node_modules/.bin/vite --strictPort >/tmp/careroute-traveller.log 2>&1) &
+  TRAVELLER_PID=$!
+  trap stop_app EXIT INT TERM
+  wait_for "$TRAVELLER_URL" "the traveller app (log in /tmp/careroute-traveller.log)"
+}
+
 ensure_cluster
 kubectl config use-context "kind-$CLUSTER" >/dev/null
 [ "$SETUP" = 1 ] && build_and_load
@@ -171,6 +204,7 @@ for entry in "${HEALTH[@]}"; do
   wait_for "http://localhost:${entry%% *}/health" "${entry#* }"
 done
 start_app
+start_traveller_app
 
 if [ -n "$SCENARIO" ]; then
   "$PYTHON" -m tools.simulator live --scenario "$SCENARIO" --caregiver "$CAREGIVER" --interval "$INTERVAL"
@@ -178,9 +212,11 @@ fi
 
 echo
 echo "caregiver app: $APP_URL  act as $CAREGIVER"
+echo "traveller app: $TRAVELLER_URL  open a trip's link from the caregiver app's Trips tab"
 echo "aggregator dashboard: http://localhost:8002/dashboard"
 echo "another trip: $PYTHON -m tools.simulator live --scenario off_route --caregiver $CAREGIVER"
-if [ -n "$APP_PID" ]; then
-  echo "press Ctrl+C to stop the app, the cluster keeps running"
-  wait "$APP_PID" || true
+# keep running while either app started here runs, so the exit trap doesn't stop the other one
+if [ -n "$APP_PID$TRAVELLER_PID" ]; then
+  echo "press Ctrl+C to stop the apps, the cluster keeps running"
+  wait $APP_PID $TRAVELLER_PID || true
 fi

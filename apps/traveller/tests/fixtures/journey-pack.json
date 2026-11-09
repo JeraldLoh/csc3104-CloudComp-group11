@@ -1,0 +1,77 @@
+{
+  "packVersion": "R-2C1C66-v1",
+  "routeId": "R-2C1C66",
+  "routeVersion": 1,
+  "travellerName": null,
+  "steps": [
+    {
+      "stepIndex": 0,
+      "mode": "walk",
+      "easyRead": "Walk to the bus stop at Punggol Interchange. Look for Waterway Point on your left.",
+      "lat": 1.4052,
+      "lng": 103.9024,
+      "underground": false,
+      "photoUrl": "https://careroute-files.s3.ap-southeast-1.amazonaws.com/media/streetview/v2/1.40520_103.90240.jpg?X-Amz-Signature=test",
+      "audioUrl": null,
+      "backup": null,
+      "landmarks": [
+        {
+          "name": "Waterway Point",
+          "photoUrl": "https://careroute-files.s3.ap-southeast-1.amazonaws.com/media/streetview/v2/1.40640_103.90220_from_1.40450_103.90180.jpg?X-Amz-Signature=test",
+          "sameView": null
+        }
+      ]
+    },
+    {
+      "stepIndex": 1,
+      "mode": "bus",
+      "easyRead": "Wait for bus number 190. Tap your card. Count 6 stops. Look out for Oasis Terraces on your right. Press the bell. Get off at Block 221.",
+      "lat": 1.3935,
+      "lng": 103.8962,
+      "underground": false,
+      "photoUrl": "https://careroute-files.s3.ap-southeast-1.amazonaws.com/media/streetview/v2/1.39350_103.89620.jpg?X-Amz-Signature=test",
+      "audioUrl": null,
+      "backup": "If bus 190 does not come in 20 minutes, take bus 83.",
+      "landmarks": [
+        {
+          "name": "Oasis Terraces",
+          "photoUrl": "https://careroute-files.s3.ap-southeast-1.amazonaws.com/media/streetview/v2/1.40260_103.91280_from_1.40100_103.91000.jpg?X-Amz-Signature=test",
+          "sameView": null
+        },
+        {
+          "name": "Block 221",
+          "photoUrl": null,
+          "sameView": "step"
+        }
+      ]
+    }
+  ],
+  "path": [
+    [
+      1.404,
+      103.901
+    ],
+    [
+      1.4052,
+      103.9024
+    ],
+    [
+      1.3935,
+      103.8962
+    ],
+    [
+      1.392,
+      103.895
+    ]
+  ],
+  "caregiver": {
+    "name": null,
+    "phone": null
+  },
+  "messages": {
+    "somethingChanged": "Something has changed. Stay where you are. Your caregiver has been told.",
+    "offRoute": "You may be going the wrong way. Stop and look at the next picture.",
+    "help": "Press the big red button if you need help."
+  },
+  "generatedAt": "2026-10-22T00:00:00Z"
+}
