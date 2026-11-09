@@ -1,0 +1,13 @@
+{
+  "odata.metadata": "https://datamall2.mytransport.sg/ltaodataservice/$metadata#TrainServicesAlerts",
+  "value": {
+    "Status": 1,
+    "AffectedSegments": [],
+    "Message": [
+      {
+        "Content": "06/11/2026 10:06-Bus services 170 and 170X have been diverted from Woodlands Road to ply along Woodlands Avenue 3 and Woodlands Centre Road in the Woodlands Direction, due to heavy traffic entering Woodlands Checkpoint.",
+        "CreatedDate": "2026-11-06 10:08:04"
+      }
+    ]
+  }
+}

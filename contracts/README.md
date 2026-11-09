@@ -26,8 +26,9 @@ This folder is how our services agree on what they send each other. If your code
 | `problem-report.json` | Aggregator (M3) | Alert Service (M5) |
 | `problem-report-no-response.json` | Heartbeat Monitor (M1) | Alert Service (M5) |
 | `incident.json` | Alert Service (M5) | Stored in DynamoDB; shown on dashboard |
-| `alert-event.json` | Alert Service (M5) | Caregiver dashboard (live, SSE) |
+| `alert-event.json` | Alert Service (M5) | Caregiver dashboard (live, SSE); `event` is `incident.opened`, `updated`, `reopened`, `escalated`, `acknowledged` or `resolved` |
 | `arrival-event.json` | Alert Service (M5) | Caregiver dashboard (live, SSE) |
+| `where-event.json` | Alert Service (M5) | Caregiver dashboard (live, SSE) |
 | `disruption.json` | Disruption Lambda (M6) | Alert Service (M5), via SQS |
 | `route.json` | Journey Service (M6) | Dashboard, pack builder (M2) |
 | `trip.json` | Journey Service (M6) | Detectors (M4), Heartbeat (M1), app (M2) |

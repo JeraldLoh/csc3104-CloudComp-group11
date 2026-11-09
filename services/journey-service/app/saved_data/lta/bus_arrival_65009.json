@@ -1,0 +1,726 @@
+{
+  "odata.metadata": "https://datamall2.mytransport.sg/ltaodataservice/v3/BusArrival",
+  "BusStopCode": "65009",
+  "Services": [
+    {
+      "ServiceNo": "118",
+      "Operator": "GAS",
+      "NextBus": {
+        "OriginCode": "65009",
+        "DestinationCode": "97009",
+        "EstimatedArrival": "2026-11-06T16:23:00+08:00",
+        "Monitored": 0,
+        "Latitude": "0.0",
+        "Longitude": "0.0",
+        "VisitNumber": "1",
+        "Load": "SEA",
+        "Feature": "WAB",
+        "Type": "DD"
+      },
+      "NextBus2": {
+        "OriginCode": "65009",
+        "DestinationCode": "97009",
+        "EstimatedArrival": "2026-11-06T16:31:00+08:00",
+        "Monitored": 0,
+        "Latitude": "0.0",
+        "Longitude": "0.0",
+        "VisitNumber": "1",
+        "Load": "SEA",
+        "Feature": "WAB",
+        "Type": "DD"
+      },
+      "NextBus3": {
+        "OriginCode": "65009",
+        "DestinationCode": "97009",
+        "EstimatedArrival": "2026-11-06T16:39:00+08:00",
+        "Monitored": 0,
+        "Latitude": "0.0",
+        "Longitude": "0.0",
+        "VisitNumber": "1",
+        "Load": "SEA",
+        "Feature": "WAB",
+        "Type": "DD"
+      }
+    },
+    {
+      "ServiceNo": "119",
+      "Operator": "GAS",
+      "NextBus": {
+        "OriginCode": "65009",
+        "DestinationCode": "65009",
+        "EstimatedArrival": "2026-11-06T16:33:00+08:00",
+        "Monitored": 0,
+        "Latitude": "0.0",
+        "Longitude": "0.0",
+        "VisitNumber": "1",
+        "Load": "SEA",
+        "Feature": "WAB",
+        "Type": "SD"
+      },
+      "NextBus2": {
+        "OriginCode": "65009",
+        "DestinationCode": "65009",
+        "EstimatedArrival": "2026-11-06T16:51:00+08:00",
+        "Monitored": 0,
+        "Latitude": "0.0",
+        "Longitude": "0.0",
+        "VisitNumber": "1",
+        "Load": "SEA",
+        "Feature": "WAB",
+        "Type": "SD"
+      },
+      "NextBus3": {
+        "OriginCode": "",
+        "DestinationCode": "",
+        "EstimatedArrival": "",
+        "Monitored": 0,
+        "Latitude": "",
+        "Longitude": "",
+        "VisitNumber": "",
+        "Load": "",
+        "Feature": "",
+        "Type": ""
+      }
+    },
+    {
+      "ServiceNo": "136",
+      "Operator": "GAS",
+      "NextBus": {
+        "OriginCode": "65009",
+        "DestinationCode": "54009",
+        "EstimatedArrival": "2026-11-06T16:23:00+08:00",
+        "Monitored": 0,
+        "Latitude": "0.0",
+        "Longitude": "0.0",
+        "VisitNumber": "1",
+        "Load": "SEA",
+        "Feature": "WAB",
+        "Type": "SD"
+      },
+      "NextBus2": {
+        "OriginCode": "65009",
+        "DestinationCode": "54009",
+        "EstimatedArrival": "2026-11-06T16:33:00+08:00",
+        "Monitored": 0,
+        "Latitude": "0.0",
+        "Longitude": "0.0",
+        "VisitNumber": "1",
+        "Load": "SEA",
+        "Feature": "WAB",
+        "Type": "SD"
+      },
+      "NextBus3": {
+        "OriginCode": "65009",
+        "DestinationCode": "54009",
+        "EstimatedArrival": "2026-11-06T16:43:00+08:00",
+        "Monitored": 0,
+        "Latitude": "0.0",
+        "Longitude": "0.0",
+        "VisitNumber": "1",
+        "Load": "SEA",
+        "Feature": "WAB",
+        "Type": "SD"
+      }
+    },
+    {
+      "ServiceNo": "3",
+      "Operator": "GAS",
+      "NextBus": {
+        "OriginCode": "65009",
+        "DestinationCode": "75009",
+        "EstimatedArrival": "2026-11-06T16:24:00+08:00",
+        "Monitored": 0,
+        "Latitude": "0.0",
+        "Longitude": "0.0",
+        "VisitNumber": "1",
+        "Load": "SEA",
+        "Feature": "WAB",
+        "Type": "SD"
+      },
+      "NextBus2": {
+        "OriginCode": "65009",
+        "DestinationCode": "75009",
+        "EstimatedArrival": "2026-11-06T16:34:00+08:00",
+        "Monitored": 0,
+        "Latitude": "0.0",
+        "Longitude": "0.0",
+        "VisitNumber": "1",
+        "Load": "SEA",
+        "Feature": "WAB",
+        "Type": "SD"
+      },
+      "NextBus3": {
+        "OriginCode": "65009",
+        "DestinationCode": "75009",
+        "EstimatedArrival": "2026-11-06T16:44:00+08:00",
+        "Monitored": 0,
+        "Latitude": "0.0",
+        "Longitude": "0.0",
+        "VisitNumber": "1",
+        "Load": "SEA",
+        "Feature": "WAB",
+        "Type": "SD"
+      }
+    },
+    {
+      "ServiceNo": "381",
+      "Operator": "GAS",
+      "NextBus": {
+        "OriginCode": "65009",
+        "DestinationCode": "69009",
+        "EstimatedArrival": "2026-11-06T16:23:00+08:00",
+        "Monitored": 0,
+        "Latitude": "0.0",
+        "Longitude": "0.0",
+        "VisitNumber": "1",
+        "Load": "SEA",
+        "Feature": "WAB",
+        "Type": "SD"
+      },
+      "NextBus2": {
+        "OriginCode": "65009",
+        "DestinationCode": "69009",
+        "EstimatedArrival": "2026-11-06T16:45:00+08:00",
+        "Monitored": 0,
+        "Latitude": "0.0",
+        "Longitude": "0.0",
+        "VisitNumber": "1",
+        "Load": "SEA",
+        "Feature": "WAB",
+        "Type": "SD"
+      },
+      "NextBus3": {
+        "OriginCode": "65009",
+        "DestinationCode": "69009",
+        "EstimatedArrival": "2026-11-06T16:56:00+08:00",
+        "Monitored": 0,
+        "Latitude": "0.0",
+        "Longitude": "0.0",
+        "VisitNumber": "1",
+        "Load": "SEA",
+        "Feature": "WAB",
+        "Type": "SD"
+      }
+    },
+    {
+      "ServiceNo": "382G",
+      "Operator": "GAS",
+      "NextBus": {
+        "OriginCode": "65009",
+        "DestinationCode": "65009",
+        "EstimatedArrival": "2026-11-06T16:23:00+08:00",
+        "Monitored": 0,
+        "Latitude": "0.0",
+        "Longitude": "0.0",
+        "VisitNumber": "1",
+        "Load": "SEA",
+        "Feature": "WAB",
+        "Type": "SD"
+      },
+      "NextBus2": {
+        "OriginCode": "65009",
+        "DestinationCode": "65009",
+        "EstimatedArrival": "2026-11-06T16:32:00+08:00",
+        "Monitored": 0,
+        "Latitude": "0.0",
+        "Longitude": "0.0",
+        "VisitNumber": "1",
+        "Load": "SEA",
+        "Feature": "WAB",
+        "Type": "SD"
+      },
+      "NextBus3": {
+        "OriginCode": "65009",
+        "DestinationCode": "65009",
+        "EstimatedArrival": "2026-11-06T16:41:00+08:00",
+        "Monitored": 0,
+        "Latitude": "0.0",
+        "Longitude": "0.0",
+        "VisitNumber": "1",
+        "Load": "SEA",
+        "Feature": "WAB",
+        "Type": "SD"
+      }
+    },
+    {
+      "ServiceNo": "382W",
+      "Operator": "GAS",
+      "NextBus": {
+        "OriginCode": "65009",
+        "DestinationCode": "65009",
+        "EstimatedArrival": "2026-11-06T16:23:00+08:00",
+        "Monitored": 0,
+        "Latitude": "0.0",
+        "Longitude": "0.0",
+        "VisitNumber": "1",
+        "Load": "SEA",
+        "Feature": "WAB",
+        "Type": "SD"
+      },
+      "NextBus2": {
+        "OriginCode": "65009",
+        "DestinationCode": "65009",
+        "EstimatedArrival": "2026-11-06T16:32:00+08:00",
+        "Monitored": 0,
+        "Latitude": "0.0",
+        "Longitude": "0.0",
+        "VisitNumber": "1",
+        "Load": "SEA",
+        "Feature": "WAB",
+        "Type": "DD"
+      },
+      "NextBus3": {
+        "OriginCode": "65009",
+        "DestinationCode": "65009",
+        "EstimatedArrival": "2026-11-06T16:43:00+08:00",
+        "Monitored": 0,
+        "Latitude": "0.0",
+        "Longitude": "0.0",
+        "VisitNumber": "1",
+        "Load": "SEA",
+        "Feature": "WAB",
+        "Type": "SD"
+      }
+    },
+    {
+      "ServiceNo": "384",
+      "Operator": "GAS",
+      "NextBus": {
+        "OriginCode": "65009",
+        "DestinationCode": "65009",
+        "EstimatedArrival": "2026-11-06T16:30:00+08:00",
+        "Monitored": 0,
+        "Latitude": "0.0",
+        "Longitude": "0.0",
+        "VisitNumber": "1",
+        "Load": "SEA",
+        "Feature": "WAB",
+        "Type": "SD"
+      },
+      "NextBus2": {
+        "OriginCode": "65009",
+        "DestinationCode": "65009",
+        "EstimatedArrival": "2026-11-06T16:45:00+08:00",
+        "Monitored": 0,
+        "Latitude": "0.0",
+        "Longitude": "0.0",
+        "VisitNumber": "1",
+        "Load": "SEA",
+        "Feature": "WAB",
+        "Type": "SD"
+      },
+      "NextBus3": {
+        "OriginCode": "65009",
+        "DestinationCode": "65009",
+        "EstimatedArrival": "2026-11-06T17:00:00+08:00",
+        "Monitored": 0,
+        "Latitude": "0.0",
+        "Longitude": "0.0",
+        "VisitNumber": "1",
+        "Load": "SEA",
+        "Feature": "WAB",
+        "Type": "SD"
+      }
+    },
+    {
+      "ServiceNo": "386",
+      "Operator": "GAS",
+      "NextBus": {
+        "OriginCode": "65009",
+        "DestinationCode": "65009",
+        "EstimatedArrival": "2026-11-06T16:25:00+08:00",
+        "Monitored": 0,
+        "Latitude": "0.0",
+        "Longitude": "0.0",
+        "VisitNumber": "1",
+        "Load": "SEA",
+        "Feature": "WAB",
+        "Type": "SD"
+      },
+      "NextBus2": {
+        "OriginCode": "65009",
+        "DestinationCode": "65009",
+        "EstimatedArrival": "2026-11-06T16:36:00+08:00",
+        "Monitored": 0,
+        "Latitude": "0.0",
+        "Longitude": "0.0",
+        "VisitNumber": "1",
+        "Load": "SEA",
+        "Feature": "WAB",
+        "Type": "SD"
+      },
+      "NextBus3": {
+        "OriginCode": "65009",
+        "DestinationCode": "65009",
+        "EstimatedArrival": "2026-11-06T16:47:00+08:00",
+        "Monitored": 0,
+        "Latitude": "0.0",
+        "Longitude": "0.0",
+        "VisitNumber": "1",
+        "Load": "SEA",
+        "Feature": "WAB",
+        "Type": "SD"
+      }
+    },
+    {
+      "ServiceNo": "43",
+      "Operator": "GAS",
+      "NextBus": {
+        "OriginCode": "65009",
+        "DestinationCode": "94009",
+        "EstimatedArrival": "2026-11-06T16:32:00+08:00",
+        "Monitored": 0,
+        "Latitude": "0.0",
+        "Longitude": "0.0",
+        "VisitNumber": "1",
+        "Load": "SEA",
+        "Feature": "WAB",
+        "Type": "SD"
+      },
+      "NextBus2": {
+        "OriginCode": "65009",
+        "DestinationCode": "94009",
+        "EstimatedArrival": "2026-11-06T16:45:00+08:00",
+        "Monitored": 0,
+        "Latitude": "0.0",
+        "Longitude": "0.0",
+        "VisitNumber": "1",
+        "Load": "SEA",
+        "Feature": "WAB",
+        "Type": "DD"
+      },
+      "NextBus3": {
+        "OriginCode": "65009",
+        "DestinationCode": "94009",
+        "EstimatedArrival": "2026-11-06T16:58:00+08:00",
+        "Monitored": 0,
+        "Latitude": "0.0",
+        "Longitude": "0.0",
+        "VisitNumber": "1",
+        "Load": "SEA",
+        "Feature": "WAB",
+        "Type": "DD"
+      }
+    },
+    {
+      "ServiceNo": "43A",
+      "Operator": "GAS",
+      "NextBus": {
+        "OriginCode": "65009",
+        "DestinationCode": "66359",
+        "EstimatedArrival": "2026-11-06T17:04:00+08:00",
+        "Monitored": 0,
+        "Latitude": "0.0",
+        "Longitude": "0.0",
+        "VisitNumber": "1",
+        "Load": "SEA",
+        "Feature": "WAB",
+        "Type": "SD"
+      },
+      "NextBus2": {
+        "OriginCode": "",
+        "DestinationCode": "",
+        "EstimatedArrival": "",
+        "Monitored": 0,
+        "Latitude": "",
+        "Longitude": "",
+        "VisitNumber": "",
+        "Load": "",
+        "Feature": "",
+        "Type": ""
+      },
+      "NextBus3": {
+        "OriginCode": "",
+        "DestinationCode": "",
+        "EstimatedArrival": "",
+        "Monitored": 0,
+        "Latitude": "",
+        "Longitude": "",
+        "VisitNumber": "",
+        "Load": "",
+        "Feature": "",
+        "Type": ""
+      }
+    },
+    {
+      "ServiceNo": "50",
+      "Operator": "SBST",
+      "NextBus": {
+        "OriginCode": "65009",
+        "DestinationCode": "53009",
+        "EstimatedArrival": "2026-11-06T16:26:00+08:00",
+        "Monitored": 0,
+        "Latitude": "0.0",
+        "Longitude": "0.0",
+        "VisitNumber": "1",
+        "Load": "SEA",
+        "Feature": "WAB",
+        "Type": "DD"
+      },
+      "NextBus2": {
+        "OriginCode": "65009",
+        "DestinationCode": "53009",
+        "EstimatedArrival": "2026-11-06T16:36:00+08:00",
+        "Monitored": 0,
+        "Latitude": "0.0",
+        "Longitude": "0.0",
+        "VisitNumber": "1",
+        "Load": "SEA",
+        "Feature": "WAB",
+        "Type": "DD"
+      },
+      "NextBus3": {
+        "OriginCode": "65009",
+        "DestinationCode": "53009",
+        "EstimatedArrival": "2026-11-06T16:47:00+08:00",
+        "Monitored": 0,
+        "Latitude": "0.0",
+        "Longitude": "0.0",
+        "VisitNumber": "1",
+        "Load": "SEA",
+        "Feature": "WAB",
+        "Type": "SD"
+      }
+    },
+    {
+      "ServiceNo": "62",
+      "Operator": "GAS",
+      "NextBus": {
+        "OriginCode": "65009",
+        "DestinationCode": "65009",
+        "EstimatedArrival": "2026-11-06T16:25:00+08:00",
+        "Monitored": 0,
+        "Latitude": "0.0",
+        "Longitude": "0.0",
+        "VisitNumber": "1",
+        "Load": "SEA",
+        "Feature": "WAB",
+        "Type": "DD"
+      },
+      "NextBus2": {
+        "OriginCode": "65009",
+        "DestinationCode": "65009",
+        "EstimatedArrival": "2026-11-06T16:33:00+08:00",
+        "Monitored": 0,
+        "Latitude": "0.0",
+        "Longitude": "0.0",
+        "VisitNumber": "1",
+        "Load": "SEA",
+        "Feature": "WAB",
+        "Type": "DD"
+      },
+      "NextBus3": {
+        "OriginCode": "65009",
+        "DestinationCode": "65009",
+        "EstimatedArrival": "2026-11-06T16:41:00+08:00",
+        "Monitored": 0,
+        "Latitude": "0.0",
+        "Longitude": "0.0",
+        "VisitNumber": "1",
+        "Load": "SEA",
+        "Feature": "WAB",
+        "Type": "DD"
+      }
+    },
+    {
+      "ServiceNo": "82",
+      "Operator": "GAS",
+      "NextBus": {
+        "OriginCode": "65009",
+        "DestinationCode": "65009",
+        "EstimatedArrival": "2026-11-06T16:33:00+08:00",
+        "Monitored": 0,
+        "Latitude": "0.0",
+        "Longitude": "0.0",
+        "VisitNumber": "1",
+        "Load": "SEA",
+        "Feature": "WAB",
+        "Type": "SD"
+      },
+      "NextBus2": {
+        "OriginCode": "65009",
+        "DestinationCode": "65009",
+        "EstimatedArrival": "2026-11-06T16:49:00+08:00",
+        "Monitored": 0,
+        "Latitude": "0.0",
+        "Longitude": "0.0",
+        "VisitNumber": "1",
+        "Load": "SEA",
+        "Feature": "WAB",
+        "Type": "SD"
+      },
+      "NextBus3": {
+        "OriginCode": "65009",
+        "DestinationCode": "65009",
+        "EstimatedArrival": "2026-11-06T17:05:00+08:00",
+        "Monitored": 0,
+        "Latitude": "0.0",
+        "Longitude": "0.0",
+        "VisitNumber": "1",
+        "Load": "SEA",
+        "Feature": "WAB",
+        "Type": "SD"
+      }
+    },
+    {
+      "ServiceNo": "83",
+      "Operator": "GAS",
+      "NextBus": {
+        "OriginCode": "65009",
+        "DestinationCode": "65009",
+        "EstimatedArrival": "2026-11-06T16:23:00+08:00",
+        "Monitored": 0,
+        "Latitude": "0.0",
+        "Longitude": "0.0",
+        "VisitNumber": "1",
+        "Load": "SEA",
+        "Feature": "WAB",
+        "Type": "DD"
+      },
+      "NextBus2": {
+        "OriginCode": "65009",
+        "DestinationCode": "65009",
+        "EstimatedArrival": "2026-11-06T16:37:00+08:00",
+        "Monitored": 0,
+        "Latitude": "0.0",
+        "Longitude": "0.0",
+        "VisitNumber": "1",
+        "Load": "SEA",
+        "Feature": "WAB",
+        "Type": "DD"
+      },
+      "NextBus3": {
+        "OriginCode": "65009",
+        "DestinationCode": "65009",
+        "EstimatedArrival": "2026-11-06T16:51:00+08:00",
+        "Monitored": 0,
+        "Latitude": "0.0",
+        "Longitude": "0.0",
+        "VisitNumber": "1",
+        "Load": "SEA",
+        "Feature": "WAB",
+        "Type": "DD"
+      }
+    },
+    {
+      "ServiceNo": "84G",
+      "Operator": "GAS",
+      "NextBus": {
+        "OriginCode": "65009",
+        "DestinationCode": "65009",
+        "EstimatedArrival": "2026-11-06T16:28:00+08:00",
+        "Monitored": 0,
+        "Latitude": "0.0",
+        "Longitude": "0.0",
+        "VisitNumber": "1",
+        "Load": "SEA",
+        "Feature": "WAB",
+        "Type": "SD"
+      },
+      "NextBus2": {
+        "OriginCode": "65009",
+        "DestinationCode": "65009",
+        "EstimatedArrival": "2026-11-06T16:41:00+08:00",
+        "Monitored": 0,
+        "Latitude": "0.0",
+        "Longitude": "0.0",
+        "VisitNumber": "1",
+        "Load": "SEA",
+        "Feature": "WAB",
+        "Type": "SD"
+      },
+      "NextBus3": {
+        "OriginCode": "65009",
+        "DestinationCode": "65009",
+        "EstimatedArrival": "2026-11-06T16:54:00+08:00",
+        "Monitored": 0,
+        "Latitude": "0.0",
+        "Longitude": "0.0",
+        "VisitNumber": "1",
+        "Load": "SEA",
+        "Feature": "WAB",
+        "Type": "SD"
+      }
+    },
+    {
+      "ServiceNo": "84W",
+      "Operator": "GAS",
+      "NextBus": {
+        "OriginCode": "65009",
+        "DestinationCode": "65009",
+        "EstimatedArrival": "2026-11-06T16:28:00+08:00",
+        "Monitored": 0,
+        "Latitude": "0.0",
+        "Longitude": "0.0",
+        "VisitNumber": "1",
+        "Load": "SEA",
+        "Feature": "WAB",
+        "Type": "SD"
+      },
+      "NextBus2": {
+        "OriginCode": "65009",
+        "DestinationCode": "65009",
+        "EstimatedArrival": "2026-11-06T16:39:00+08:00",
+        "Monitored": 0,
+        "Latitude": "0.0",
+        "Longitude": "0.0",
+        "VisitNumber": "1",
+        "Load": "SEA",
+        "Feature": "WAB",
+        "Type": "SD"
+      },
+      "NextBus3": {
+        "OriginCode": "65009",
+        "DestinationCode": "65009",
+        "EstimatedArrival": "2026-11-06T16:49:00+08:00",
+        "Monitored": 0,
+        "Latitude": "0.0",
+        "Longitude": "0.0",
+        "VisitNumber": "1",
+        "Load": "SEA",
+        "Feature": "WAB",
+        "Type": "SD"
+      }
+    },
+    {
+      "ServiceNo": "85",
+      "Operator": "GAS",
+      "NextBus": {
+        "OriginCode": "65009",
+        "DestinationCode": "59009",
+        "EstimatedArrival": "2026-11-06T16:26:00+08:00",
+        "Monitored": 0,
+        "Latitude": "0.0",
+        "Longitude": "0.0",
+        "VisitNumber": "1",
+        "Load": "SEA",
+        "Feature": "WAB",
+        "Type": "DD"
+      },
+      "NextBus2": {
+        "OriginCode": "65009",
+        "DestinationCode": "59009",
+        "EstimatedArrival": "2026-11-06T16:34:00+08:00",
+        "Monitored": 0,
+        "Latitude": "0.0",
+        "Longitude": "0.0",
+        "VisitNumber": "1",
+        "Load": "SEA",
+        "Feature": "WAB",
+        "Type": "DD"
+      },
+      "NextBus3": {
+        "OriginCode": "65009",
+        "DestinationCode": "59009",
+        "EstimatedArrival": "2026-11-06T16:42:00+08:00",
+        "Monitored": 0,
+        "Latitude": "0.0",
+        "Longitude": "0.0",
+        "VisitNumber": "1",
+        "Load": "SEA",
+        "Feature": "WAB",
+        "Type": "DD"
+      }
+    }
+  ]
+}

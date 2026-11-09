@@ -15,6 +15,8 @@ export interface Incident {
   severity: Severity;
   state: State;
   detectionCount?: number;
+  /** How many times it's been sent again because nobody acknowledged it (escalation, issue 5.4). */
+  escalationLevel?: number;
   lastLocation?: { lat: number; lng: number } | null;
   acknowledgedBy?: string | null;
   disruption?: { message?: string; line?: string | null } | null;
@@ -24,7 +26,7 @@ export interface Incident {
 
 /** alert-event.json: what GET /api/stream sends. */
 export interface AlertEvent {
-  event: string; // incident.opened | updated | reopened | acknowledged | resolved
+  event: string; // incident.opened | updated | reopened | escalated | acknowledged | resolved
   incident: Incident & { message?: string };
   sentAt: string;
 }
@@ -37,6 +39,34 @@ export interface ArrivalEvent {
   tripId: string;
   arrivedAt: string;
   sentAt: string;
+}
+
+/** A "Where are you?" question and, once the traveller has replied, their answer. */
+export interface WhereRequest {
+  requestId: string;
+  askedBy: string;
+  askedAt: string;
+  status: "asked" | "answered";
+  answer: "ok" | "help" | null;
+  answeredAt: string | null;
+  lat: number | null;
+  lng: number | null;
+}
+
+/** where-event.json: also sent by GET /api/stream, when a question is asked or answered. */
+export interface WhereEvent {
+  event: "where.asked" | "where.answered";
+  travellerId: string;
+  travellerName: string;
+  request: WhereRequest;
+  sentAt: string;
+}
+
+/** Which of two versions of a traveller's question to keep: a newer question, or the answer to the same one. */
+export function newerWhere(current: WhereRequest | undefined, next: WhereRequest): WhereRequest {
+  if (!current) return next;
+  if (next.requestId === current.requestId) return current.status === "answered" ? current : next;
+  return next.askedAt >= current.askedAt ? next : current;
 }
 
 export type IncidentMap = Record<string, Incident>;

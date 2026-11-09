@@ -1,4 +1,4 @@
-"""DisruptionConsumer against a LocalStack queue: each disruption message becomes one incident."""
+"""DisruptionConsumer against an SQS queue (moto, or LocalStack): each disruption message becomes one incident."""
 import json
 import uuid
 
