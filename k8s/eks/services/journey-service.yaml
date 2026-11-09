@@ -34,6 +34,8 @@ spec:
             - { name: ONEMAP_MODE, value: "live" }
             - { name: LTA_MODE, value: "live" }
             - { name: AUTH_MODE, value: "off" }
+            # Spoken instructions in packs (app/speech.py): Polly MP3s next to the packs; IAM: polly:SynthesizeSpeech
+            - { name: TTS_MODE, value: "polly" }
             - name: LTA_API_KEY
               valueFrom: { secretKeyRef: { name: journey-api-keys, key: LTA_API_KEY, optional: true } }
             - name: ONEMAP_API_KEY

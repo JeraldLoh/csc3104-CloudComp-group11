@@ -530,6 +530,11 @@ Resources:
                 Resource:
                   - !Sub arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ResourcePrefix}-*
                   - !Sub arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ResourcePrefix}-*/index/*
+              # The Journey Service reads each step aloud for the traveller's phone (services/journey-service/app/speech.py).
+              # SynthesizeSpeech has no resource of its own (only lexicons), hence "*".
+              - Effect: Allow
+                Action: [polly:SynthesizeSpeech]
+                Resource: "*"
 
   # -------------------------- CloudWatch Observability --------------------------
   # Container Insights: cluster-level CPU, memory, network metrics per pod.

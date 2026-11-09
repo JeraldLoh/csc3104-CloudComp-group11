@@ -31,11 +31,11 @@ planned. To use the live APIs, switch the header's **Data** box to **Live** (sec
 ## 1. One-time setup
 
 You need: Docker Desktop, Node.js 22 or newer, and the root `.env` with `LOCALSTACK_AUTH_TOKEN` (never commit it).
-No OneMap or LTA keys are needed to run on saved data, but the saved data is gitignored: on a fresh clone, capture it
-once (this one step needs `LTA_API_KEY` and the OneMap account, `ONEMAP_API_EMAIL` / `ONEMAP_API_PASSWORD`, in `.env`).
+No OneMap or LTA keys are needed to run on saved data, which is in Git. Step 0 only refreshes it from the real APIs
+(it needs `LTA_API_KEY` and the OneMap account, `ONEMAP_API_EMAIL` / `ONEMAP_API_PASSWORD`, in `.env`).
 
 ```powershell
-# 0. Fresh clone only: capture the saved data into services/journey-service/app/saved_data
+# 0. Optional: refresh the saved data in services/journey-service/app/saved_data from the real APIs
 cd services/journey-service; python scripts/capture_data.py --target both --routes live; cd ../..
 
 # 1. Start Docker Desktop, then the backend (Redis and LocalStack start with it):
@@ -48,7 +48,7 @@ cd ../..
 ```
 
 ```bash
-# 0. Fresh clone only (python3 on macOS):
+# 0. Optional: refresh the saved data (python3 on macOS):
 (cd services/journey-service && python3 scripts/capture_data.py --target both --routes live)
 # 1. and 2.: the docker compose and npm lines above are the same in bash.
 ```
