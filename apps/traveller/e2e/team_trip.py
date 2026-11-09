@@ -18,6 +18,15 @@ Needs the team's local stack and the traveller app running on their usual ports,
 Prints one line per check and exits 1 if any required check fails. Afterwards it removes the traveller and route it
 made (the trip record stays until its DynamoDB TTL); --keep leaves them for a look in the caregiver app. The off-route check needs the Coordinator,
 detectors and Aggregator; without them it's reported as skipped, not failed.
+
+On AWS (one https address in front of the load balancer for all three services, the app on Amplify):
+
+    python apps/traveller/e2e/team_trip.py --app https://<amplify address> --checkin https://<api address> \
+        --alerts https://<api address> --journey https://<api address> --traveller U-AWSTEST1
+
+There the services run with login off (AUTH_MODE=off until Cognito), and Profiles needs a caregiver login, so
+--traveller uses that traveller id instead of adding one, and the two checks that read the caregiver's live view
+are skipped. --link-only makes the trip, prints its link and stops: open the link on a phone to do the trip yourself.
 """
 from __future__ import annotations   # the type hints below also work on Python 3.8 and 3.9
 
@@ -41,6 +50,9 @@ p.add_argument("--caregiver", default="G-003")
 p.add_argument("--out", default=None, help="folder for screenshots")
 p.add_argument("--headed", action="store_true")
 p.add_argument("--keep", action="store_true", help="keep the test traveller, route and trip afterwards")
+p.add_argument("--traveller", default=None, help="use this traveller id (U-...) instead of adding one through Profiles, "
+               "for a stack with login off (AWS); skips the live-view checks")
+p.add_argument("--link-only", action="store_true", help="make the trip, print its link and stop (do the trip on a phone)")
 args = p.parse_args()
 G = {"X-Dev-User": args.caregiver}
 OUT = Path(args.out) if args.out else None
@@ -62,9 +74,12 @@ def png(rgb: tuple[int, int, int], w: int = 64, h: int = 48) -> bytes:
 
 
 def make_trip(h: httpx.Client) -> tuple[str, str, str]:
-    t = h.post(f"{args.alerts}/api/travellers", json={"name": "Alex"}, headers=G)
-    t.raise_for_status()
-    traveller = t.json()["travellerId"]
+    if args.traveller:
+        traveller = args.traveller
+    else:
+        t = h.post(f"{args.alerts}/api/travellers", json={"name": "Alex"}, headers=G)
+        t.raise_for_status()
+        traveller = t.json()["travellerId"]
 
     stop = lambda name, code, lat, lng: {"name": name, "code": code, "lat": lat, "lng": lng}
     home, interchange, blk = (stop("Home", None, 1.404, 103.901), stop("Punggol Int", "65009", 1.4052, 103.9024),
@@ -116,6 +131,9 @@ def clean_up(h: httpx.Client, traveller: str, rid: str, trip: str) -> None:
         if h.get(f"{args.journey}/api/trips/{trip}", headers=G).json().get("status") == "active":
             h.post(f"{args.journey}/api/trips/{trip}/end", headers=G)   # a route with a trip under way can't go
         h.delete(f"{args.journey}/api/routes/{rid}", headers=G).raise_for_status()
+        if args.traveller:   # given, not made here: left alone (and Profiles needs a login)
+            print(f"cleaned up: route {rid}")
+            return
         h.delete(f"{args.alerts}/api/travellers/{traveller}", headers=G).raise_for_status()
         print(f"cleaned up: traveller {traveller}, route {rid}")
     except httpx.HTTPError as e:
@@ -142,6 +160,10 @@ async def main() -> int:
             print(f"{name} isn't answering at {url} ({e}). Start the local stack first (see this file's top).")
             return 1
     traveller, rid, trip = make_trip(h)
+    if args.link_only:
+        print(f"trip link: {args.app}/?trip={trip}&traveller={traveller}")
+        print(f"route {rid} and trip {trip} are kept; the link works until the trip ends")
+        return 0
     try:
         return await run_trip(h, traveller, trip)
     finally:
@@ -164,8 +186,8 @@ async def run_trip(h: httpx.Client, traveller: str, trip: str) -> int:
             await page.get_by_text("Your trip is saved").wait_for(timeout=30000)
             check(True, "traveller app opened the real trip: pack and photos downloaded")
         except Exception:
-            check(False, "traveller app opened the real trip", "no 'Your trip is saved' after 30 s: is LocalStack "
-                  "reachable on localhost:4566 (pack links)?")
+            check(False, "traveller app opened the real trip", "no 'Your trip is saved' after 30 s: can the browser "
+                  "reach the pack links (locally LocalStack on localhost:4566; on AWS the S3 bucket's CORS rule)?")
             await shot(page, "fail-open")
             await browser.close()
             return 1
@@ -179,9 +201,13 @@ async def run_trip(h: httpx.Client, traveller: str, trip: str) -> int:
         await ctx.set_geolocation({"latitude": 1.4052, "longitude": 103.9024})
         await page.get_by_role("button", name="I've done this step").click()
         await page.wait_for_timeout(12000)
-        live = (h.get(f"{args.alerts}/api/travellers/live", headers=G).json() or {}).get(traveller) or {}
-        check(live.get("tripId") == trip and live.get("stepIndex") == 1, "caregiver's live view: trip, step 2, location",
-              {k: live.get(k) for k in ("tripId", "stepIndex", "lat", "lng")})
+        if args.traveller:
+            check(None, "caregiver's live view: trip, step 2, location", "needs a caregiver login (--traveller)")
+        else:
+            live = (h.get(f"{args.alerts}/api/travellers/live", headers=G).json() or {}).get(traveller) or {}
+            check(live.get("tripId") == trip and live.get("stepIndex") == 1,
+                  "caregiver's live view: trip, step 2, location",
+                  {k: live.get(k) for k in ("tripId", "stepIndex", "lat", "lng")})
         imgs = await page.eval_on_selector_all("img", "els => els.map(e => [e.className, e.naturalWidth > 0])")
         check(["sign__landmark-photo", True] in imgs and ["sign__photo", True] in imgs,
               "step 2 shows the step photo and the landmark photo", imgs)
@@ -208,8 +234,11 @@ async def run_trip(h: httpx.Client, traveller: str, trip: str) -> int:
 
         await page.get_by_role("button", name="I've arrived").click()
         await page.wait_for_timeout(4000)
-        live = (h.get(f"{args.alerts}/api/travellers/live", headers=G).json() or {}).get(traveller) or {}
-        check(bool(live.get("arrivedAt")), "I've arrived: the caregiver is told", live.get("arrivedAt"))
+        if args.traveller:
+            check(None, "I've arrived: the caregiver is told", "needs a caregiver login (--traveller)")
+        else:
+            live = (h.get(f"{args.alerts}/api/travellers/live", headers=G).json() or {}).get(traveller) or {}
+            check(bool(live.get("arrivedAt")), "I've arrived: the caregiver is told", live.get("arrivedAt"))
         status = h.get(f"{args.journey}/api/trips/{trip}", headers=G).json().get("status")
         check(status == "completed", "Journey Service: trip ended by the phone", status)
         await shot(page, "4-arrived")

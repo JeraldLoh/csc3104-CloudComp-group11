@@ -60,7 +60,10 @@ trip, press **Pack**, and open the trip's link. It opens this app on a real trip
 **Check it all in one go:** with the stack running, `python apps/traveller/e2e/team_trip.py`
 does that trip in a headless browser (a caregiver's API calls, then the real app) and checks
 each row above (`--headed` to watch; `pip install httpx playwright` and
-`python -m playwright install chromium` first). Its last run passed 9 of 9 checks.
+`python -m playwright install chromium` first; on Windows with Python in Program Files, `pip install --user`).
+Its last run passed 9 of 9 checks, also on Windows with Python 3.8. On AWS, where login is off, add
+`--traveller U-AWSTEST1` and point `--app`, `--checkin`, `--alerts` and `--journey` at the https addresses (the
+script's docstring); `--link-only` makes a trip and prints its link for a phone.
 
 A cluster made before the LocalStack port (4566) was added is recreated by `-Setup`. Stop the
 service's own compose stacks first: they use the same ports.
