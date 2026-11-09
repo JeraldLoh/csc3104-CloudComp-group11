@@ -3,7 +3,7 @@
 POST /api/routes/plan                    route options from OneMap, checked against LTA live data
 POST /api/routes/check-disruptions       re-check steps (plan option / saved route) against LTA's alerts now
 POST /api/routes                         save a route (version 1, not approved)
-GET  /api/routes?travellerId=            a traveller's saved routes (not in the contract yet)
+GET  /api/routes?travellerId=            a traveller's saved routes
 GET/PUT /api/routes/{routeId}            load / edit a route (edit: version + 1, approval cleared)
 POST /api/routes/{routeId}/approve       approve a route
 POST /api/routes/{routeId}/easy-read     AI wording for every step, for the caregiver to review (nothing saved)
@@ -19,7 +19,7 @@ POST /api/trips/{tripId}/replan          new routes from where the traveller is 
 GET  /api/trips/{tripId}/location        where the traveller of a trip under way is (their check-ins)
 GET  /api/trips/{tripId}/plan            the steps they follow now, with map lines and where trains aren't running
 GET  /api/trips/{tripId}/pack            the offline route pack in S3: {packUrl, packVersion}
-GET  /api/trips/{tripId}, /api/trips?travellerId=   look trips up (not in the contract yet)
+GET  /api/trips/{tripId}, /api/trips?travellerId=   look trips up
 GET  /api/places/search?q=               place/address search -> coordinates (OneMap)
 GET /health                              liveness: the process is up (contract endpoint)
 GET /ready                               readiness: Redis and the routes store are reachable
@@ -287,7 +287,7 @@ def create_app(
 
     @app.post("/api/routes/check-disruptions", dependencies=[Depends(current_caller)])   # any logged-in user
     def check_disruptions(body: DisruptionCheckIn, request: Request):
-        """Not in contracts/api.md yet: the disruption warnings for these steps now (plan tab, saved route, trips)."""
+        """The disruption warnings for these steps now (plan tab, saved route, trips)."""
         return request.app.state.journey.check_disruptions(body.model_dump(by_alias=True)["steps"])
 
     def route_id_or_404(route_id: str) -> str:
@@ -304,7 +304,7 @@ def create_app(
     @app.get("/api/routes")
     def list_routes(request: Request, travellerId: str = Query(min_length=1, max_length=64),
                     caller: Caller | None = Depends(current_caller)):
-        """Not in contracts/api.md yet: a traveller's saved routes, newest first (only those the caller may see)."""
+        """A traveller's saved routes, newest first (only those the caller may see)."""
         journey = request.app.state.journey
         return {"routes": [journey.with_photo_urls(r) for r in journey.list_routes(travellerId, caller)]}
 
@@ -323,7 +323,7 @@ def create_app(
     @app.delete("/api/routes/{route_id}", status_code=204)
     def delete_route(route_id: str, request: Request, version: int | None = Query(default=None, ge=1),
                      caller: Caller | None = Depends(current_caller)):
-        """Not in contracts/api.md yet. With `version`, only deletes that version (409 if it has changed)."""
+        """With `version`, only deletes that version (409 if it has changed)."""
         request.app.state.journey.delete_route(route_id_or_404(route_id), version, caller)
         return Response(status_code=204)
 
@@ -363,13 +363,13 @@ def create_app(
     @app.get("/api/trips")
     def list_trips(request: Request, travellerId: str = Query(min_length=1, max_length=64),
                    date: date_type | None = None, caller: Caller | None = Depends(current_caller)):
-        """Not in contracts/api.md yet: a traveller's trips, newest first (only those the caller may see)."""
+        """A traveller's trips, newest first (only those the caller may see)."""
         return {"trips": request.app.state.journey.list_trips(
             travellerId, date.isoformat() if date else None, caller)}
 
     @app.get("/api/trips/{trip_id}")
     def get_trip(trip_id: str, request: Request, caller: Caller | None = Depends(current_caller)):
-        """Not in contracts/api.md yet."""
+        """One trip (contracts/api.md)."""
         return request.app.state.journey.get_trip(trip_id_or_404(trip_id), caller)
 
     @app.post("/api/trips/{trip_id}/start")
