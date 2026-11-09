@@ -48,6 +48,18 @@ export interface RoutePackStep {
   backup: string | null;
   /** What the wording tells them to look out for, each with a photo (Journey Service). Missing in older packs. */
   landmarks?: Landmark[];
+  /**
+   * Bus and train steps: every stop on the ride, the one they get on at first and the one they get off at last,
+   * so the phone can count the stops left as it passes them (src/lib/guide.ts). Missing in older packs, and a
+   * stop's lat/lng is null when the plan didn't say.
+   */
+  stops?: PackStop[];
+}
+
+export interface PackStop {
+  name: string | null;
+  lat: number | null;
+  lng: number | null;
 }
 
 /** A building the step's wording names. photoUrl is null when its photo would repeat another one. */
@@ -56,6 +68,10 @@ export interface Landmark {
   photoUrl: string | null;
   /** Where it is seen instead when there's no photo: "step" or another landmark's name. Not sent by every pack. */
   sameView?: string | null;
+  /** Where the building is, and the spot on the route it is seen from (its photo is taken there). Newer packs only. */
+  lat?: number | null;
+  lng?: number | null;
+  seenFrom?: [number, number] | null;
 }
 
 /** contracts/examples/route-pack.json */
