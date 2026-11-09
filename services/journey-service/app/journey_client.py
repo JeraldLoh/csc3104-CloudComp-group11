@@ -1670,8 +1670,10 @@ class JourneyClient:
                 # reads it with its own voice
                 "photoUrl": self._photo_url(step.get("photoKey")), "audioUrl": self._photo_url(audio_key),
                 "backup": (step.get("backup") or {}).get("instruction"),
-                # What the wording tells them to look out for, with a photo of each.
-                "landmarks": [{"name": m["name"], "photoUrl": self._photo_url(m.get("photoKey"))}
+                # What the wording tells them to look out for, with a photo of each. `sameView`: one with no photo of
+                # its own says which photo shows it ("step", or another landmark's name), so the phone can say so.
+                "landmarks": [{"name": m["name"], "photoUrl": self._photo_url(m.get("photoKey")),
+                               "sameView": m.get("sameView")}
                               for m in step.get("landmarks") or []],
             })
         # A changed plan is a new pack version, so the phone (which polls for one) shows "Your trip has changed".

@@ -10,3 +10,4 @@ nodes:
       - { containerPort: 30002, hostPort: 8002, listenAddress: "127.0.0.1" }   # Aggregator dashboard
       - { containerPort: 30005, hostPort: 8005, listenAddress: "127.0.0.1" }   # Alert Service
       - { containerPort: 30006, hostPort: 8006, listenAddress: "127.0.0.1" }   # Journey Service
+      - { containerPort: 30566, hostPort: 4566, listenAddress: "127.0.0.1" }   # LocalStack: route pack and photo links

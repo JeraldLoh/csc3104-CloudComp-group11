@@ -12,7 +12,15 @@ export const DEMO_PACK: RoutePack = {
   steps: [
     { stepIndex: 0, mode: "walk", easyRead: "Walk to the bus stop near the playground.", lat: 1.4052, lng: 103.9024, underground: false, photoUrl: "demo-media/step0.svg", audioUrl: null, backup: null },
     { stepIndex: 1, mode: "bus", easyRead: "Get on bus number 190. Tap your card.", lat: 1.3935, lng: 103.8962, underground: false, photoUrl: "demo-media/step1.svg", audioUrl: null, backup: "If bus 190 does not come in 20 minutes, take bus 83 from the same stop." },
-    { stepIndex: 2, mode: "bus", easyRead: "Stay on the bus. Get off after 6 stops, at Block 221.", lat: 1.3935, lng: 103.8962, underground: false, photoUrl: "demo-media/step2.svg", audioUrl: null, backup: null },
+    {
+      stepIndex: 2, mode: "bus", easyRead: "Stay on the bus. Count 6 stops. Look out for Waterway Point on your left. Press the bell. Get off at Block 221.",
+      lat: 1.3935, lng: 103.8962, underground: false, photoUrl: "demo-media/step2.svg", audioUrl: null, backup: null,
+      // Like the Journey Service's landmarks: one with its own photo, one already in the step photo.
+      landmarks: [
+        { name: "Waterway Point", photoUrl: "demo-media/waterway-point.svg" },
+        { name: "Block 221", photoUrl: null, sameView: "step" },
+      ],
+    },
     { stepIndex: 3, mode: "walk", easyRead: "Walk to the clinic. It has a green sign.", lat: 1.392, lng: 103.895, underground: false, photoUrl: "demo-media/step3.svg", audioUrl: null, backup: null },
   ],
   path: [[1.404, 103.901], [1.4052, 103.9024], [1.399, 103.899], [1.3935, 103.8962], [1.392, 103.895]],
@@ -34,7 +42,7 @@ export const DEMO_PACK_CHANGED: RoutePack = {
     s.stepIndex === 1
       ? { ...s, easyRead: "Get on bus number 83. Tap your card.", photoUrl: "demo-media/step1-bus83.svg", backup: null }
       : s.stepIndex === 2
-        ? { ...s, easyRead: "Stay on the bus. Get off after 5 stops, at Block 221." }
+        ? { ...s, easyRead: "Stay on the bus. Count 5 stops. Press the bell. Get off at Block 221.", landmarks: [{ name: "Block 221", photoUrl: null, sameView: "step" }] }
         : s,
   ),
   generatedAt: "2026-10-16T08:20:00Z",

@@ -4,6 +4,8 @@ import { getMeta, metaKeys, setMeta } from "../src/lib/db";
 import { DEMO_PACK } from "../src/lib/demo";
 import { freshDb } from "./helpers";
 import type { RoutePack } from "../src/types";
+// A pack made by the Journey Service's own build_pack (tests/fixtures/journey_pack.py), not typed by hand.
+import journeyPack from "./fixtures/journey-pack.json";
 
 /** Minimal Cache Storage (jsdom doesn't have one). Same behaviour for what we use. */
 class FakeCache {
@@ -36,7 +38,7 @@ class FakeCacheStorage {
 const BASE = "https://bucket.example/packs/R-007/";
 const pack = (photos: (string | null)[]): RoutePack => ({
   ...DEMO_PACK,
-  steps: DEMO_PACK.steps.slice(0, photos.length).map((s, i) => ({ ...s, stepIndex: i, photoUrl: photos[i], audioUrl: null })),
+  steps: DEMO_PACK.steps.slice(0, photos.length).map((s, i) => ({ ...s, stepIndex: i, photoUrl: photos[i], audioUrl: null, landmarks: [] })),
 });
 const img = (body = "img") => new Response(body, { status: 200, headers: { "Content-Type": "image/jpeg" } });
 
@@ -72,12 +74,40 @@ describe("validatePack", () => {
     expect(p.travellerName).toBeNull();
     expect(p.caregiver.phone).toBeNull();
   });
+
+  it("accepts a pack built by the Journey Service itself, landmarks included", () => {
+    const p = validatePack(structuredClone(journeyPack));
+    expect(p.steps[0].landmarks).toEqual([{ name: "Waterway Point", photoUrl: expect.stringContaining("media/streetview/") }]);
+    expect(p.steps[1].landmarks?.map((m) => [m.name, m.photoUrl === null])).toEqual([["Oasis Terraces", false], ["Block 221", true]]);
+  });
+
+  it("landmarks are extra help: a bad entry is dropped, never the whole pack", () => {
+    const step = { ...DEMO_PACK.steps[0], landmarks: [{ name: "Waterway Point", photoUrl: "media/w.jpg" }, { name: " " }, null, "x", { name: "Block 5", photoUrl: 7, sameView: "step" }] };
+    const p = validatePack({ ...structuredClone(DEMO_PACK), steps: [step] });
+    expect(p.steps[0].landmarks).toEqual([
+      { name: "Waterway Point", photoUrl: "media/w.jpg" },
+      { name: "Block 5", photoUrl: null, sameView: "step" },
+    ]);
+  });
+
+  it("an older pack with no landmarks, or landmarks that aren't a list, has none", () => {
+    const { landmarks: _l, ...noField } = DEMO_PACK.steps[0];
+    expect(validatePack({ ...structuredClone(DEMO_PACK), steps: [noField] }).steps[0].landmarks).toEqual([]);
+    expect(validatePack({ ...structuredClone(DEMO_PACK), steps: [{ ...noField, landmarks: "Mall" }] }).steps[0].landmarks).toEqual([]);
+  });
 });
 
 describe("mediaUrls", () => {
   it("resolves paths against the pack's address, skips gaps, removes repeats", () => {
     const p = pack(["media/a.jpg", null, "media/a.jpg", "https://cdn.example/b.jpg"]);
     expect(mediaUrls(p, BASE)).toEqual([`${BASE}media/a.jpg`, "https://cdn.example/b.jpg"]);
+  });
+
+  it("includes the landmark photos, so they're on the phone before the trip like the step photos", () => {
+    const p = validatePack(structuredClone(journeyPack));
+    const urls = mediaUrls(p, BASE);
+    expect(urls).toHaveLength(4);       // 2 step photos + Waterway Point + Oasis Terraces (Block 221 has none)
+    expect(urls.filter((u) => u.includes("_from_"))).toHaveLength(2);
   });
 });
 
@@ -213,7 +243,7 @@ describe("demo pack", () => {
   it("has a full base address, so its photos resolve and get downloaded", async () => {
     const db = await freshDb();
     const r = await loadPack(db, "T-001", { demo: DEMO_PACK });
-    expect(mediaUrls(r!.pack, r!.baseUrl)).toHaveLength(4);
+    expect(mediaUrls(r!.pack, r!.baseUrl)).toHaveLength(5);   // 4 step photos + 1 landmark photo
   });
 });
 

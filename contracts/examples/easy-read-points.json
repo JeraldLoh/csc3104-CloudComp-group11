@@ -1,0 +1,28 @@
+{
+  "about": "How a step's easyRead text is split into one point per action. The caregiver's editor (apps/caregiver/src/planner/format.ts) and the traveller app (apps/traveller/src/lib/easyRead.ts) must give the same points, so the traveller reads exactly what the caregiver checked. Both apps' tests run every case here; add a case here, not in one app.",
+  "cases": [
+    { "text": "Go to Sengkang Interchange. Wait for bus number 163. Tap your card. Count 3 stops.",
+      "points": ["Go to Sengkang Interchange", "Wait for bus number 163", "Tap your card", "Count 3 stops"] },
+    { "text": "Go to Sengkang Interchange. Wait for bus number 163. Tap your card!",
+      "points": ["Go to Sengkang Interchange", "Wait for bus number 163", "Tap your card!"] },
+    { "text": "Walk to St. Andrew's Cathedral. It takes about 4 minutes.",
+      "points": ["Walk to St. Andrew's Cathedral", "It takes about 4 minutes"] },
+    { "text": "Walk to St. Andrew's Village. Wait at Opp. Block 5.",
+      "points": ["Walk to St. Andrew's Village", "Wait at Opp. Block 5"] },
+    { "text": "Get off at Blk. 221. Walk to Jln. Kayu. Go past No. 5 Rd. Mt. Faber.",
+      "points": ["Get off at Blk. 221", "Walk to Jln. Kayu", "Go past No. 5 Rd. Mt. Faber"] },
+    { "text": "Walk to Ave. 3. See Dr. Tan.",
+      "points": ["Walk to Ave. 3", "See Dr. Tan"] },
+    { "text": "Walk 1.5 km. Turn left.",
+      "points": ["Walk 1.5 km", "Turn left"] },
+    { "text": "Is this your stop? Get off here.",
+      "points": ["Is this your stop?", "Get off here"] },
+    { "text": "Walk to [place 1]",
+      "points": ["Walk to [place 1]"] },
+    { "text": "  Get on the bus.   Tap your card!  ",
+      "points": ["Get on the bus", "Tap your card!"] },
+    { "text": "   ", "points": [] },
+    { "text": "", "points": [] },
+    { "text": null, "points": [] }
+  ]
+}

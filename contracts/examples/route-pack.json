@@ -26,7 +26,7 @@
       "photoUrl": "media/R-007/step1.jpg",
       "audioUrl": "media/R-007/step1.mp3",
       "backup": "If bus 190 does not come in 20 minutes, take bus 83 from the same stop.",
-      "landmarks": [{"name": "Waterway Point", "photoUrl": "media/streetview/v2/1.40640_103.90220.jpg"}]
+      "landmarks": [{"name": "Waterway Point", "photoUrl": "media/streetview/v2/1.40640_103.90220.jpg", "sameView": null}]
     }
   ],
   "path": [
