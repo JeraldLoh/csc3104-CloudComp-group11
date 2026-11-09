@@ -57,7 +57,9 @@ python evaluation/coordinator/run.py C1           # about 2 minutes; --seeds 1 f
 
 # C2 needs the fault switches too (restarts the Coordinator pointing at them):
 docker compose -f services/analysis-dev/compose.yaml -f evaluation/coordinator/compose.c2.yaml up --build -d
-python evaluation/coordinator/run.py C2           # about 45 minutes; --seeds 1 takes about 15
+caffeinate -dimsu python evaluation/coordinator/run.py C2   # about 45 minutes; --seeds 1 takes about 15
+# Keep the Mac fully awake (caffeinate -u wakes the display; -i alone doesn't). If it stops anyway,
+# run the same command again: it resumes after the last condition saved (--fresh starts over).
 python evaluation/coordinator/analyse.py          # -> results/summary.json and RESULTS.md
 python -m pytest evaluation/coordinator/tests     # the scoring definitions (no stack needed)
 ```

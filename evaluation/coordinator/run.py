@@ -3,6 +3,11 @@
     python evaluation/coordinator/run.py C1                 # every scenario, 5 seeds
     python evaluation/coordinator/run.py C1 --seeds 1       # quick check
     python evaluation/coordinator/run.py C2                 # same journeys, one detector broken at a time
+    python evaluation/coordinator/run.py C2 --fresh         # start over instead of resuming
+
+C2 takes about 45 minutes, so each finished condition is saved to results/C2-progress.json at
+once. If the run stops (laptop asleep, stack too slow), running it again with the same --seeds
+resumes from the next condition; the progress file is removed when all of them are done.
 
 Needs the local stack (services/analysis-dev) with the real detectors, in fixed4 mode:
 
@@ -80,14 +85,35 @@ FAULTS = {
 }
 HEALTHY = {"mode": "pass", "delayMs": 0}
 PARALLEL = 8   # journeys at once: a slow detector costs 500 ms per check-in
+WRONG_REASON = "switch wrong"   # how the fault switch marks a vote it inverted (services/fault-switch)
 
 
-def c2(stack: Stack, seeds: int, run_id: str) -> dict:
+def load_progress(progress: Path, seeds: int, fresh: bool) -> dict | None:
+    """The conditions an earlier, unfinished C2 run already saved, if it used the same seeds."""
+    if fresh or not progress.exists():
+        return None
+    saved = json.loads(progress.read_text())
+    if saved.get("seeds") != seeds:
+        raise SystemExit(f"{progress.name} is from a run with --seeds {saved.get('seeds')}: run with those "
+                         "seeds to resume it, or with --fresh to start over")
+    return saved
+
+
+def c2(stack: Stack, seeds: int, run_id: str, started_at: str, progress: Path, fresh: bool = False) -> dict:
     """C2: the same journeys as C1 with every detector healthy, then with one detector broken at
-    a time: slow, dead, wrong, and wrong with its reliability set to 0."""
+    a time: slow, dead, wrong, and wrong with its reliability set to 0. Each finished condition
+    is saved to `progress`, and a rerun resumes after the last one saved."""
     conditions = [("healthy", None)] + [(f, d) for d in DETECTORS for f in FAULTS]
-    out = []
+    saved = load_progress(progress, seeds, fresh)
+    if saved:
+        run_id, started_at = saved["runId"], saved["startedAt"]
+        print(f"  resuming run {run_id}: {len(saved['conditions'])} of {len(conditions)} conditions already done",
+              flush=True)
+    out = saved["conditions"] if saved else []
+    done = {(c["fault"], c["detector"]) for c in out}
     for n, (fault, detector) in enumerate(conditions):
+        if (fault, detector) in done:
+            continue
         for d in DETECTORS:
             stack.switch(d, **HEALTHY)
         stack.clear_weights()
@@ -103,13 +129,16 @@ def c2(stack: Stack, seeds: int, run_id: str) -> dict:
             check_fault_reached_the_coordinator(journeys, fault, detector)
         undecided = sum(r["decision"] is None for j in journeys for r in j["rows"])
         out.append({"fault": fault, "detector": detector, "healthyTimeouts": timeouts, "journeys": journeys})
+        progress.write_text(json.dumps({"runId": run_id, "startedAt": started_at, "seeds": seeds,
+                                        "conditions": out}, indent=1))
         print(f"  {fault:<16} {detector or '':<15} {sum(len(j['rows']) for j in journeys)} check-ins in "
               f"{time.perf_counter() - started:.0f} s, {timeouts[0]} timeouts on healthy detectors"
-              + (f", {undecided} NOT decided" if undecided else ""), flush=True)
+              + (f", {undecided} NOT decided" if undecided else "") + f"  [{len(out)}/{len(conditions)} saved]",
+              flush=True)
     for d in DETECTORS:
         stack.switch(d, **HEALTHY)
     stack.clear_weights()
-    return {"parallel": PARALLEL, "conditions": out}
+    return {"runId": run_id, "startedAt": started_at, "parallel": PARALLEL, "conditions": out}
 
 
 MAX_HEALTHY_TIMEOUTS = 0.01   # of the healthy detectors' votes
@@ -136,7 +165,7 @@ def check_fault_reached_the_coordinator(journeys: list[dict], fault: str, detect
     if fault in ("slow", "dead"):
         ok = all(v["verdict"] == "abstain" for v in votes)
     else:
-        ok = any((v.get("reason") or "").startswith("fake wrong") for v in votes)
+        ok = any((v.get("reason") or "").startswith(WRONG_REASON) for v in votes)
     if not ok:
         raise SystemExit(f"{detector} doesn't show the '{fault}' fault: start the stack with "
                          "evaluation/coordinator/compose.c2.yaml (see the top of this file), and keep the "
@@ -150,6 +179,7 @@ def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("experiment", choices=sorted(EXPERIMENTS))
     p.add_argument("--seeds", type=int, default=5, help="journeys per scenario (different random seeds)")
+    p.add_argument("--fresh", action="store_true", help="C2: start over instead of resuming an unfinished run")
     a = p.parse_args()
 
     stack = Stack()
@@ -157,11 +187,18 @@ def main() -> None:
     now = datetime.now(timezone.utc)
     run_id = f"{a.experiment}{now.strftime('%m%d%H%M%S')}"
     print(f"{a.experiment}: run {run_id}", flush=True)
-    data = EXPERIMENTS[a.experiment](stack, a.seeds, run_id)
     RESULTS.mkdir(parents=True, exist_ok=True)
+    if a.experiment == "C2":
+        progress = RESULTS / "C2-progress.json"
+        data = c2(stack, a.seeds, run_id, now.isoformat(), progress, a.fresh)
+    else:
+        progress = None
+        data = EXPERIMENTS[a.experiment](stack, a.seeds, run_id)
     out = RESULTS / f"{a.experiment}-{now.strftime('%Y%m%dT%H%M%SZ')}.json"
     out.write_text(json.dumps({"experiment": a.experiment, "runId": run_id, "startedAt": now.isoformat(),
                                "seeds": a.seeds, **data}, indent=1))
+    if progress:
+        progress.unlink(missing_ok=True)   # finished: nothing left to resume
     print(f"saved {out.relative_to(Path.cwd()) if out.is_relative_to(Path.cwd()) else out}")
 
 
