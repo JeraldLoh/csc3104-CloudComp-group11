@@ -11,7 +11,9 @@ The service has two deployable parts that share a little code, so the files are 
 |---|---|---|
 | `main.py` (FastAPI endpoints), `models.py`, `auth.py` | yes | no |
 | `demo_tools.py` (pretend disruption / crowding, live/saved switch; `DEMO_UI` only) | local demos | no |
-| `journey_client.py` (the API's logic in one class: OneMap, planning, routes, trips, packs) | yes | no |
+| `journey_client.py` (what the API calls: routes, trips, packs; holds the parts below) | yes | no |
+| `onemap.py` (OneMap client), `planning.py` (route options, live warnings, where trains aren't running) | yes | no |
+| `photos.py` (step photos, uploads, links), `trip_changes.py` (bridging buses, re-routes; mixed into the client), `timefmt.py` | yes | no |
 | `easy_read.py` (plain-language wording for route steps, no imports from the rest of `app/`) | yes | no |
 | `easy_read_ai.py` (asks the Easy-read Service for simpler wording), `streetview.py` (step photos) | yes | no |
 | `speech.py` (each step read aloud by Amazon Polly, for the pack's `audioUrl`) | yes | no |

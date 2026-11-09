@@ -9,7 +9,8 @@ import pytest
 import respx
 from pydantic import ValidationError
 
-from app.journey_client import JourneyClient, PhotoInvalid
+from app.journey_client import JourneyClient
+from app.photos import PhotoInvalid
 from app.models import Step
 from app.route_store import RouteNotFound
 from app.streetview import (IMAGE_URL, METADATA_URL, View, bearing, distance_m, fetch, field_of_view, nearest, photo_key, same_view,
