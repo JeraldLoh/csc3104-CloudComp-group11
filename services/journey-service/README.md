@@ -71,9 +71,11 @@ kubectl port-forward svc/journey-service 8006:8000 -n csc3104
 | Where | What |
 |---|---|
 | `app/main.py`, `models.py`, `auth.py` | the FastAPI endpoints, request bodies, who is calling |
-| `app/journey_client.py` | the logic: planning, routes, trips, packs, bridging buses, re-routes |
+| `app/journey_client.py` | what the API calls: saved routes, trips and packs, using the parts below |
+| `app/onemap.py`, `app/planning.py` | OneMap client; route options with their live LTA warnings |
+| `app/photos.py`, `app/trip_changes.py` | step photos and their links; bridging buses and re-routes for a trip under way |
 | `app/lta.py`, `app/bridge.py` | LTA DataMall client; working out a bridging bus past a breakdown |
-| `app/easy_read.py`, `easy_read_ai.py`, `landmarks.py`, `streetview.py` | the traveller's wording, AI wording, landmarks, step photos |
+| `app/easy_read.py`, `easy_read_ai.py`, `landmarks.py`, `streetview.py` | the traveller's wording, AI wording, landmarks, finding a Street View photo |
 | `app/speech.py` | spoken instructions: each step read aloud by Amazon Polly, for the pack's `audioUrl` |
 | `app/route_store.py`, `trip_store.py`, `pack_store.py` | storage: DynamoDB or Redis, S3 |
 | `app/disruption.py`, `lambda_handler.py` | the disruption checker (a Lambda; it imports none of the API code) |

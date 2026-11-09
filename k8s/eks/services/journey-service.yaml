@@ -1,8 +1,8 @@
 # Journey Service for the platform's quick path:  .\scripts\windows\deploy.ps1 -Service journey-service
 # deploy.ps1 fills in the __PLACEHOLDERS__ (see scripts/README.md), including the pack bucket. It doesn't create
 # the API-key Secret or the bucket's CORS rule, so pack downloads from the traveller app need those. For that, use
-# services/journey-service/deploy/windows/deploy-eks.ps1 (or macos/deploy-eks.sh) instead (same Deployment, from
-# deploy/eks/journey-service.yaml).
+# services/journey-service/deploy/windows/deploy-eks.ps1 (or macos/deploy-eks.sh) instead: it renders this same
+# manifest, so there is only one to keep up to date.
 # Before the first -Service deploy, create the Secret once:
 #   kubectl create secret generic journey-api-keys --from-env-file=.env -n careroute
 apiVersion: apps/v1
@@ -33,8 +33,7 @@ spec:
             - { name: PACKS_BUCKET, value: "__FILES_BUCKET__" }   # packs go under packs/
             - { name: ONEMAP_MODE, value: "live" }
             - { name: LTA_MODE, value: "live" }
-            # Logins (issue 1.5): Cognito tokens from the careroute-cognito stack, whose IDs the deploy fills in.
-            # Never "dev" here: it would let anyone claim to be anyone.
+            # Logins: Cognito tokens from the careroute-cognito stack, whose IDs the deploy fills in.
             - { name: AUTH_MODE, value: "cognito" }
             - { name: COGNITO_REGION, value: "__REGION__" }
             - { name: COGNITO_USER_POOL_ID, value: "__COGNITO_USER_POOL_ID__" }

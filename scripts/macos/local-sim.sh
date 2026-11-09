@@ -150,6 +150,9 @@ ensure_secret() {
     grep -qE '^LOCALSTACK_AUTH_TOKEN=.+' .env || die "LOCALSTACK_AUTH_TOKEN is empty in .env"
     kubectl apply -f k8s/local/namespace.yaml >/dev/null
     kubectl create secret generic localstack-auth --from-env-file=.env -n "$NS" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+    # the Journey Service's LTA, OneMap and Google Maps keys (k8s/local/journey-service.yaml); without them it runs on
+    # saved data and saves routes without Street View photos
+    kubectl create secret generic journey-api-keys --from-env-file=.env -n "$NS" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
   else
     kubectl get secret localstack-auth -n "$NS" >/dev/null 2>&1 || die "no localstack-auth secret, run with --setup"
   fi

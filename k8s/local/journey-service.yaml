@@ -1,5 +1,5 @@
-# The LTA and OneMap keys come from a Secret, created from the root .env like localstack-auth:
-#   kubectl create secret generic journey-api-keys --from-env-file=.env -n csc3104
+# The LTA and OneMap keys come from a Secret, created from the root .env like localstack-auth (local-sim -Setup /
+# --setup does it; by hand: kubectl create secret generic journey-api-keys --from-env-file=.env -n csc3104)
 # (the .env needs LTA_API_KEY= and ONEMAP_API_EMAIL= / ONEMAP_API_PASSWORD= (or ONEMAP_API_KEY=) lines, and optionally
 # GOOGLE_MAPS_API_KEY= for step photos; other lines are ignored by the pod)
 apiVersion: apps/v1
@@ -30,6 +30,9 @@ spec:
             # Route packs and step photos in LocalStack's S3, as in compose.journey.yaml. Without a bucket the Pack
             # button and photo uploads answer 503, and a trip link can't open in the traveller app.
             - { name: PACKS_BUCKET, value: "careroute-packs" }
+            # Dev extras, as in compose.journey.yaml: the caregiver app's Data box (live/saved, kept in Redis so both
+            # replicas follow it) and app/demo_tools.py (pretend breakdowns). No login on either: never on EKS.
+            - { name: DEMO_UI, value: "true" }
             - { name: CREATE_RESOURCES, value: "true" }                         # makes the bucket; remove on EKS
             # Pack and photo links are opened by a browser, which reaches LocalStack on localhost:4566
             # (kind-config.yaml + expose), not by its in-cluster name.

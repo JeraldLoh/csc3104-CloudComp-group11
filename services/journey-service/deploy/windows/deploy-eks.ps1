@@ -5,7 +5,7 @@
 .DESCRIPTION
   Run the platform's deploy.ps1 first; this script only adds our service to what it built:
     stack outputs -> kubeconfig -> pack bucket CORS -> Secret for the LTA/OneMap keys -> build and push our image
-    to the stack's ECR repository (tag journey-<ImageTag>) -> render and apply deploy\eks\journey-service.yaml
+    to the stack's ECR repository (tag journey-<ImageTag>) -> render and apply k8s\eks\services\journey-service.yaml
     -> wait for the rollout -> /ready check through a port-forward.
 
   Names: tables are <prefix>-routes and <prefix>-trips, the pack bucket is <prefix>-files-<account id>. The prefix is
@@ -45,7 +45,7 @@ $CognitoPool = 'render-only-pool'
 $CognitoClient = 'render-only-client'
 $ServiceDir = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $RepoRoot = (Resolve-Path (Join-Path $ServiceDir '..\..')).Path
-$Manifest = Join-Path $PSScriptRoot '..\eks\journey-service.yaml'
+$Manifest = Join-Path $RepoRoot 'k8s\eks\services\journey-service.yaml'   # the team's, one manifest for every deploy path
 if (-not $EnvFile) { $EnvFile = Join-Path $RepoRoot '.env' }
 $WorkDir = Join-Path ([IO.Path]::GetTempPath()) ("journey-deploy-" + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $WorkDir | Out-Null
@@ -78,7 +78,9 @@ function Connect-Ecr([string]$Registry) {
   } finally { Remove-Item $file -Force -ErrorAction SilentlyContinue }
 }
 
-# The committed manifest keeps its placeholders; this fills them in and refuses to continue if any is left.
+# The team's manifest (k8s/eks/services/journey-service.yaml, also used by scripts\windows\deploy.ps1 -Service and
+# GitHub Actions) keeps its __PLACEHOLDERS__; this fills them in and refuses to continue if any is left outside a
+# comment. Its tables are careroute-*; another -ResourcePrefix renames them.
 function Get-RenderedManifest([string]$Img, [string]$Redis, [string]$Bkt, [string]$Prefix) {
   $text = [IO.File]::ReadAllText($Manifest)
   $text = $text.Replace('<JOURNEY_IMAGE>', $Img).Replace('<REDIS_ENDPOINT>', $Redis).Replace('<PACKS_BUCKET>', $Bkt).Replace('<RESOURCE_PREFIX>', $Prefix)

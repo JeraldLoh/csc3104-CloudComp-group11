@@ -148,6 +148,11 @@ function Initialize-Secret {
     if ($LASTEXITCODE -ne 0) { Fail "could not read .env" }
     $yaml | kubectl apply -f - | Out-Null
     if ($LASTEXITCODE -ne 0) { Fail "could not save the localstack-auth secret" }
+    # The Journey Service's LTA, OneMap and Google Maps keys (k8s/local/journey-service.yaml); without them it runs on
+    # saved data and saves routes without Street View photos
+    $yaml = kubectl create secret generic journey-api-keys --from-env-file=.env -n $Ns --dry-run=client -o yaml
+    $yaml | kubectl apply -f - | Out-Null
+    if ($LASTEXITCODE -ne 0) { Fail "could not save the journey-api-keys secret" }
   } else {
     kubectl get secret localstack-auth -n $Ns 2>$null | Out-Null
     if ($LASTEXITCODE -ne 0) { Fail "no localstack-auth secret, run with -Setup" }
