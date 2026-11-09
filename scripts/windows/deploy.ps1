@@ -182,14 +182,21 @@ function Publish-Service([string]$Name, [hashtable]$Outputs) {
   if ($left.Count -gt 0) { throw "k8s/eks/services/$Name.yaml has unknown placeholders: $($left -join ' ')" }
   [IO.File]::WriteAllText($rendered, $text, $Utf8NoBom)
 
+  # The Deployment named after the service, or (one image run as several Deployments, e.g. detectors) every
+  # Deployment labelled app.kubernetes.io/part-of: <name>. Read before applying, to know which already existed.
+  $before = @(Split-Words (Invoke-Quiet { kubectl get deployment -n $AppNamespace -l "app.kubernetes.io/part-of=$Name" -o name }))
   Invoke-Quiet { kubectl get deployment $Name -n $AppNamespace } | Out-Null
-  $existed = ($LASTEXITCODE -eq 0)
+  if ($LASTEXITCODE -eq 0) { $before += "deployment.apps/$Name" }
   Invoke-Checked { kubectl apply -f $rendered }
-  # Re-pushing the same tag does not change the spec, so force new pods to pull it.
-  if ($existed) {
-    Invoke-Checked { kubectl rollout restart "deployment/$Name" -n $AppNamespace }
+  Invoke-Quiet { kubectl get deployment $Name -n $AppNamespace } | Out-Null
+  $targets = if ($LASTEXITCODE -eq 0) { @("deployment.apps/$Name") }
+             else { @(Split-Words (Invoke-Checked { kubectl get deployment -n $AppNamespace -l "app.kubernetes.io/part-of=$Name" -o name })) }
+  if ($targets.Count -eq 0) { throw "k8s/eks/services/$Name.yaml has no Deployment named $Name or labelled app.kubernetes.io/part-of: $Name" }
+  foreach ($target in $targets) {
+    # Re-pushing the same tag does not change the spec, so force new pods to pull it.
+    if ($before -contains $target) { Invoke-Checked { kubectl rollout restart $target -n $AppNamespace } }
+    Invoke-Checked { kubectl rollout status $target -n $AppNamespace --timeout=10m }
   }
-  Invoke-Checked { kubectl rollout status "deployment/$Name" -n $AppNamespace --timeout=10m }
 }
 
 try {

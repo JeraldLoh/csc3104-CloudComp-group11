@@ -24,6 +24,7 @@
 #>
 param(
   [string]$StackName = 'careroute-stack-1',
+  [string]$CognitoStackName = 'careroute-cognito',
   [string]$Region = 'ap-southeast-1',
   [string]$ResourcePrefix,
   [string]$ImageTag = 'v1',
@@ -38,6 +39,10 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+# The user pool's IDs (logins, issue 1.5), read from the Cognito stack before deploying. -RenderOnly makes no AWS
+# call, so it renders these stand-ins.
+$CognitoPool = 'render-only-pool'
+$CognitoClient = 'render-only-client'
 $ServiceDir = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $RepoRoot = (Resolve-Path (Join-Path $ServiceDir '..\..')).Path
 $Manifest = Join-Path $PSScriptRoot '..\eks\journey-service.yaml'
@@ -77,6 +82,7 @@ function Connect-Ecr([string]$Registry) {
 function Get-RenderedManifest([string]$Img, [string]$Redis, [string]$Bkt, [string]$Prefix) {
   $text = [IO.File]::ReadAllText($Manifest)
   $text = $text.Replace('<JOURNEY_IMAGE>', $Img).Replace('<REDIS_ENDPOINT>', $Redis).Replace('<PACKS_BUCKET>', $Bkt).Replace('<RESOURCE_PREFIX>', $Prefix)
+  $text = $text.Replace('<COGNITO_USER_POOL_ID>', $script:CognitoPool).Replace('<COGNITO_CLIENT_ID>', $script:CognitoClient)
   $left = [regex]::Match($text, '<[A-Z_]+>')
   if ($left.Success) { throw "Manifest still has an unfilled placeholder: $($left.Value)" }
   return $text
@@ -185,6 +191,13 @@ try {
 
   # ---------------------------------------------------------------------------
   Write-Step 'Applying the manifest'
+  # Logins (issue 1.5): the user pool lives in its own stack, kept between teardowns.
+  $script:CognitoPool = Invoke-Quiet { aws cloudformation describe-stacks --stack-name $CognitoStackName --region $Region --query "Stacks[0].Outputs[?OutputKey=='UserPoolId'].OutputValue" --output text }
+  $script:CognitoClient = Invoke-Quiet { aws cloudformation describe-stacks --stack-name $CognitoStackName --region $Region --query "Stacks[0].Outputs[?OutputKey=='UserPoolClientId'].OutputValue" --output text }
+  if (-not $script:CognitoPool -or -not $script:CognitoClient -or $script:CognitoPool -eq 'None') {
+    throw "The Journey Service needs the Cognito stack $CognitoStackName (logins). Deploy it once: repo README, 'Logins (Cognito)'"
+  }
+  Write-Info "User pool $script:CognitoPool"
   $Rendered = Join-Path $WorkDir 'journey-service.yaml'
   [IO.File]::WriteAllText($Rendered, (Get-RenderedManifest $Image $RedisEndpoint $Bucket $ResourcePrefix), $Utf8NoBom)
   Invoke-Quiet { kubectl get deployment journey-service -n $AppNamespace } | Out-Null

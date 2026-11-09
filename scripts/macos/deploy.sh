@@ -99,7 +99,7 @@ service_role_arn() {
 # Builds services/NAME, pushes it to ECR repository careroute-NAME, and applies
 # k8s/eks/services/NAME.yaml with its placeholders filled in.
 deploy_service() {
-  local name="$1" dir manifest repo registry image rendered left role_arn existed=false
+  local name="$1" dir manifest repo registry image rendered left role_arn
   printf '%s' "$name" | grep -Eq '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$' \
     || die "Service name must be lowercase letters, digits and dashes: '$name'"
   dir="$REPO_ROOT/services/$name"
@@ -158,13 +158,23 @@ deploy_service() {
     | grep -Eo '__[A-Z][A-Z0-9_]*__' | sort -u | tr '\n' ' ' || true)"
   [ -z "$left" ] || die "k8s/eks/services/$name.yaml has unknown placeholders: $left"
 
-  kubectl get deployment "$name" -n "$APP_NAMESPACE" >/dev/null 2>&1 && existed=true
+  # The Deployment named after the service, or (one image run as several Deployments, e.g. detectors) every
+  # Deployment labelled app.kubernetes.io/part-of: <name>. Read before applying, to know which already existed.
+  local before targets target
+  before=" $(kubectl get deployment -n "$APP_NAMESPACE" -l "app.kubernetes.io/part-of=$name" -o name 2>/dev/null | tr '\n' ' ')"
+  kubectl get deployment "$name" -n "$APP_NAMESPACE" >/dev/null 2>&1 && before="$before deployment.apps/$name "
   kubectl apply -f "$rendered"
-  # Re-pushing the same tag does not change the spec, so force new pods to pull it.
-  if [ "$existed" = true ]; then
-    kubectl rollout restart deployment/"$name" -n "$APP_NAMESPACE"
+  if kubectl get deployment "$name" -n "$APP_NAMESPACE" >/dev/null 2>&1; then
+    targets="deployment.apps/$name"
+  else
+    targets="$(kubectl get deployment -n "$APP_NAMESPACE" -l "app.kubernetes.io/part-of=$name" -o name)"
   fi
-  kubectl rollout status deployment/"$name" -n "$APP_NAMESPACE" --timeout=10m
+  [ -n "$targets" ] || die "k8s/eks/services/$name.yaml has no Deployment named $name or labelled app.kubernetes.io/part-of: $name"
+  for target in $targets; do
+    # Re-pushing the same tag does not change the spec, so force new pods to pull it.
+    case "$before" in *" $target "*) kubectl rollout restart "$target" -n "$APP_NAMESPACE" ;; esac
+    kubectl rollout status "$target" -n "$APP_NAMESPACE" --timeout=10m
+  done
 }
 
 # ---------------------------------------------------------------------------

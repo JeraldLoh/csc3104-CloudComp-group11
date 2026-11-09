@@ -39,7 +39,7 @@ printing them.
 | `lambda/disruption-lambda.yaml` | Our own CloudFormation stack (`careroute-journey-lambda`): the function, its role (SQS send + VPC/logs), a 14-day log group, an EventBridge rule `rate(1 minute)`. |
 | `lambda/make_zip.py` | Lists our 8 app files and writes the zip (run inside the build container). The zip goes to `lambda/dist/` (gitignored). |
 | `windows/` and `macos/`, one script each (`.ps1` / `.sh`): | |
-| `deploy-eks` | Reads the stack outputs, sets the pack bucket's CORS rule, creates the Secret `journey-api-keys` from `.env` (LTA, OneMap and, for step photos, `GOOGLE_MAPS_API_KEY`), builds and pushes our image to the stack's ECR repository as tag `journey-<tag>`, fills in the manifest's four placeholders (image, Redis, bucket, prefix) in a temporary copy, applies it, waits for the rollout and checks `/ready` through a port-forward. `-RenderOnly` / `--render-only` just renders the manifest (no AWS). |
+| `deploy-eks` | Reads the stack outputs, sets the pack bucket's CORS rule, creates the Secret `journey-api-keys` from `.env` (LTA, OneMap and, for step photos, `GOOGLE_MAPS_API_KEY`), builds and pushes our image to the stack's ECR repository as tag `journey-<tag>`, fills in the manifest's placeholders (image, Redis, bucket, prefix, and the Cognito pool and client IDs from the `careroute-cognito` stack) in a temporary copy, applies it, waits for the rollout and checks `/ready` through a port-forward. `-RenderOnly` / `--render-only` just renders the manifest (no AWS). |
 | (AI easy-read) | Not deployed by these scripts: the Easy-read Service and Ollama go out with the platform script, `deploy.ps1 -Service easyread-service` / `deploy.sh --service easyread-service` (see `services/easyread-service/README.md`). Until then the Journey Service's `EASYREAD_URL` can't be reached and **Simplify with AI** gives the standard wording. |
 | `teardown-eks` | Deletes our Deployment, Service and Secret, our `journey-*` ECR tags and the `packs/` objects. Nothing of the platform's. |
 | `build-lambda` | Builds `lambda/dist/disruption-lambda.zip` in a `python:3.12` Linux container: our 8 files plus httpx and redis (about 1 MB). `-Verify` / `--verify` imports it in a clean container and fails if FastAPI or PyJWT came along. |
@@ -110,8 +110,11 @@ were checked against LocalStack by hand, so re-check them after changing `route_
 7. the LTA key is in the Lambda's environment variables (visible to anyone who can read its configuration): move it
    to Secrets Manager before this is more than a demo.
 
+Logins: the service runs with `AUTH_MODE=cognito`, so the `careroute-cognito` stack must exist first (repo README,
+"Logins (Cognito)"); `deploy-eks` stops with that message if it doesn't.
+
 ## Not covered here (needs the team)
 
-Cognito logins (user pool and the token claim names; the service runs with `AUTH_MODE=off` until then), how our API is
+How our API is
 exposed on the load balancer (no Ingress yet), whether M2's "pack builder" or our pack endpoint owns the route pack,
 and folding these steps into the platform's own script.

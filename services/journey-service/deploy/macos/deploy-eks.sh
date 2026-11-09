@@ -26,6 +26,11 @@
 set -euo pipefail
 
 STACK_NAME="${STACK_NAME:-careroute-stack-1}"
+COGNITO_STACK_NAME="${COGNITO_STACK_NAME:-careroute-cognito}"
+# The user pool's IDs (logins, issue 1.5), read from the Cognito stack before deploying. --render-only makes no AWS
+# call, so it renders these stand-ins.
+COGNITO_POOL="render-only-pool"
+COGNITO_CLIENT="render-only-client"
 REGION="${REGION:-ap-southeast-1}"
 RESOURCE_PREFIX="${RESOURCE_PREFIX:-}"
 IMAGE_TAG="${IMAGE_TAG:-v1}"
@@ -86,7 +91,9 @@ sed_value() { printf '%s' "$1" | sed -e 's/[\\|&]/\\&/g'; }
 # The committed manifest keeps its placeholders; this fills them in and refuses to continue if any is left.
 render_manifest() {  # image redis bucket prefix out-file
   sed -e "s|<JOURNEY_IMAGE>|$(sed_value "$1")|g" -e "s|<REDIS_ENDPOINT>|$(sed_value "$2")|g" \
-      -e "s|<PACKS_BUCKET>|$(sed_value "$3")|g" -e "s|<RESOURCE_PREFIX>|$(sed_value "$4")|g" "$MANIFEST" > "$5"
+      -e "s|<PACKS_BUCKET>|$(sed_value "$3")|g" -e "s|<RESOURCE_PREFIX>|$(sed_value "$4")|g" \
+      -e "s|<COGNITO_USER_POOL_ID>|$(sed_value "$COGNITO_POOL")|g" -e "s|<COGNITO_CLIENT_ID>|$(sed_value "$COGNITO_CLIENT")|g" \
+      "$MANIFEST" > "$5"
   local left
   left="$(grep -Eo '<[A-Z_]+>' "$5" | head -n 1 || true)"
   [ -z "$left" ] || die "Manifest still has an unfilled placeholder: $left"
@@ -191,6 +198,14 @@ docker push "$IMAGE"
 
 # ---------------------------------------------------------------------------
 step "Applying the manifest"
+# Logins (issue 1.5): the user pool lives in its own stack, kept between teardowns.
+COGNITO_POOL="$(aws cloudformation describe-stacks --stack-name "$COGNITO_STACK_NAME" --region "$REGION" \
+  --query "Stacks[0].Outputs[?OutputKey=='UserPoolId'].OutputValue" --output text 2>/dev/null || true)"
+COGNITO_CLIENT="$(aws cloudformation describe-stacks --stack-name "$COGNITO_STACK_NAME" --region "$REGION" \
+  --query "Stacks[0].Outputs[?OutputKey=='UserPoolClientId'].OutputValue" --output text 2>/dev/null || true)"
+[ -n "$COGNITO_POOL" ] && [ "$COGNITO_POOL" != "None" ] && [ -n "$COGNITO_CLIENT" ] \
+  || die "The Journey Service needs the Cognito stack $COGNITO_STACK_NAME (logins). Deploy it once: repo README, 'Logins (Cognito)'"
+info "User pool $COGNITO_POOL"
 RENDERED="$WORK_DIR/journey-service.yaml"
 render_manifest "$IMAGE" "$REDIS_ENDPOINT" "$BUCKET" "$RESOURCE_PREFIX" "$RENDERED"
 EXISTED=false

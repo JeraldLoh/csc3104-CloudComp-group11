@@ -40,9 +40,12 @@ spec:
             # Always the real APIs in AWS; saved-data mode (ONEMAP_MODE / LTA_MODE=recorded) is for local demos only.
             - { name: ONEMAP_MODE, value: "live" }
             - { name: LTA_MODE, value: "live" }
-            # Logins are not enforced until the team has a Cognito user pool and has agreed the token claims
-            # (see ../README.md and the service README "Who is calling"). Then: AUTH_MODE=cognito + COGNITO_* settings.
-            - { name: AUTH_MODE, value: "off" }
+            # Logins (issue 1.5): Cognito ID tokens from the careroute-cognito stack (repo README, "Logins (Cognito)").
+            # deploy-eks fills in the pool's IDs. Never "dev" here: it would let anyone claim to be anyone.
+            - { name: AUTH_MODE, value: "cognito" }
+            - { name: COGNITO_REGION, value: "ap-southeast-1" }
+            - { name: COGNITO_USER_POOL_ID, value: "<COGNITO_USER_POOL_ID>" }
+            - { name: COGNITO_CLIENT_ID, value: "<COGNITO_CLIENT_ID>" }
             - name: LTA_API_KEY
               valueFrom: { secretKeyRef: { name: journey-api-keys, key: LTA_API_KEY, optional: true } }
             - name: ONEMAP_API_KEY
