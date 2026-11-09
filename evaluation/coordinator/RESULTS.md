@@ -65,3 +65,13 @@ Run `C41109092642`: the C1 journeys (5 per scenario), 8 at a time, with 2 Coordi
 | baseline | 0 | 2881 | 0 | 0 | 2.1 s | 0 | 0 | 0 | 42 (0) | 0 | 954 | 0 |
 | replica killed | 5 | 2881 | 0 | 5 | 60.2 s | 0 | 2 | 0 | 42 (0) | 1 | 955 | 0 |
 | alert service down | 1 | 2881 | 0 | 8 | 60.3 s | 0 | 0 | 0 | 42 (0) | 0 | 954 | 0 |
+
+## C5: asking fewer detectors (fixed4 vs adaptive vs fixed2)
+
+Run `C51109134243`: the C1 journeys (5 per scenario), one at a time, once per `REDUNDANCY_MODE` (`services/coordinator/app/adaptive.py`). *fixed4* (deployed): all 4 detectors on every check-in. *adaptive*: 2 at normal risk, the pair that fits the journey step (walking, waiting, riding), all 4 once risk is elevated or the pair can't decide. *fixed2*: the same pair, more only when the pair can't decide. Calls = detector calls per check-in and against fixed4; escalated = check-ins where the pair couldn't decide and the rest were asked; caught and delay as in C1; missed = check-ins where fixed4 raised the labelled problem and this mode didn't; alerts = journeys with a problem that got an alert of the right type / any alert; false alerts = alerts on the journeys without a problem.
+
+| Mode | detectors per check-in | calls vs fixed4 | escalated | off route (leaves the corridor) | off route near another leg | wrong direction | long dwell | missed vs fixed4 | false alarms | wrong type | alerts (right type / any) | false alerts | p95 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| **fixed4** | 4.0 | 100% | 0.0% | 5/5, 30 s | 9/11, 32 s | 5/5, 42 s | 5/5, 0 s | 0 | 33 (1.5%) | 81 | 24 / 26 of 26 | 2/15 | 53 ms |
+| **adaptive** | 2.83 | 71% | 21.9% | 5/5, 39 s | 9/11, 32 s | 5/5, 48 s | 5/5, 0 s | 5 | 28 (1.2%) | 81 | 24 / 26 of 26 | 0/15 | 51 ms |
+| **fixed2** | 2.66 | 66% | 32.9% | 5/5, 39 s | 1/11, 138 s | 5/5, 48 s | 5/5, 0 s | 58 | 28 (1.2%) | 134 | 16 / 26 of 26 | 0/15 | 57 ms |

@@ -137,6 +137,32 @@ def test_c2_scores_each_condition_like_c1():
     assert ok["outageNoticed"] == [0, 2]   # nothing broken, nothing to notice
 
 
+def test_c5_compares_each_mode_with_fixed4():
+    from analyse import c5
+
+    def mode_journey(k, caught_at):
+        """off_route_journey, with each check-in asking k detectors; the right alert from check-in caught_at on."""
+        j = {**off_route_journey(), "case": "off_route", "seed": 1}
+        for i, r in enumerate(j["rows"]):
+            r["decision"]["k"], r["decision"]["escalated"] = k[i], k[i] == 4 and k != [4] * len(k)
+            hit = caught_at is not None and i >= caught_at
+            r["decision"].update(decision="problem" if hit else "normal", problemType="off_route" if hit else None,
+                                 alerts=[{"problemType": "off_route"}] if hit else [])
+        j["incidents"] = [{"problemType": "off_route"}] if caught_at is not None else []
+        return j
+    s = c5({"runId": "t", "seeds": 1, "conditions": [
+        {"mode": "fixed4", "journeys": [mode_journey([4] * 6, caught_at=4)]},
+        {"mode": "adaptive", "journeys": [mode_journey([2, 2, 2, 2, 4, 4], caught_at=5)]},
+        {"mode": "fixed2", "journeys": [mode_journey([2] * 6, caught_at=None)]}]})
+    f4, ad, f2 = s["modes"]
+    assert (f4["detectorsPerCheckin"], f4["problemCheckinsMissedVsFixed4"], f4["caught"]) == (4.0, 0, {"off_route": [1, 1]})
+    assert ad["detectorCalls"] == 16 and ad["escalatedRate"] == round(2 / 6, 4)
+    assert ad["caught"] == {"off_route": [1, 1]} and ad["delayS"] == {"off_route": 30.0}   # 10 s later than fixed4
+    assert ad["problemCheckinsMissedVsFixed4"] == 1                                        # check-in 4
+    assert f2["caught"] == {"off_route": [0, 1]} and f2["problemCheckinsMissedVsFixed4"] == 2
+    assert f2["alerted"] == [0, 1]
+
+
 def c4_journey(decisions, incidents=(), decided_counts=None, skipped=0, ms=40.0):
     """A C4 journey: one row per decision (None = never decided)."""
     rows = []

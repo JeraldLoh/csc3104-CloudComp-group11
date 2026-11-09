@@ -7,8 +7,10 @@
     python evaluation/coordinator/run.py C2 --only "wrong, silenced"   # rerun one fault on every detector,
                                                             # into a copy of the newest C2 result
     python evaluation/coordinator/run.py C4                 # 2 replicas: one killed, the Alert Service down
+    python evaluation/coordinator/run.py C5                 # fixed4 vs adaptive vs fixed2 (restarts the
+                                                            # Coordinator in each mode, then back in fixed4)
 
-C2 and C4 take a while, so each finished condition is saved to results/<experiment>-progress.json
+C2, C4 and C5 take a while, so each finished condition is saved to results/<experiment>-progress.json
 at once. If the run stops (laptop asleep, stack too slow), running it again with the same --seeds
 resumes from the next condition; the progress file is removed when all of them are done.
 
@@ -58,14 +60,17 @@ def select_journeys(seeds: int, run_id: str) -> list[dict]:
     return out
 
 
-def run_journey(stack: Stack, j: dict, wait_s: float = 10, incidents: bool = True) -> dict:
+def run_journey(stack: Stack, j: dict, wait_s: float = 10, incidents: bool = True, mode: str = "fixed4") -> dict:
     """Play one journey. `incidents`: read the Alert Service's incidents for it straight away
-    (C4 reads them once the Alert Service is surely up again)."""
+    (C4 reads them once the Alert Service is surely up again). `mode`: the REDUNDANCY_MODE the
+    Coordinator should be in; every decision's k is checked against it."""
     checkins = j["checkins"]
     rows = play(stack, checkins, timeout_s=wait_s)
     ks = {r["decision"]["k"] for r in rows if r["decision"]}
-    if ks - {4}:
+    if mode == "fixed4" and ks - {4}:
         raise SystemExit(f"decisions asked k={sorted(ks)} detectors: the evaluation needs REDUNDANCY_MODE=fixed4")
+    if mode != "fixed4" and ks - {2, 4}:
+        raise SystemExit(f"decisions asked k={sorted(ks)} detectors: {mode} asks 2, or 4 after escalating")
     return {"scenario": j["scenario"], "case": j["case"], "farthestM": j["farthestM"], "seed": j["seed"],
             "tripId": checkins[0]["tripId"], "travellerId": checkins[0]["travellerId"], "rows": rows,
             "incidents": stack.incidents(checkins[0]["travellerId"]) if incidents else None}
@@ -324,6 +329,40 @@ def c4(stack: Stack, seeds: int, run_id: str, started_at: str, progress: Path, f
     return {"runId": run_id, "startedAt": started_at, "parallel": PARALLEL, "conditions": out}
 
 
+# C5: the experiment's three arms (services/coordinator/app/adaptive.py), fixed4 first: the baseline.
+C5_MODES = ("fixed4", "adaptive", "fixed2")
+
+
+def c5(stack: Stack, seeds: int, run_id: str, started_at: str, progress: Path, fresh: bool = False) -> dict:
+    """C5: the C1 journeys, one at a time as in C1, once per REDUNDANCY_MODE. The Coordinator is
+    restarted in each mode, and back in fixed4 at the end whatever happens."""
+    saved = load_progress(progress, seeds, fresh)
+    if saved:
+        run_id, started_at = saved["runId"], saved["startedAt"]
+        print(f"  resuming run {run_id}: {len(saved['conditions'])} of {len(C5_MODES)} modes already done", flush=True)
+    out = saved["conditions"] if saved else []
+    done = {c["mode"] for c in out}
+    try:
+        for n, mode in enumerate(C5_MODES):
+            if mode in done:
+                continue
+            stack.use_mode(mode)
+            started = time.perf_counter()
+            journeys = [run_journey(stack, j, mode=mode) for j in select_journeys(seeds, f"{run_id}x{n}")]
+            healthy_timeouts(journeys, None)
+            ks = [r["decision"]["k"] for j in journeys for r in j["rows"] if r["decision"]]
+            if mode != "fixed4" and 2 not in ks:
+                raise SystemExit(f"no decision asked 2 detectors: the Coordinator didn't switch to {mode}")
+            out.append({"mode": mode, "journeys": journeys})
+            progress.write_text(json.dumps({"runId": run_id, "startedAt": started_at, "seeds": seeds,
+                                            "conditions": out}, indent=1))
+            print(f"  {mode:<9} {len(ks)} check-ins in {time.perf_counter() - started:.0f} s, "
+                  f"{sum(ks) / len(ks):.2f} detectors per check-in  [{len(out)}/{len(C5_MODES)} saved]", flush=True)
+    finally:
+        stack.use_mode("fixed4")   # the deployed mode: leave the stack as the other experiments expect it
+    return {"runId": run_id, "startedAt": started_at, "conditions": out}
+
+
 def newest_c2() -> Path:
     runs = sorted(RESULTS.glob("C2-*T*Z.json"))
     if not runs:
@@ -339,7 +378,7 @@ def merge_rerun(base: dict, rerun: dict, only: str, run_id: str, at: str) -> dic
     return {**base, "conditions": conditions, "reruns": reruns}
 
 
-EXPERIMENTS = {"C1": c1, "C2": c2, "C4": c4}
+EXPERIMENTS = {"C1": c1, "C2": c2, "C4": c4, "C5": c5}
 
 
 def main() -> None:
@@ -370,7 +409,7 @@ def main() -> None:
         out.write_text(json.dumps(merge_rerun(base, rerun, a.only, rerun["runId"], now.isoformat()), indent=1))
         print(f"  replaced the '{a.only}' conditions of {base_file.name}")
     else:
-        if a.experiment in ("C2", "C4"):
+        if a.experiment in ("C2", "C4", "C5"):
             progress = RESULTS / f"{a.experiment}-progress.json"
             data = EXPERIMENTS[a.experiment](stack, a.seeds, run_id, now.isoformat(), progress, a.fresh)
         else:

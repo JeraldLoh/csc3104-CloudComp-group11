@@ -11,7 +11,7 @@ Service) is measured separately by Member 2 in [`evaluation/`](../README.md).
 | **C2** | Does the decision stay correct when one detector is slow (over 500 ms), wrong or down? | no fault vs each fault, and a wrong detector with its reliability set to 0 | done ([RESULTS.md](RESULTS.md)) |
 | **C3** | How long does a decision take as the check-in rate grows? | p50 / p95 decision time at increasing check-ins per second | planned |
 | **C4** | Is any check-in lost or decided twice, or any alert repeated, when a Coordinator replica is killed mid-run, or the Alert Service is down? | 2 replicas: no crash vs a replica killed every 20 s vs the Alert Service down for 45 s | done ([RESULTS.md](RESULTS.md)) |
-| **C5** | What does asking fewer detectors save, and what does it cost? | `fixed4` (deployed) vs `adaptive` (2 at normal risk) | optional |
+| **C5** | What does asking fewer detectors save, and what does it cost? | `fixed4` (deployed) vs `adaptive` (2 at normal risk) vs `fixed2` | done ([RESULTS.md](RESULTS.md)) |
 
 ## How it works
 
@@ -64,6 +64,10 @@ caffeinate -dimsu python evaluation/coordinator/run.py C2   # about 45 minutes; 
 # C4 needs a second Coordinator replica (compose.c4.yaml; drops the C2 switches):
 docker compose -f services/analysis-dev/compose.yaml -f evaluation/coordinator/compose.c4.yaml up --build -d --remove-orphans
 caffeinate -dimsu python evaluation/coordinator/run.py C4   # kills and restarts containers with docker
+
+# C5 restarts the Coordinator in each REDUNDANCY_MODE itself (alone: it removes C4's second replica),
+# and leaves it in fixed4:
+caffeinate -dimsu python evaluation/coordinator/run.py C5   # about 10 minutes
 python evaluation/coordinator/analyse.py          # -> results/summary.json and RESULTS.md
 python -m pytest evaluation/coordinator/tests     # the scoring definitions (no stack needed)
 ```

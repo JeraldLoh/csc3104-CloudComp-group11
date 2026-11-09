@@ -39,6 +39,7 @@ WEIGHTS_KEY = "detector:weights"
 
 
 COMPOSE_PROJECT = os.getenv("COMPOSE_PROJECT", "careroute-analysis")
+COMPOSE_FILE = ROOT / "services" / "analysis-dev" / "compose.yaml"
 
 
 def container(service: str) -> str:
@@ -160,6 +161,22 @@ class Stack:
         url = self.sqs.get_queue_url(QueueName=f"{QUEUE}-dlq")["QueueUrl"]
         attrs = self.sqs.get_queue_attributes(QueueUrl=url, AttributeNames=["ApproximateNumberOfMessages"])
         return int(attrs["Attributes"]["ApproximateNumberOfMessages"])
+
+    # --- C5: the Coordinator in another REDUNDANCY_MODE -----------------------------------------
+
+    def use_mode(self, mode: str, ready_s: float = 60) -> None:
+        """Restart the Coordinator with REDUNDANCY_MODE=mode, as the only replica: --remove-orphans
+        also stops C4's second replica and C2's switches, which would otherwise keep their mode."""
+        subprocess.run(["docker", "compose", "-f", str(COMPOSE_FILE), "up", "-d", "--remove-orphans", "coordinator"],
+                       env={**os.environ, "REDUNDANCY_MODE": mode}, capture_output=True, text=True, check=True)
+        end = time.monotonic() + ready_s
+        while True:
+            try:
+                return self.check()
+            except SystemExit:
+                if time.monotonic() > end:
+                    raise
+                time.sleep(1)
 
     def decision_for(self, traveller: str, seq: int) -> dict | None:
         """The decision record of one check-in, if it's still in the traveller's recent list."""

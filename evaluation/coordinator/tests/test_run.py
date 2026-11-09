@@ -198,6 +198,39 @@ def test_c4_needs_both_replicas(tmp_path):
         run.c4(stack, 5, "R1", "t", tmp_path / "p.json")
 
 
+# --- C5 ------------------------------------------------------------------------------------------
+
+class ModeStack(FakeStack):
+    def __init__(self):
+        super().__init__()
+        self.modes_used = []
+
+    def use_mode(self, mode):
+        self.modes_used.append(mode)
+
+
+def mode_journey(stack, j, *args, mode="fixed4", **kwargs):
+    k = 4 if mode == "fixed4" else 2
+    votes = [{"detectorId": d, "verdict": "normal", "reason": "real"} for d in DETECTORS[:k]]
+    return {"scenario": "normal", "rows": [{"decision": {"k": k, "votes": votes}}], "incidents": []}
+
+
+def test_c5_runs_each_mode_and_ends_in_fixed4(tmp_path, monkeypatch, one_journey):
+    monkeypatch.setattr(run, "run_journey", mode_journey)
+    stack = ModeStack()
+    data = run.c5(stack, 5, "R1", "t", tmp_path / "C5-progress.json")
+    assert [c["mode"] for c in data["conditions"]] == ["fixed4", "adaptive", "fixed2"]
+    assert stack.modes_used == ["fixed4", "adaptive", "fixed2", "fixed4"]   # back in the deployed mode
+
+
+def test_c5_stops_if_the_coordinator_did_not_switch(tmp_path, monkeypatch, one_journey):
+    monkeypatch.setattr(run, "run_journey", lambda s, j, *a, mode="fixed4", **kw: mode_journey(s, j))   # always k=4
+    stack = ModeStack()
+    with pytest.raises(SystemExit, match="didn't switch to adaptive"):
+        run.c5(stack, 5, "R1", "t", tmp_path / "C5-progress.json")
+    assert stack.modes_used[-1] == "fixed4"   # still put back
+
+
 def test_the_wrong_fault_is_recognised_by_the_switchs_own_reason():
     # run.py checks the fault reached the Coordinator by this prefix; it must match what the switch writes.
     switch = (REPO / "services" / "fault-switch" / "app" / "main.py").read_text()

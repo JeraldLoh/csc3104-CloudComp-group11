@@ -345,7 +345,80 @@ def c4_markdown(s: dict) -> str:
     return "\n".join(lines)
 
 
-ANALYSES = {"C1": (c1, c1_markdown), "C2": (c2, c2_markdown), "C4": (c4, c4_markdown)}
+def c5(data: dict) -> dict:
+    """Each REDUNDANCY_MODE scored like C1 (the Coordinator's decision only: in adaptive a detector
+    isn't always asked, so detector-alone columns wouldn't compare), plus what it cost in calls."""
+    modes = {c["mode"]: c for c in data["conditions"]}
+    base = {_key(j): j for j in modes["fixed4"]["journeys"]} if "fixed4" in modes else {}
+    out = []
+    for c in data["conditions"]:
+        s = c1({"runId": data["runId"], "seeds": data["seeds"], "journeys": c["journeys"]})
+        combined, alerts = s["judges"]["combined"], s["alerts"]
+        decided = [r["decision"] for j in c["journeys"] for r in j["rows"] if r["decision"]]
+        # Check-ins where fixed4 raised the labelled problem and this mode didn't: what asking fewer missed.
+        missed = 0
+        for j in c["journeys"]:
+            b = base.get(_key(j))
+            for r, br in zip(j["rows"], b["rows"] if b else []):
+                if br["expected"] in PROBLEMS and br["expected"] in answer(br, "combined")[1]:
+                    missed += br["expected"] not in answer(r, "combined")[1]
+        out.append({
+            "mode": c["mode"],
+            "checkins": len(decided),
+            "detectorCalls": sum(d["k"] for d in decided),
+            "detectorsPerCheckin": round(sum(d["k"] for d in decided) / len(decided), 2) if decided else None,
+            "escalatedRate": round(sum(bool(d.get("escalated")) for d in decided) / len(decided), 4) if decided else None,
+            "caught": {p: [v["detected"], v["journeys"]] for p, v in combined["problems"].items()},
+            "delayS": {p: v["medianDelayS"] for p, v in combined["problems"].items()},
+            "problemCheckinsMissedVsFixed4": missed,
+            "falseAlarms": combined["falseAlarms"], "falseAlarmRate": combined["falseAlarmRate"],
+            "wrongType": combined["wrongType"],
+            "alerted": [sum(v["anyAlert"] for v in alerts["cases"].values()),
+                        sum(v["journeys"] for v in alerts["cases"].values())],
+            "rightType": sum(v["rightType"] for v in alerts["cases"].values()),
+            "falseAlerts": alerts["withoutProblem"]["falseAlerts"],
+            "journeysWithoutProblem": alerts["withoutProblem"]["journeys"],
+            "endToEndMs": s["endToEndMs"],
+        })
+    return {"runId": data["runId"], "seeds": data["seeds"], "modes": out}
+
+
+def c5_markdown(s: dict) -> str:
+    lines = ["## C5: asking fewer detectors (fixed4 vs adaptive vs fixed2)",
+             "",
+             f"Run `{s['runId']}`: the C1 journeys ({s['seeds']} per scenario), one at a time, once per "
+             "`REDUNDANCY_MODE` (`services/coordinator/app/adaptive.py`). *fixed4* (deployed): all 4 detectors on "
+             "every check-in. *adaptive*: 2 at normal risk, the pair that fits the journey step (walking, waiting, "
+             "riding), all 4 once risk is elevated or the pair can't decide. *fixed2*: the same pair, more only when "
+             "the pair can't decide. Calls = detector calls per check-in and against fixed4; escalated = check-ins "
+             "where the pair couldn't decide and the rest were asked; caught and delay as in C1; missed = check-ins "
+             "where fixed4 raised the labelled problem and this mode didn't; alerts = journeys with a problem that got "
+             "an alert of the right type / any alert; false alerts = alerts on the journeys without a problem.",
+             "",
+             "| Mode | detectors per check-in | calls vs fixed4 | escalated | "
+             + " | ".join(CASE_NAMES[c] for c in CASES)
+             + " | missed vs fixed4 | false alarms | wrong type | alerts (right type / any) | false alerts | p95 |",
+             "|---|---|---|---|" + "---|" * len(CASES) + "---|---|---|---|---|---|"]
+    base_calls = next((m["detectorCalls"] for m in s["modes"] if m["mode"] == "fixed4"), None)
+    for m in s["modes"]:
+        cells = []
+        for c in CASES:
+            if c not in m["caught"]:
+                cells.append("–")
+                continue
+            caught, delay = m["caught"][c], m["delayS"][c]
+            cells.append(f"{caught[0]}/{caught[1]}" + ("" if delay is None else f", {delay:.0f} s"))
+        vs = f"{m['detectorCalls'] / base_calls:.0%}" if base_calls else "–"
+        p95 = f"{m['endToEndMs']['p95']:.0f} ms" if m["endToEndMs"] else "–"
+        lines.append(f"| **{m['mode']}** | {m['detectorsPerCheckin']} | {vs} | {m['escalatedRate']:.1%} | "
+                     + " | ".join(cells)
+                     + f" | {m['problemCheckinsMissedVsFixed4']} | {m['falseAlarms']} ({m['falseAlarmRate']:.1%}) "
+                       f"| {m['wrongType']} | {m['rightType']} / {m['alerted'][0]} of {m['alerted'][1]} "
+                       f"| {m['falseAlerts']}/{m['journeysWithoutProblem']} | {p95} |")
+    return "\n".join(lines)
+
+
+ANALYSES = {"C1": (c1, c1_markdown), "C2": (c2, c2_markdown), "C4": (c4, c4_markdown), "C5": (c5, c5_markdown)}
 
 
 def newest(experiment: str) -> Path | None:
