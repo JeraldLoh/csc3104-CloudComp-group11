@@ -326,6 +326,23 @@ def test_the_only_detector_for_a_type_down_reports_tracking_lost_while_the_rest_
     assert state["decisions"][0]["unchecked"] == ["long_dwell"]
 
 
+def test_the_only_detector_for_a_type_silenced_reports_tracking_lost():
+    # An operator silenced dwell-time (wrong answers): long_dwell is then checked by nobody.
+    world = World()
+    results, state = track(world, redis=new_redis(keys=ROUTE_KEY, hashes={WEIGHTS_KEY: {"dwell-time": "0"}}),
+                           accuracy=10)
+    assert [r.decision["decision"] for r in results] == ["normal"] * 4
+    assert [r["reason"] for r in world.reports] == ["detectors silenced"] * 2
+    assert world.reports[0]["unchecked"] == ["long_dwell"]
+
+
+def test_a_silenced_detector_with_a_second_judge_is_not_unchecked():
+    world = World()
+    _, state = track(world, redis=new_redis(keys=ROUTE_KEY, hashes={WEIGHTS_KEY: {"route-corridor": "0"}}),
+                     accuracy=10)
+    assert world.reports == [] and state["decisions"][0]["unchecked"] == []
+
+
 def test_a_type_with_another_detector_still_answering_is_not_unchecked():
     world = World(detector_votes={"route-corridor": "down"})   # route-progress still checks off_route
     _, state = track(world, accuracy=10)

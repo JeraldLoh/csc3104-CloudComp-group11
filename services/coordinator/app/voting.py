@@ -53,6 +53,7 @@ class Decision:
     needs_more_votes: bool = False # inconclusive and some detectors weren't asked yet
     claims: tuple = ()             # every problem type raised, strongest first: ((type, weight), ...).
                                    # Each one is reported; problem_type is the first.
+    silenced: tuple = ()           # detectors that answered but were ignored (reliability 0), sorted
 
 
 def _clamp(x, lo: float = 0.0, hi: float = 1.0) -> float:
@@ -93,6 +94,7 @@ def aggregate(votes: list[dict], reliability: dict[str, float] | None = None, qu
     asked = {v.get("detectorId") for v in votes}
     can_ask_more = any(d not in asked for d in all_detectors)
     # Silenced detectors are left out here, so they count for neither rule below.
+    off = tuple(sorted({v.get("detectorId") for v in votes if silenced(v.get("detectorId"), reliability)}))
     counted = [v for v in votes
                if v.get("verdict") in COUNTED and not silenced(v.get("detectorId"), reliability)]
 
@@ -108,12 +110,12 @@ def aggregate(votes: list[dict], reliability: dict[str, float] | None = None, qu
         ranked = sorted(strongest.items(), key=lambda c: (-c[1], c[0]))
         reported = tuple((None if t == UNKNOWN else t, w) for t, w in ranked)
         problem_type, weight = reported[0]
-        return Decision("problem", problem_type, weight, weight, len(counted), claims=reported)
+        return Decision("problem", problem_type, weight, weight, len(counted), claims=reported, silenced=off)
 
     # Rules 2 and 3: "normal" needs enough detectors to have actually looked.
     if len(counted) < quorum:
-        return Decision("inconclusive", None, 0.0, None, len(counted), "quorum", can_ask_more)
+        return Decision("inconclusive", None, 0.0, None, len(counted), "quorum", can_ask_more, silenced=off)
     if sum(vote_weight(v, reliability) for v in counted) == 0:
         # Votes were cast but all with zero confidence or zero reliability.
-        return Decision("inconclusive", None, 0.0, None, len(counted), "no_weight", can_ask_more)
-    return Decision("normal", None, 1.0, 0.0, len(counted))
+        return Decision("inconclusive", None, 0.0, None, len(counted), "no_weight", can_ask_more, silenced=off)
+    return Decision("normal", None, 1.0, 0.0, len(counted), silenced=off)

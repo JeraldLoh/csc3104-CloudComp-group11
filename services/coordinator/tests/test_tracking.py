@@ -77,6 +77,23 @@ def test_a_detector_that_wasnt_asked_hasnt_failed():
     assert failed_types(votes(route_corridor="down", heading_speed="normal")) == ["off_route"]
 
 
+def test_a_silenced_detector_leaves_its_types_unchecked_like_a_failed_one():
+    assert failed_types(votes(**ALL_UP), silenced=("dwell-time",)) == ["long_dwell"]
+    assert failed_types(votes(**ALL_UP), silenced=("route-corridor",)) == []   # route-progress still checks
+    assert failed_types(votes(**ALL_UP), silenced=("heading-speed", "route-progress")) == \
+        ["missed_stop", "wrong_direction"]
+
+
+def test_unchecked_says_whether_detectors_failed_or_were_silenced():
+    good = {"accuracyM": 10, "stepIndex": 0}
+    walk = route({"mode": "walk", "underground": False})
+    silenced_dwell = Decision("normal", None, 1.0, 0.0, 3, silenced=("dwell-time",))
+    assert unchecked(silenced_dwell, good, votes(**ALL_UP), walk, 50) == ("detectors silenced", ["long_dwell"])
+    # Any real failure among them: "failed" (that one needs fixing, not just un-silencing).
+    both = votes(**{**ALL_UP, "route_progress": "down"})
+    assert unchecked(silenced_dwell, good, both, walk, 50) == ("detectors failed", ["long_dwell", "missed_stop"])
+
+
 def test_cant_judge_yet_is_not_a_failure():
     assert failed_types(votes(**{**ALL_UP, "dwell_time": "abstain"})) == []
 

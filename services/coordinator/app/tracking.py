@@ -13,7 +13,8 @@ A check-in leaves types unchecked (unchecked()) when:
   - detectors failed: every detector that checks a type (voting.COVERAGE) failed (timeout,
     error; risk.failed), e.g. dwell-time down leaves long_dwell unchecked while the others
     still decide. Kubernetes restarts a crashed pod; this catches a detector that is up but
-    not answering properly.
+    not answering properly. A silenced detector (reliability 0) counts as failed too: it
+    answers, but nothing it says is used, so its types are just as unchecked.
 The streak starts at the first such check-in (untracked:{tripId}) and any fully checked one ends it.
 """
 import json
@@ -25,7 +26,8 @@ from .voting import COVERAGE, Decision
 TRACKING_LOST = "tracking_lost"
 ALL_TYPES = sorted(set().union(*COVERAGE.values()))
 
-ROUTE_MISSING, POOR_GPS, DETECTORS_FAILED = "route missing", "poor GPS", "detectors failed"
+ROUTE_MISSING, POOR_GPS = "route missing", "poor GPS"
+DETECTORS_FAILED, DETECTORS_SILENCED = "detectors failed", "detectors silenced"
 
 
 def untracked_key(trip_id: str) -> str:
@@ -63,11 +65,11 @@ def untrackable(d: Decision, checkin: dict, route_json: str | None, max_accuracy
             and not step_underground(route_json, checkin.get("stepIndex")))
 
 
-def failed_types(votes: list[dict], coverage: dict[str, frozenset] = COVERAGE) -> list[str]:
-    """Types whose every asked detector that checks them failed. A type none of them was asked
-    about isn't counted: in adaptive mode that's a choice, not a failure."""
+def failed_types(votes: list[dict], silenced: tuple = (), coverage: dict[str, frozenset] = COVERAGE) -> list[str]:
+    """Types whose every asked detector that checks them failed or is silenced. A type none of
+    them was asked about isn't counted: in adaptive mode that's a choice, not a failure."""
     asked = {v.get("detectorId") for v in votes}
-    down = {v.get("detectorId") for v in votes if failed(v)}
+    down = {v.get("detectorId") for v in votes if failed(v)} | (set(silenced) & asked)
     unchecked = []
     for problem_type in ALL_TYPES:
         judges = {d for d, types in coverage.items() if problem_type in types} & asked
@@ -83,8 +85,11 @@ def unchecked(d: Decision, checkin: dict, votes: list[dict], route_json: str | N
         return ROUTE_MISSING, ALL_TYPES
     if untrackable(d, checkin, route_json, max_accuracy_m):
         return POOR_GPS, ALL_TYPES
-    types = failed_types(votes)
-    return (DETECTORS_FAILED, types) if types else None
+    types = failed_types(votes, d.silenced)
+    if not types:
+        return None
+    # "failed" if any of it is a real failure; only silencing is an operator's choice.
+    return (DETECTORS_FAILED if failed_types(votes) else DETECTORS_SILENCED), types
 
 
 def seconds_since(since: str, timestamp: str) -> float:

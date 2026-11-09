@@ -131,6 +131,17 @@ def test_only_silenced_detectors_answering_is_inconclusive():
     assert d.decision == "inconclusive" and d.counted == 0
 
 
+@pytest.mark.parametrize("reliability, decision", [({}, "normal"), ({DWELL: 0}, "normal"),
+                                                    ({DWELL: 0, ROUTE: 0}, "normal"), ({ROUTE: 0}, "problem")])
+def test_the_decision_names_the_silenced_detectors(reliability, decision):
+    # Whatever the decision, tracking.py needs to know whose answers weren't used.
+    votes = [v(ROUTE, "normal"), v(PROGRESS, "problem", 0.7), v(HEADING, "normal"), v(DWELL, "normal")]
+    if decision == "normal":
+        votes[1] = v(PROGRESS, "normal")
+    d = aggregate(votes, reliability=reliability)
+    assert d.decision == decision and d.silenced == tuple(sorted(reliability))
+
+
 def test_confidence_is_the_strongest_claim():
     d = aggregate([v(ROUTE, "problem", 0.84), v(PROGRESS, "problem", 0.72)], reliability={ROUTE: 0.5})
     assert d.confidence == pytest.approx(0.72)     # 0.84 x 0.5 = 0.42 < 0.72
