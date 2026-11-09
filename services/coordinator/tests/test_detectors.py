@@ -153,6 +153,64 @@ def test_abstain_vote_has_the_contract_fields():
     assert votes[0]["requestId"] == "T-001#17"
 
 
+# --- the connection pool survives slow detectors (a real local server: MockTransport has no pool) --
+
+async def detector_server(delay_s: float):
+    """A detector on a local port that answers `vote()` after delay_s."""
+    async def handle(reader, writer):
+        try:
+            length = 0
+            while (line := await reader.readline()) not in (b"\r\n", b""):
+                if line.lower().startswith(b"content-length:"):
+                    length = int(line.split(b":")[1])
+            await reader.readexactly(length)
+            await asyncio.sleep(delay_s)
+            body = json.dumps(vote()).encode()
+            writer.write(b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n"
+                         b"content-length: %d\r\n\r\n%s" % (len(body), body))
+            await writer.drain()
+        except (ConnectionError, asyncio.IncompleteReadError):
+            pass
+        finally:
+            writer.close()
+    server = await asyncio.start_server(handle, "127.0.0.1", 0)
+    return server, f"http://127.0.0.1:{server.sockets[0].getsockname()[1]}"
+
+
+def test_timed_out_calls_give_their_connection_back():
+    # A burst of slow answers used to leave every pooled connection stuck "in use" (cancelled
+    # mid-request), so afterwards even a detector answering at once timed out, for good.
+    async def go():
+        slow, slow_url = await detector_server(delay_s=0.6)
+        fast, fast_url = await detector_server(delay_s=0.0)
+        async with httpx.AsyncClient(limits=httpx.Limits(max_connections=4)) as http:
+            client = DetectorClient(http, {"route-corridor": slow_url, "dwell-time": fast_url}, timeout_s=0.2)
+            for _ in range(3):   # more slow calls at once than the pool has connections
+                burst = await asyncio.gather(*(client.call("route-corridor", REQUEST) for _ in range(8)))
+                assert {v["verdict"] for v in burst} == {"abstain"}
+            await asyncio.sleep(1.0)   # the slow answers have all arrived by now
+            after = await client.call("dwell-time", REQUEST)
+        slow.close()
+        fast.close()
+        return after
+    after = asyncio.run(go())
+    assert after["verdict"] == "normal", after["reason"]
+
+
+def test_a_slow_call_still_abstains_at_the_deadline():
+    async def go():
+        slow, url = await detector_server(delay_s=0.6)
+        async with httpx.AsyncClient() as http:
+            started = time.perf_counter()
+            v = await DetectorClient(http, {"route-corridor": url}, timeout_s=0.2).call("route-corridor", REQUEST)
+            waited = time.perf_counter() - started
+        slow.close()
+        return v, waited
+    v, waited = asyncio.run(go())
+    assert v["verdict"] == "abstain" and v["reason"] == "timeout"
+    assert waited < 0.35   # the vote doesn't wait for the slow answer
+
+
 # --- which detectors exist and where (DETECTOR_URLS) ------------------------------------------
 
 def test_four_detectors_with_route_progress():

@@ -6,6 +6,12 @@ one, not the sum. Each call has an overall deadline (500 ms by contract): httpx'
 timeout applies per phase (connect, read, ...), so a detector that trickles its answer
 could otherwise take much longer.
 
+The deadline only stops the waiting: the request itself is never cancelled. Cancelling an
+httpx request part-way leaves its pooled connection marked in use for good (httpcore 1.0), so
+a burst of slow detectors used to use up the pool, after which every call and every alert
+failed until the Coordinator restarted. A late request instead runs on in the background
+until its own httpx timeout ends it, and its connection goes back to the pool.
+
 A detector that is slow, down, errors or answers garbage becomes an "abstain" vote.
 Nothing here raises: one bad detector can never block or crash the pipeline.
 """
@@ -47,6 +53,12 @@ def abstain(request_id: str, detector_id: str, reason: str, latency_ms: int) -> 
             "problemType": None, "confidence": 0.0, "reason": reason, "latencyMs": latency_ms}
 
 
+def _ignore_late(task: asyncio.Task) -> None:
+    """A request answered or failed after its vote was already an abstain: nothing to do."""
+    if not task.cancelled():
+        task.exception()   # retrieved, so asyncio doesn't log "exception was never retrieved"
+
+
 def _reason(e: Exception) -> str:
     if isinstance(e, (asyncio.TimeoutError, httpx.TimeoutException)):
         return "timeout"
@@ -73,8 +85,14 @@ class DetectorClient:
     async def call(self, detector_id: str, request: dict) -> dict:
         request_id = request["requestId"]
         start = time.perf_counter()
+        task = asyncio.ensure_future(self._post(detector_id, request))
+        task.add_done_callback(_ignore_late)
         try:
-            vote = await asyncio.wait_for(self._post(detector_id, request), self.timeout_s)
+            # Wait up to the deadline without cancelling the request (see the top of this file).
+            done, _ = await asyncio.wait({task}, timeout=self.timeout_s)
+            if not done:
+                raise asyncio.TimeoutError
+            vote = task.result()
         except Exception as e:  #any failure is an abstain
             ms = int((time.perf_counter() - start) * 1000)
             reason = _reason(e)
