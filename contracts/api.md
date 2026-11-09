@@ -164,3 +164,7 @@ Step photos (Journey Service): saving a route adds a Google Street View photo of
 (`photoKey`, an S3 key under `media/`; a recent panorama, Google's own first, else a recent upload close by, else an older one under `media/streetview/v2/rough/` for the caregiver to check; a walk to a station shows its nearest exit). `POST /api/routes/{routeId}/photos` (multipart field `photo`, JPEG/PNG/WebP
 up to 5 MB) stores the caregiver's own photo and returns `{"photoKey", "photoUrl"}` for the editor to save in a step.
 Route answers and packs carry `photoUrl`, a temporary link.
+
+Spoken instructions (Journey Service): each pack step's `audioUrl` is a temporary link to an MP3 of its `easyRead`
+read aloud (Amazon Polly, `TTS_MODE=polly`), or the step's own `audioKey` when it has one. `null` when speech is off
+or couldn't be made: the phone then reads `easyRead` with its own voice.

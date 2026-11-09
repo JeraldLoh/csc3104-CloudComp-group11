@@ -1,4 +1,4 @@
-# Easy-read Service (Member 6)
+# Easy-read Service
 
 Rewrites route steps in Easy Read English (short sentences, one action each) for travellers with intellectual
 disabilities, using a small language model on [Ollama](https://github.com/ollama/ollama). Only the Journey Service

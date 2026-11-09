@@ -63,6 +63,7 @@ from .models import DataModeIn, DisruptionCheckIn, PlanRequest, ReplanIn, RouteI
 from .pack_store import PackUnavailable, S3PackStorage
 from .replay import RecordedDataMissing, load_manifest
 from .route_store import DynamoRouteStore, RouteConflict, RouteInvalid, RouteNotFound
+from .speech import Speech
 from .trip_store import DynamoTripStore, TripConflict, TripNotFound
 
 ROUTE_ID = re.compile(r"^R-[0-9A-F]{6}$")
@@ -97,8 +98,15 @@ def build_journey(s: Settings, redis_client, mode: DataMode | None = None) -> Jo
         pack_store = S3PackStorage.from_settings(s)
         if s.create_resources:
             aws_resources.ensure_packs_bucket(pack_store.client, s.packs_bucket, s.aws_region)
+    if s.tts_mode not in ("off", "polly"):
+        raise RuntimeError(f"TTS_MODE must be off or polly, not {s.tts_mode!r}")   # fail at startup
+    # Spoken instructions in packs (speech.py): stored next to the packs, so only with a bucket
+    speech = Speech.from_settings(s, pack_store) if s.tts_mode == "polly" and pack_store else None
+    if s.tts_mode == "polly" and not pack_store:
+        log.warning("TTS_MODE=polly needs PACKS_BUCKET: no spoken instructions")
     return JourneyClient(s, redis_client=redis_client, route_store=route_store,
-                         trip_store=trip_store, pack_store=pack_store, mode=mode, notify=queue_sender(s))
+                         trip_store=trip_store, pack_store=pack_store, mode=mode, notify=queue_sender(s),
+                         speech=speech)
 
 
 def queue_sender(s: Settings):

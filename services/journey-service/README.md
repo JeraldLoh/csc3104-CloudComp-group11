@@ -1,8 +1,8 @@
-# Journey Service (Member 6)
+# Journey Service
 
 Plans routes (OneMap), serves live bus/train/traffic data (LTA DataMall), and will own routes, trips and route packs (see `contracts/api.md`).
 
-**Status:** proof of concept. Route planning (OneMap + LTA cross-check), saved and approved routes, trips, route packs and the disruption checker all work, against LocalStack (DynamoDB, S3, SQS) and Redis locally. AI easy-read (through the Easy-read Service and Ollama, for the caregiver to review) and step photos (Street View or the caregiver's own) work too. Not built: the Profiles lookups (traveller and caregiver names) and audio.
+**Status:** proof of concept. Route planning (OneMap + LTA cross-check), saved and approved routes, trips, route packs and the disruption checker all work, against LocalStack (DynamoDB, S3, SQS) and Redis locally. AI easy-read (through the Easy-read Service and Ollama, for the caregiver to review) and step photos (Street View or the caregiver's own) work too. Spoken instructions in packs (Amazon Polly) are built and tested with a stand-in for Polly, not yet against real AWS. Not built: the Profiles lookups (traveller and caregiver names).
 
 **Demoing it:** see [`DEMO.md`](DEMO.md) (a step-by-step script with every command).
 The service runs on **saved API responses by default** (see "Saved-data mode"), so it needs no keys, no internet
@@ -386,6 +386,26 @@ get off at, the destination), turned to face it, so the traveller can check they
 - `photoKey` must be a key under `media/` (`models.py`), because answers hand out a presigned `photoUrl` for it.
   `photoUrl` is made for each answer (route answers and packs, valid for `PHOTO_URL_TTL_S`, 7 days) and never stored.
 - Google's terms limit how long Street View images may be stored; keeping them in S3 is a shortcut for this project.
+
+## Spoken instructions
+
+The traveller app's **Listen** button plays each step's `audioUrl` from the pack: the step's easy-read wording read
+aloud by Amazon Polly (`app/speech.py`). The phone downloads it with the photos, so it plays with no signal.
+
+- `TTS_MODE=polly` turns it on (set in `k8s/eks/services/journey-service.yaml`; the platform stack's IAM role allows
+  `polly:SynthesizeSpeech`). Default `off`: LocalStack has no Polly, so locally packs have `audioUrl: null` and the
+  phone uses its own voice. To try Polly locally, set `TTS_MODE=polly` with real AWS credentials (`TTS_ENDPOINT_URL`
+  stays unset, so Polly is real AWS while S3 stays LocalStack).
+- The audio is made when the caregiver approves a route (only approved routes get trips, and their wording is
+  final), and for the new steps when a changed plan (bridging bus, re-route) is sent, before the phone can see the
+  new pack. Not on every draft save. Building a pack only makes what is still missing (Polly was down earlier), so
+  the phone's pack request normally doesn't wait for Polly, and two pods don't both make the same file. It is stored in the pack bucket as
+  `media/speech/v1/<voice>-<engine>-<rate>/<hash of the words>.mp3`, so the same words are made once and an edited
+  step gets a new file. Nothing is saved on the route.
+- Read a little slower than normal (`TTS_RATE`, `90%`), with a pause between sentences; bus numbers and bus stop codes
+  are read digit by digit ("bus one nine zero"). Voice: `TTS_VOICE` (`Joanna`), `TTS_ENGINE` (`neural`).
+- Polly down or refusing: that step's `audioUrl` is null and the pack is still built. A step's own `audioKey` (an S3
+  key under `media/`) is used instead of Polly when present.
 
 ## Route geometry
 
