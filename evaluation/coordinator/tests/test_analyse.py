@@ -137,6 +137,39 @@ def test_c2_scores_each_condition_like_c1():
     assert ok["outageNoticed"] == [0, 2]   # nothing broken, nothing to notice
 
 
+def c4_journey(decisions, incidents=(), decided_counts=None, skipped=0, ms=40.0):
+    """A C4 journey: one row per decision (None = never decided)."""
+    rows = []
+    for i, d in enumerate(decisions):
+        decision = None if d is None else {"decision": d, "problemType": None, "alerts": []}
+        rows.append({"seq": i, "decision": decision, "endToEndMs": None if d is None else ms,
+                     "decidedCount": (decided_counts or [1] * len(decisions))[i], "skippedCount": skipped})
+    return {"case": "normal", "seed": 1, "rows": rows, "incidents": [dict(i) for i in incidents]}
+
+
+def test_c4_scores_each_condition_against_the_baseline():
+    from analyse import c4
+    base = c4_journey(["normal", "problem"], incidents=[{"problemType": "off_route", "detectionCount": 1}])
+    killed = c4_journey(["normal", "problem"], incidents=[{"problemType": "off_route", "detectionCount": 2}],
+                        decided_counts=[1, 1], skipped=1, ms=31_000)
+    broken = c4_journey(["normal", None], incidents=[{"problemType": "off_route"}, {"problemType": "off_route"}],
+                        decided_counts=[2, 0])
+    s = c4({"runId": "t", "seeds": 1, "parallel": 8, "conditions": [
+        {"condition": "baseline", "events": [], "reportsPosted": 1, "dlqAdded": 0, "journeys": [base]},
+        {"condition": "replica killed", "events": [{"action": "kill"}, {"action": "start"}], "reportsPosted": 2,
+         "dlqAdded": 0, "journeys": [killed]},
+        {"condition": "alert service down", "events": [{"action": "stop"}], "reportsPosted": 1, "dlqAdded": 1,
+         "journeys": [broken]}]})
+    b, k, x = s["conditions"]
+    assert (b["lost"], b["decidedTwice"], b["changedVsBaseline"], b["extraIncidents"]) == (0, 0, 0, 0)
+    # A redelivery: late, the repeat skipped, the report re-sent once (its incident's count went up), nothing else.
+    assert (k["crashes"], k["late"], k["maxDelayS"], k["repeatsSkipped"]) == (1, 2, 31.0, 2)
+    assert (k["lost"], k["decidedTwice"], k["changedVsBaseline"], k["extraIncidents"], k["extraDetections"]) == \
+        (0, 0, 0, 0, 1)
+    # What C4 is there to catch: a lost check-in, one decided twice, a second incident, a dead letter.
+    assert (x["lost"], x["decidedTwice"], x["changedVsBaseline"], x["extraIncidents"], x["dlqAdded"]) == (1, 1, 1, 1, 1)
+
+
 def test_c2_outage_noticed_counts_tracking_lost_from_failed_detectors_but_not_from_poor_gps():
     from analyse import c2
     outage = row(0, "long_dwell", "normal")

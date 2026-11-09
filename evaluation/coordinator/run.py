@@ -6,9 +6,10 @@
     python evaluation/coordinator/run.py C2 --fresh         # start over instead of resuming
     python evaluation/coordinator/run.py C2 --only "wrong, silenced"   # rerun one fault on every detector,
                                                             # into a copy of the newest C2 result
+    python evaluation/coordinator/run.py C4                 # 2 replicas: one killed, the Alert Service down
 
-C2 takes about 45 minutes, so each finished condition is saved to results/C2-progress.json at
-once. If the run stops (laptop asleep, stack too slow), running it again with the same --seeds
+C2 and C4 take a while, so each finished condition is saved to results/<experiment>-progress.json
+at once. If the run stops (laptop asleep, stack too slow), running it again with the same --seeds
 resumes from the next condition; the progress file is removed when all of them are done.
 
 Needs the local stack (services/analysis-dev) with the real detectors, in fixed4 mode:
@@ -16,6 +17,8 @@ Needs the local stack (services/analysis-dev) with the real detectors, in fixed4
     docker compose -f services/analysis-dev/compose.yaml up --build -d                  # C1
     docker compose -f services/analysis-dev/compose.yaml \\
                    -f evaluation/coordinator/compose.c2.yaml up --build -d               # C2 (fault switches)
+    docker compose -f services/analysis-dev/compose.yaml \\
+                   -f evaluation/coordinator/compose.c4.yaml up --build -d               # C4 (2 replicas)
 
 Writes evaluation/coordinator/results/<experiment>-<time>.json; analyse.py takes it from there.
 Environment: REDIS_URL, AWS_ENDPOINT_URL, COORDINATOR_URL, ALERT_SERVICE_URL (defaults: the
@@ -23,6 +26,8 @@ stack's ports on localhost).
 """
 import argparse
 import json
+import re
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -53,15 +58,17 @@ def select_journeys(seeds: int, run_id: str) -> list[dict]:
     return out
 
 
-def run_journey(stack: Stack, j: dict) -> dict:
+def run_journey(stack: Stack, j: dict, wait_s: float = 10, incidents: bool = True) -> dict:
+    """Play one journey. `incidents`: read the Alert Service's incidents for it straight away
+    (C4 reads them once the Alert Service is surely up again)."""
     checkins = j["checkins"]
-    rows = play(stack, checkins)
+    rows = play(stack, checkins, timeout_s=wait_s)
     ks = {r["decision"]["k"] for r in rows if r["decision"]}
     if ks - {4}:
         raise SystemExit(f"decisions asked k={sorted(ks)} detectors: the evaluation needs REDUNDANCY_MODE=fixed4")
     return {"scenario": j["scenario"], "case": j["case"], "farthestM": j["farthestM"], "seed": j["seed"],
             "tripId": checkins[0]["tripId"], "travellerId": checkins[0]["travellerId"], "rows": rows,
-            "incidents": stack.incidents(checkins[0]["travellerId"])}
+            "incidents": stack.incidents(checkins[0]["travellerId"]) if incidents else None}
 
 
 def c1(stack: Stack, seeds: int, run_id: str) -> dict:
@@ -177,6 +184,146 @@ def check_fault_reached_the_coordinator(journeys: list[dict], fault: str, detect
                          "computer awake (a stalled switch times out instead of answering)")
 
 
+# C4: what is crashed while the journeys play (compose.c4.yaml runs 2 Coordinator replicas).
+REPLICAS = ("coordinator", "coordinator-2")
+# The journeys take about 90 s without faults, so the faults come often enough to hit many
+# check-ins in flight.
+FIRST_FAULT_S = 5        # into the condition, once check-ins are flowing
+KILL_EVERY_S = 20        # replica killed: one replica every 20 s, alternating
+RESTART_AFTER_S = 5      # ... and started again, as Kubernetes would restart the pod
+ALERT_DOWN_FOR_S = 45    # Alert Service down: stopped once (a check-in is received 2-3 times, < the 5 before the DLQ)
+C4_WAIT_S = 120          # per check-in: a redelivery takes the 30 s visibility timeout, maybe twice
+SETTLE_S = 60            # after the journeys: last chance for a redelivered check-in
+
+
+def _event(events: list, action: str, service: str) -> None:
+    events.append({"at": datetime.now(timezone.utc).isoformat(), "action": action, "service": service})
+
+
+def no_fault(stack: Stack, stop, events: list) -> None:
+    pass
+
+
+def kill_replicas(stack: Stack, stop, events: list) -> None:
+    """Every KILL_EVERY_S, SIGKILL one replica (alternating) and start it RESTART_AFTER_S later."""
+    n, wait = 0, FIRST_FAULT_S
+    while not stop.wait(wait):
+        target = REPLICAS[n % len(REPLICAS)]
+        stack.kill(target)
+        _event(events, "kill", target)
+        stop.wait(RESTART_AFTER_S)
+        stack.start(target)
+        _event(events, "start", target)
+        n, wait = n + 1, KILL_EVERY_S - RESTART_AFTER_S
+
+
+def alert_service_down(stack: Stack, stop, events: list) -> None:
+    if stop.wait(FIRST_FAULT_S):
+        return
+    stack.stop("alert-service")
+    _event(events, "stop", "alert-service")
+    stop.wait(ALERT_DOWN_FOR_S)
+    stack.start("alert-service")
+    _event(events, "start", "alert-service")
+
+
+C4_CONDITIONS = {"baseline": no_fault, "replica killed": kill_replicas, "alert service down": alert_service_down}
+
+DECIDED_LINE = re.compile(r"decided (\S+) k=")
+SKIPPED_LINE = re.compile(r"skip (\S+): already decided")
+
+
+def count_lines(text: str, pattern: re.Pattern) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for request_id in pattern.findall(text):
+        counts[request_id] = counts.get(request_id, 0) + 1
+    return counts
+
+
+def settle(stack: Stack, journeys: list[dict], wait_s: float = SETTLE_S) -> None:
+    """Rows not decided within the wait: look once more, for up to wait_s in all. Still nothing
+    is lost; a late one is marked, since its end-to-end time is unknown."""
+    pending = [(j, r) for j in journeys for r in j["rows"] if r["decision"] is None]
+    end = time.monotonic() + wait_s
+    while pending and time.monotonic() < end:
+        still = []
+        for j, r in pending:
+            if stack.redis.exists(f"decided:{j['tripId']}:{r['seq']}"):
+                r["decision"], r["late"] = stack.decision_for(j["travellerId"], r["seq"]), True
+            else:
+                still.append((j, r))
+        pending = still
+        time.sleep(1)
+
+
+def ensure_up(stack: Stack) -> None:
+    for service in (*REPLICAS, "alert-service"):
+        if not stack.running(service):
+            stack.start(service)
+    for _ in range(60):   # the Alert Service needs a moment before its incidents can be read
+        try:
+            stack.check()
+            return
+        except SystemExit:
+            time.sleep(1)
+    stack.check()
+
+
+def c4(stack: Stack, seeds: int, run_id: str, started_at: str, progress: Path, fresh: bool = False) -> dict:
+    """C4: the C1 journeys with 2 Coordinator replicas, while nothing / a replica / the Alert
+    Service is crashed. Counts, from both replicas' logs, how often each check-in was decided
+    (once, by the decided: marker) and how often a repeat was skipped."""
+    for service in REPLICAS:
+        if not stack.running(service):
+            raise SystemExit(f"{service} isn't running: start the stack with evaluation/coordinator/compose.c4.yaml "
+                             "(see the top of this file)")
+    saved = load_progress(progress, seeds, fresh)
+    if saved:
+        run_id, started_at = saved["runId"], saved["startedAt"]
+        print(f"  resuming run {run_id}: {len(saved['conditions'])} of {len(C4_CONDITIONS)} conditions already done",
+              flush=True)
+    out = saved["conditions"] if saved else []
+    done = {c["condition"] for c in out}
+    for n, (condition, fault) in enumerate(C4_CONDITIONS.items()):
+        if condition in done:
+            continue
+        ensure_up(stack)
+        since = datetime.now(timezone.utc).isoformat()
+        dlq_before, started = stack.dlq_depth(), time.perf_counter()
+        events, stop = [], threading.Event()
+        chaos = threading.Thread(target=fault, args=(stack, stop, events), daemon=True)
+        chaos.start()
+        try:
+            with ThreadPoolExecutor(PARALLEL) as pool:
+                journeys = list(pool.map(lambda j: run_journey(stack, j, C4_WAIT_S, incidents=False),
+                                         select_journeys(seeds, f"{run_id}x{n}")))
+        finally:
+            stop.set()
+            chaos.join()
+            ensure_up(stack)
+        settle(stack, journeys)
+        healthy_timeouts(journeys, None)
+        decided = count_lines("".join(stack.logs(s, since) for s in REPLICAS), DECIDED_LINE)
+        skipped = count_lines("".join(stack.logs(s, since) for s in REPLICAS), SKIPPED_LINE)
+        for j in journeys:
+            j["incidents"] = stack.incidents(j["travellerId"])
+            for r in j["rows"]:
+                request_id = f"{j['tripId']}#{r['seq']}"
+                r["decidedCount"], r["skippedCount"] = decided.get(request_id, 0), skipped.get(request_id, 0)
+        reports = stack.logs("alert-service", since).count("POST /internal/problems")
+        out.append({"condition": condition, "events": events, "dlqAdded": stack.dlq_depth() - dlq_before,
+                    "reportsPosted": reports, "journeys": journeys})
+        progress.write_text(json.dumps({"runId": run_id, "startedAt": started_at, "seeds": seeds,
+                                        "conditions": out}, indent=1))
+        rows = [r for j in journeys for r in j["rows"]]
+        print(f"  {condition:<19} {len(rows)} check-ins in {time.perf_counter() - started:.0f} s, "
+              f"{sum(e['action'] in ('kill', 'stop') for e in events)} crashes, "
+              f"{sum(r['decision'] is None for r in rows)} not decided, "
+              f"{sum(r['decidedCount'] > 1 for r in rows)} decided twice  [{len(out)}/{len(C4_CONDITIONS)} saved]",
+              flush=True)
+    return {"runId": run_id, "startedAt": started_at, "parallel": PARALLEL, "conditions": out}
+
+
 def newest_c2() -> Path:
     runs = sorted(RESULTS.glob("C2-*T*Z.json"))
     if not runs:
@@ -192,7 +339,7 @@ def merge_rerun(base: dict, rerun: dict, only: str, run_id: str, at: str) -> dic
     return {**base, "conditions": conditions, "reruns": reruns}
 
 
-EXPERIMENTS = {"C1": c1, "C2": c2}
+EXPERIMENTS = {"C1": c1, "C2": c2, "C4": c4}
 
 
 def main() -> None:
@@ -223,9 +370,9 @@ def main() -> None:
         out.write_text(json.dumps(merge_rerun(base, rerun, a.only, rerun["runId"], now.isoformat()), indent=1))
         print(f"  replaced the '{a.only}' conditions of {base_file.name}")
     else:
-        if a.experiment == "C2":
-            progress = RESULTS / "C2-progress.json"
-            data = c2(stack, a.seeds, run_id, now.isoformat(), progress, a.fresh)
+        if a.experiment in ("C2", "C4"):
+            progress = RESULTS / f"{a.experiment}-progress.json"
+            data = EXPERIMENTS[a.experiment](stack, a.seeds, run_id, now.isoformat(), progress, a.fresh)
         else:
             progress = None
             data = EXPERIMENTS[a.experiment](stack, a.seeds, run_id)

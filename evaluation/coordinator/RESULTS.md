@@ -55,3 +55,13 @@ Run `C21109061157`: the C1 journeys (5 per scenario) replayed once per condition
 
 Check-ins not decided in any condition: 0.
 Rerun after a Coordinator change: the *wrong, silenced* rows (run `C21109082852`).
+
+## C4: a Coordinator replica killed, the Alert Service down
+
+Run `C41109092642`: the C1 journeys (5 per scenario), 8 at a time, with 2 Coordinator replicas on the queue (`compose.c4.yaml`). *replica killed*: every 20 s one replica is SIGKILLed (alternating) and started 5 s later, as Kubernetes restarts a crashed pod. *alert service down*: stopped for 45 s. Lost = never decided; late = took over 10 s (a redelivery after the 30 s visibility timeout); decided twice = a check-in's decision recorded more than once (from both replicas' logs); repeats skipped = redelivered check-ins the `decided:` marker turned away; changed = check-ins whose decision or alerts differ from the baseline; extra incidents / detections = what the Alert Service holds beyond the baseline (a re-sent report updates its incident's detection count).
+
+| Condition | crashes | check-ins | lost | late | max delay | decided twice | repeats skipped | changed | incidents (extra) | extra detections | reports posted | dead-lettered |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| baseline | 0 | 2881 | 0 | 0 | 2.1 s | 0 | 0 | 0 | 42 (0) | 0 | 954 | 0 |
+| replica killed | 5 | 2881 | 0 | 5 | 60.2 s | 0 | 2 | 0 | 42 (0) | 1 | 955 | 0 |
+| alert service down | 1 | 2881 | 0 | 8 | 60.3 s | 0 | 0 | 0 | 42 (0) | 0 | 954 | 0 |

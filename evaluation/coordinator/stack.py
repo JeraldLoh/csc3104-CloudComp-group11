@@ -6,6 +6,7 @@ the system keeps them: the Coordinator's decision log in Redis and the Alert Ser
 """
 import json
 import os
+import subprocess
 import sys
 import time
 import urllib.request
@@ -35,6 +36,18 @@ DETECTORS = ("route-corridor", "heading-speed", "dwell-time", "route-progress")
 SWITCH_URLS = {"route-corridor": "http://localhost:9101", "dwell-time": "http://localhost:9102",
                "heading-speed": "http://localhost:9103", "route-progress": "http://localhost:9104"}
 WEIGHTS_KEY = "detector:weights"
+
+
+COMPOSE_PROJECT = os.getenv("COMPOSE_PROJECT", "careroute-analysis")
+
+
+def container(service: str) -> str:
+    """The container docker compose made for a service of the local stack."""
+    return f"{COMPOSE_PROJECT}-{service}-1"
+
+
+def docker(*args: str) -> str:
+    return subprocess.run(["docker", *args], capture_output=True, text=True, check=True).stdout
 
 
 def get_json(url: str, timeout: float = 5):
@@ -118,6 +131,43 @@ class Stack:
         except OSError as e:
             raise SystemExit(f"no fault switch for {detector} at {SWITCH_URLS[detector]} ({e}): start the stack "
                              "with evaluation/coordinator/compose.c2.yaml")
+
+    # --- C4: crashing and restarting containers of the local stack ------------------------------
+
+    def kill(self, service: str) -> None:
+        """SIGKILL, no clean shutdown: like a pod that crashes or is OOM-killed."""
+        docker("kill", container(service))
+
+    def stop(self, service: str) -> None:
+        docker("stop", "-t", "2", container(service))
+
+    def start(self, service: str) -> None:
+        docker("start", container(service))
+
+    def running(self, service: str) -> bool:
+        try:
+            return docker("inspect", "-f", "{{.State.Running}}", container(service)).strip() == "true"
+        except subprocess.CalledProcessError:
+            return False
+
+    def logs(self, service: str, since: str) -> str:
+        """Everything the service logged since `since` (ISO 8601), across restarts."""
+        out = subprocess.run(["docker", "logs", "--since", since, container(service)],
+                             capture_output=True, text=True, check=True)
+        return out.stdout + out.stderr
+
+    def dlq_depth(self) -> int:
+        url = self.sqs.get_queue_url(QueueName=f"{QUEUE}-dlq")["QueueUrl"]
+        attrs = self.sqs.get_queue_attributes(QueueUrl=url, AttributeNames=["ApproximateNumberOfMessages"])
+        return int(attrs["Attributes"]["ApproximateNumberOfMessages"])
+
+    def decision_for(self, traveller: str, seq: int) -> dict | None:
+        """The decision record of one check-in, if it's still in the traveller's recent list."""
+        for raw in self.redis.lrange(f"decisions:{traveller}", 0, -1):
+            d = json.loads(raw)
+            if d.get("seq") == seq:
+                return d
+        return None
 
     def set_weight(self, detector: str, reliability: float) -> None:
         self.redis.hset(WEIGHTS_KEY, detector, reliability)

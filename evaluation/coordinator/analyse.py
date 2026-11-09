@@ -273,11 +273,84 @@ def c2_markdown(s: dict) -> str:
     return "\n".join(lines)
 
 
-ANALYSES = {"C1": (c1, c1_markdown), "C2": (c2, c2_markdown)}
+def _key(journey: dict) -> tuple:
+    return journey["case"], journey["seed"]
+
+
+def _outcome(row: dict) -> tuple | None:
+    """What the caregiver-facing decision was: decision, type, and the types alerted."""
+    d = row["decision"]
+    if d is None:
+        return None
+    return d["decision"], d.get("problemType"), tuple(sorted(a["problemType"] for a in d.get("alerts") or []))
+
+
+def c4(data: dict) -> dict:
+    """Each condition against the baseline, journey by journey (same seeds, same check-ins)."""
+    conds = {c["condition"]: c for c in data["conditions"]}
+    base = {_key(j): j for j in conds["baseline"]["journeys"]} if "baseline" in conds else {}
+    rows_out = []
+    for c in data["conditions"]:
+        rows = [r for j in c["journeys"] for r in j["rows"]]
+        changed = extra_incidents = extra_detections = 0
+        for j in c["journeys"]:
+            b = base.get(_key(j))
+            if b is None:
+                continue
+            changed += sum(_outcome(r) != _outcome(br) for r, br in zip(j["rows"], b["rows"]))
+            extra_incidents += max(0, len(j["incidents"]) - len(b["incidents"]))
+            extra_detections += (sum(i.get("detectionCount") or 1 for i in j["incidents"])
+                                 - sum(i.get("detectionCount") or 1 for i in b["incidents"]))
+        delays = [r["endToEndMs"] for r in rows if r["endToEndMs"] is not None]
+        rows_out.append({
+            "condition": c["condition"],
+            "crashes": sum(e["action"] in ("kill", "stop") for e in c["events"]),
+            "checkins": len(rows),
+            "lost": sum(r["decision"] is None for r in rows),
+            "late": sum(bool(r.get("late")) or (r["endToEndMs"] or 0) > 10_000 for r in rows),
+            "maxDelayS": round(max(delays) / 1000, 1) if delays else None,
+            "decidedTwice": sum(r["decidedCount"] > 1 for r in rows),
+            "repeatsSkipped": sum(r["skippedCount"] for r in rows),
+            "changedVsBaseline": changed,
+            "incidents": sum(len(j["incidents"]) for j in c["journeys"]),
+            "extraIncidents": extra_incidents,
+            "extraDetections": extra_detections,
+            "reportsPosted": c["reportsPosted"],
+            "dlqAdded": c["dlqAdded"],
+        })
+    return {"runId": data["runId"], "seeds": data["seeds"], "parallel": data["parallel"], "conditions": rows_out}
+
+
+def c4_markdown(s: dict) -> str:
+    lines = ["## C4: a Coordinator replica killed, the Alert Service down",
+             "",
+             f"Run `{s['runId']}`: the C1 journeys ({s['seeds']} per scenario), {s['parallel']} at a time, with 2 "
+             "Coordinator replicas on the queue (`compose.c4.yaml`). *replica killed*: every 20 s one replica is "
+             "SIGKILLed (alternating) and started 5 s later, as Kubernetes restarts a crashed pod. *alert service "
+             "down*: stopped for 45 s. Lost = never decided; late = took over 10 s (a redelivery after the 30 s "
+             "visibility timeout); decided twice = a check-in's decision recorded more than once (from both "
+             "replicas' logs); repeats skipped = redelivered check-ins the `decided:` marker turned away; changed = "
+             "check-ins whose decision or alerts differ from the baseline; extra incidents / detections = what the "
+             "Alert Service holds beyond the baseline (a re-sent report updates its incident's detection count).",
+             "",
+             "| Condition | crashes | check-ins | lost | late | max delay | decided twice | repeats skipped "
+             "| changed | incidents (extra) | extra detections | reports posted | dead-lettered |",
+             "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    for r in s["conditions"]:
+        delay = "–" if r["maxDelayS"] is None else f"{r['maxDelayS']:.1f} s"
+        lines.append(f"| {r['condition']} | {r['crashes']} | {r['checkins']} | {r['lost']} | {r['late']} | {delay} "
+                     f"| {r['decidedTwice']} | {r['repeatsSkipped']} | {r['changedVsBaseline']} "
+                     f"| {r['incidents']} ({r['extraIncidents']}) | {r['extraDetections']} | {r['reportsPosted']} "
+                     f"| {r['dlqAdded']} |")
+    return "\n".join(lines)
+
+
+ANALYSES = {"C1": (c1, c1_markdown), "C2": (c2, c2_markdown), "C4": (c4, c4_markdown)}
 
 
 def newest(experiment: str) -> Path | None:
-    runs = sorted(RESULTS.glob(f"{experiment}-*.json"))
+    """The newest finished run (C2-20261109T061157Z.json), never an unfinished run's progress file."""
+    runs = sorted(RESULTS.glob(f"{experiment}-*T*Z.json"))
     return runs[-1] if runs else None
 
 

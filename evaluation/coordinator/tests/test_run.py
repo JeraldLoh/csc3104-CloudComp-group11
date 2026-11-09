@@ -113,6 +113,91 @@ def test_a_rerun_replaces_only_its_conditions_and_says_so():
     assert merged["runId"] == "R1" and merged["reruns"] == [{"fault": "wrong, silenced", "runId": "R2", "at": "t"}]
 
 
+# --- C4 ------------------------------------------------------------------------------------------
+
+class CrashStack(FakeStack):
+    """Docker as far as C4 sees it: what was killed and started, and the Coordinators' logs."""
+
+    def __init__(self, log_lines=""):
+        super().__init__()
+        self.actions, self.log_lines = [], log_lines
+
+    def kill(self, service):
+        self.actions.append(("kill", service))
+
+    def stop(self, service):
+        self.actions.append(("stop", service))
+
+    def start(self, service):
+        self.actions.append(("start", service))
+
+    def running(self, service):
+        return True
+
+    def check(self):
+        pass
+
+    def logs(self, service, since):
+        return self.log_lines if service in run.REPLICAS else 'POST /internal/problems HTTP/1.1" 200\n'
+
+    def dlq_depth(self):
+        return 0
+
+    def incidents(self, traveller):
+        return []
+
+
+def test_kill_replicas_alternates_and_restarts_each(monkeypatch):
+    import threading
+    monkeypatch.setattr(run, "FIRST_FAULT_S", 0.01)
+    monkeypatch.setattr(run, "KILL_EVERY_S", 0.03)
+    monkeypatch.setattr(run, "RESTART_AFTER_S", 0.01)
+    stack, stop, events = CrashStack(), threading.Event(), []
+    t = threading.Thread(target=run.kill_replicas, args=(stack, stop, events))
+    t.start()
+    import time
+    time.sleep(0.12)
+    stop.set()
+    t.join()
+    kills = [s for a, s in stack.actions if a == "kill"]
+    assert kills[:2] == ["coordinator", "coordinator-2"]
+    assert stack.actions.count(("kill", "coordinator")) <= stack.actions.count(("start", "coordinator"))   # restarted
+    assert [e["action"] for e in events][:2] == ["kill", "start"]
+
+
+def test_count_lines_finds_each_decision_and_skip():
+    logs = ("INFO coordinator decided T-1#7 k=4 escalated=False\n"
+            "INFO coordinator decided T-1#7 k=4 escalated=False\n"   # the other replica, after a redelivery
+            "INFO coordinator skip T-1#8: already decided\n")
+    assert run.count_lines(logs, run.DECIDED_LINE) == {"T-1#7": 2}
+    assert run.count_lines(logs, run.SKIPPED_LINE) == {"T-1#8": 1}
+
+
+def test_c4_runs_each_condition_and_counts_decisions_from_the_logs(tmp_path, monkeypatch):
+    monkeypatch.setattr(run, "select_journeys", lambda seeds, run_id: [{"scenario": "normal"}])
+    monkeypatch.setattr(run, "C4_CONDITIONS", {name: run.no_fault for name in run.C4_CONDITIONS})
+
+    def journey(stack, j, *args, **kwargs):
+        v = fake_journey(stack, j)
+        v.update(tripId="T-1", travellerId="U-1")
+        v["rows"][0]["seq"] = 7
+        return v
+    monkeypatch.setattr(run, "run_journey", journey)
+    stack = CrashStack(log_lines="decided T-1#7 k=4\nskip T-1#7: already decided\n")
+    data = run.c4(stack, 5, "R1", "t", tmp_path / "C4-progress.json")
+    assert [c["condition"] for c in data["conditions"]] == ["baseline", "replica killed", "alert service down"]
+    row = data["conditions"][0]["journeys"][0]["rows"][0]
+    assert row["decidedCount"] == 2 and row["skippedCount"] == 2   # both replicas' logs, as given
+    assert data["conditions"][0]["reportsPosted"] == 1 and data["conditions"][0]["dlqAdded"] == 0
+
+
+def test_c4_needs_both_replicas(tmp_path):
+    stack = CrashStack()
+    stack.running = lambda service: service != "coordinator-2"
+    with pytest.raises(SystemExit, match="compose.c4.yaml"):
+        run.c4(stack, 5, "R1", "t", tmp_path / "p.json")
+
+
 def test_the_wrong_fault_is_recognised_by_the_switchs_own_reason():
     # run.py checks the fault reached the Coordinator by this prefix; it must match what the switch writes.
     switch = (REPO / "services" / "fault-switch" / "app" / "main.py").read_text()
