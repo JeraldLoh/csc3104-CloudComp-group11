@@ -175,7 +175,14 @@ Route steps may carry `landmarks: [{name, kind, lat, lng, seenFrom, photoKey, sa
 the traveller to look out for, each with a Street View photo of it taken from `seenFrom`, the traveller's spot on the
 route (`sameView`: no photo of its own, as it would repeat the step's photo, `"step"`, or that landmark's). The
 service keeps only those the step's `easyRead` names; answers add `photoUrl` to each, and the route pack
-has `landmarks: [{name, photoUrl, sameView}]` per step (`sameView` null unless it has no photo of its own).
+has `landmarks: [{name, photoUrl, sameView, lat, lng, seenFrom}]` per step (`sameView` null unless it has no photo of
+its own).
+
+Route pack steps also carry `stops: [{name, lat, lng}]`: every stop of a bus or train ride, the boarding stop first and
+the one to get off at last (`[]` for a walk). Names as the wording says them (short forms spelled out); `lat`/`lng`
+null for a route planned before stop positions were kept. With these and the landmark positions, the traveller app
+shows a bus step one thing at a time as GPS says the bus passes each stop ("5 more stops", "Press the bell now";
+`apps/traveller/src/lib/guide.ts`).
 
 Step photos (Journey Service): saving a route adds a Google Street View photo of where each walk/bus step ends
 (`photoKey`, an S3 key under `media/`; a recent panorama, Google's own first, else a recent upload close by, else an older one under `media/streetview/v2/rough/` for the caregiver to check; a walk to a station shows its nearest exit). `POST /api/routes/{routeId}/photos` (multipart field `photo`, JPEG/PNG/WebP

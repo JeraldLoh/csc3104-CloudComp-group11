@@ -186,6 +186,40 @@ def test_a_started_trip_is_watched_by_the_disruption_checker_end_to_end():
     assert checker.check(sent.append)["activeTrips"] == 0
 
 
+def test_pack_has_the_stops_and_landmark_positions_for_the_step_by_step_guide():
+    """The traveller app counts the stops left and shows each landmark as the bus nears it (guide.ts): the pack
+    carries every stop of the ride with its position, and where each landmark is seen from."""
+    client, _ = trip_client()
+    steps = route_data()["steps"]
+    steps[1] = {**steps[1],
+                "easyRead": "Raise your hand for bus 190. Tap your card to get on. Look out for Oasis Terraces on "
+                            "your right. After Opp Blk 222, press the bell. Get off at Opp Block 221.",
+                "stops": [{"code": "65009", "name": "Punggol Int", "lat": 1.4052, "lng": 103.9024},
+                          {"code": "65101", "name": "Opp Blk 222", "lat": 1.3990, "lng": 103.8990},
+                          {"code": "65221", "name": "Opp Block 221", "lat": 1.3935, "lng": 103.8962}],
+                "landmarks": [{"name": "Oasis Terraces", "kind": "mall", "lat": 1.4026, "lng": 103.9128,
+                               "seenFrom": [1.401, 103.91], "photoKey": None, "sameView": None}]}
+    route = approved_route(client, steps=steps)
+    walk, bus = client.build_pack(client.create_trip(route["routeId"], "2026-10-22")["tripId"])["steps"]
+    assert walk["stops"] == []
+    assert bus["stops"] == [{"name": "Punggol Interchange", "lat": 1.4052, "lng": 103.9024},   # names as the wording says them
+                            {"name": "Opposite Block 222", "lat": 1.399, "lng": 103.899},
+                            {"name": "Opposite Block 221", "lat": 1.3935, "lng": 103.8962}]
+    assert bus["landmarks"] == [{"name": "Oasis Terraces", "photoUrl": None, "sameView": None,
+                                 "lat": 1.4026, "lng": 103.9128, "seenFrom": [1.401, 103.91]}]
+
+
+def test_pack_of_an_older_route_has_stops_without_positions():
+    """Routes planned before stop positions were kept: the stops are there, positions null (the app doesn't count)."""
+    client, _ = trip_client()
+    steps = route_data()["steps"]
+    steps[1] = {**steps[1], "stops": [{"code": "65009", "name": "Punggol Int"}, {"code": "65221", "name": "Opp Block 221"}]}
+    route = approved_route(client, steps=steps)
+    bus = client.build_pack(client.create_trip(route["routeId"], "2026-10-22")["tripId"])["steps"][1]
+    assert bus["stops"] == [{"name": "Punggol Interchange", "lat": None, "lng": None},
+                            {"name": "Opposite Block 221", "lat": None, "lng": None}]
+
+
 def test_pack_matches_the_contract_example():
     client, _ = trip_client()
     route = approved_route(client)

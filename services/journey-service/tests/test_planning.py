@@ -64,6 +64,10 @@ def test_bus_itinerary_maps_to_contract_steps():
     assert set(s) == {"stepIndex", "mode", "instruction", "easyRead", "from", "to", "line", "stopCount", "stops",
                       "expectedDurationS", "underground", "photoKey", "audioKey", "backup"}
     assert len(s["stops"]) == s["stopCount"] + 1                     # every stop on the ride, both ends included
+    # with each stop's position, for the traveller app to count the stops left as the bus passes them
+    every = [expected["from"], *expected["intermediateStops"], expected["to"]]
+    assert [(x["lat"], x["lng"]) for x in s["stops"]] == [(e["lat"], e["lon"]) for e in every]
+    assert all(1.1 < x["lat"] < 1.5 and 103.5 < x["lng"] < 104.1 for x in s["stops"])
     assert [x["stepIndex"] for x in opt["steps"]] == list(range(len(opt["steps"])))
     assert all(1.1 < lat < 1.5 and 103.5 < lng < 104.1 for lat, lng in opt["path"])
     assert len(opt["path"]) > 5
