@@ -19,6 +19,8 @@ Prints one line per check and exits 1 if any required check fails. Afterwards it
 made (the trip record stays until its DynamoDB TTL); --keep leaves them for a look in the caregiver app. The off-route check needs the Coordinator,
 detectors and Aggregator; without them it's reported as skipped, not failed.
 """
+from __future__ import annotations   # the type hints below also work on Python 3.8 and 3.9
+
 import argparse
 import asyncio
 import struct
