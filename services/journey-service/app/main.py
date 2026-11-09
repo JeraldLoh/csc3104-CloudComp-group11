@@ -56,8 +56,9 @@ from .auth import AuthUnavailable, Authenticator, Caller, Forbidden, Unauthorize
 from .config import Settings, settings as default_settings
 from .data_mode import DataMode
 from .easy_read import MAX_CHARS as EASY_READ_MAX_CHARS
-from .journey_client import (JourneyClient, OneMapAuthError, OneMapError, OneMapUnavailable, PhotoInvalid,
-                             StorageNotReady)
+from .journey_client import JourneyClient, StorageNotReady
+from .photos import PhotoInvalid
+from .onemap import OneMapAuthError, OneMapError, OneMapUnavailable
 from .lta import LtaAuthError, LtaUnavailable
 from .models import DataModeIn, DisruptionCheckIn, PlanRequest, ReplanIn, RouteIn, RouteUpdate, TripIn
 from .pack_store import PackUnavailable, S3PackStorage
@@ -79,6 +80,35 @@ def error(status: int, code: str, message: str, details=None) -> JSONResponse:
     if details:
         body["error"]["details"] = details
     return JSONResponse(status_code=status, content=body)
+
+
+# Our errors as the contract's {"error": {code, message}}. message None = the error's own text (written for the
+# caller). logged = (level, text) logged first: the reason is for us, the caller only gets the message. A subclass
+# without its own row (OneMapAuthError has one, a plain OneMapError the last) uses its parent's.
+_WARN, _ERR = logging.WARNING, logging.ERROR
+ERRORS: list[tuple[type[Exception], int, str, str | None, tuple[int, str] | None]] = [
+    (Unauthorized, 401, "unauthorized", "Missing or invalid login token", (_WARN, "login refused: %s")),
+    (Forbidden, 403, "forbidden", None, None),
+    (AuthUnavailable, 503, "upstream_unavailable", "Login can't be checked right now. Please retry.",
+     (_ERR, "can't check logins right now: %s")),
+    (RouteNotFound, 404, "not_found", "No saved route with that id", None),
+    (RouteInvalid, 422, "invalid_request", None, None),
+    (TripNotFound, 404, "not_found", "No trip with that id", None),
+    (TripConflict, 409, "conflict", None, None),
+    (PhotoInvalid, 400, "invalid_photo", None, None),
+    # packs and step photos share the bucket
+    (PackUnavailable, 503, "upstream_unavailable", "File storage isn't available right now. Please retry.",
+     (_ERR, "pack/photo storage problem: %s")),
+    (RecordedDataMissing, 404, "not_found", None, None),
+    (LtaUnavailable, 503, "upstream_unavailable", "LTA DataMall is not responding right now", None),
+    # our misconfiguration, not the caller's: no details
+    (LtaAuthError, 502, "upstream_misconfigured", "Live transport data is not available",
+     (_ERR, "LTA credentials problem: %s")),
+    (OneMapUnavailable, 503, "upstream_unavailable", "Route planning (OneMap) is not responding right now", None),
+    (OneMapAuthError, 502, "upstream_misconfigured", "Route planning is not available",
+     (_ERR, "OneMap credentials problem: %s")),
+    (OneMapError, 502, "upstream_error", "Route planning could not find a route", (_ERR, "OneMap error: %s")),
+]
 
 
 def build_journey(s: Settings, redis_client, mode: DataMode | None = None) -> JourneyClient:
@@ -179,19 +209,15 @@ def create_app(
         """Who is calling: a Caller, or None when AUTH_MODE=off. Raises Unauthorized / AuthUnavailable."""
         return auth.authenticate(request.headers)
 
-    @app.exception_handler(Unauthorized)
-    async def _unauthorized(_: Request, e: Unauthorized):
-        log.warning("login refused: %s", e)                # the reason is for us, never for the caller
-        return error(401, "unauthorized", "Missing or invalid login token")
+    def simple_handler(status: int, code: str, message: str | None, logged: tuple[int, str] | None):
+        async def handle(_: Request, e: Exception):
+            if logged:
+                log.log(logged[0], logged[1], e)           # the reason is for us, never for the caller
+            return error(status, code, str(e) if message is None else message)
+        return handle
 
-    @app.exception_handler(Forbidden)
-    async def _forbidden(_: Request, e: Forbidden):
-        return error(403, "forbidden", str(e))
-
-    @app.exception_handler(AuthUnavailable)
-    async def _auth_unavailable(_: Request, e: AuthUnavailable):
-        log.error("can't check logins right now: %s", e)
-        return error(503, "upstream_unavailable", "Login can't be checked right now. Please retry.")
+    for exc, status, code, message, logged in ERRORS:
+        app.add_exception_handler(exc, simple_handler(status, code, message, logged))
 
     @app.exception_handler(RequestValidationError)
     async def _invalid(_: Request, e: RequestValidationError):
@@ -202,64 +228,10 @@ def create_app(
     async def _http(_: Request, e: StarletteHTTPException):
         return error(e.status_code, "not_found" if e.status_code == 404 else "http_error", str(e.detail))
 
-    @app.exception_handler(RouteNotFound)
-    async def _route_missing(_: Request, e: RouteNotFound):
-        return error(404, "not_found", "No saved route with that id")
-
     @app.exception_handler(RouteConflict)
     async def _route_conflict(_: Request, e: RouteConflict):
         return error(409, "conflict", "This route was changed by someone else. Reload it and try again.",
                      {"currentVersion": e.current_version})
-
-    @app.exception_handler(TripNotFound)
-    async def _trip_missing(_: Request, e: TripNotFound):
-        return error(404, "not_found", "No trip with that id")
-
-    @app.exception_handler(TripConflict)
-    async def _trip_conflict(_: Request, e: TripConflict):
-        return error(409, "conflict", e.message)
-
-    @app.exception_handler(PackUnavailable)
-    async def _pack_unavailable(_: Request, e: PackUnavailable):
-        log.error("pack/photo storage problem: %s", e)          # packs and step photos share the bucket
-        return error(503, "upstream_unavailable", "File storage isn't available right now. Please retry.")
-
-    @app.exception_handler(PhotoInvalid)
-    async def _photo_invalid(_: Request, e: PhotoInvalid):
-        return error(400, "invalid_photo", str(e))
-
-    @app.exception_handler(RouteInvalid)
-    async def _route_invalid(_: Request, e: RouteInvalid):
-        return error(422, "invalid_request", str(e))
-
-    @app.exception_handler(LtaUnavailable)
-    async def _lta_down(_: Request, e: LtaUnavailable):
-        return error(503, "upstream_unavailable", "LTA DataMall is not responding right now")
-
-    @app.exception_handler(LtaAuthError)
-    async def _lta_auth(_: Request, e: LtaAuthError):
-        # Our misconfiguration, not the caller's. Don't leak details.
-        log.error("LTA credentials problem: %s", e)
-        return error(502, "upstream_misconfigured", "Live transport data is not available")
-
-    @app.exception_handler(RecordedDataMissing)
-    async def _not_saved(_: Request, e: RecordedDataMissing):
-        return error(404, "not_found", str(e))
-
-    @app.exception_handler(OneMapUnavailable)
-    async def _onemap_down(_: Request, e: OneMapUnavailable):
-        return error(503, "upstream_unavailable", "Route planning (OneMap) is not responding right now")
-
-    @app.exception_handler(OneMapAuthError)
-    async def _onemap_auth(_: Request, e: OneMapAuthError):
-        # Usually the token has expired; the operator must replace ONEMAP_API_KEY.
-        log.error("OneMap credentials problem: %s", e)
-        return error(502, "upstream_misconfigured", "Route planning is not available")
-
-    @app.exception_handler(OneMapError)
-    async def _onemap_error(_: Request, e: OneMapError):
-        log.error("OneMap error: %s", e)
-        return error(502, "upstream_error", "Route planning could not find a route")
 
     @app.exception_handler(Exception)
     async def _unexpected(_: Request, e: Exception):

@@ -31,6 +31,7 @@ $Images = [ordered]@{
   "cloud-detectors"  = "services/detectors"
   "coordinator"      = "services/coordinator"
   "aggregator"       = "services/aggregator"
+  "heartbeat-monitor" = "services/heartbeat-monitor"   # k8s/local/heartbeat-monitor.yaml runs heartbeat-monitor:local
 }
 # deployments running the images built here
 $Built = @("cloud-fastapi", "checkin-service", "alert-service", "journey-service", "easyread-service",
@@ -138,6 +139,11 @@ function Initialize-Secret {
     if ($LASTEXITCODE -ne 0) { Fail "could not read .env" }
     $yaml | kubectl apply -f - | Out-Null
     if ($LASTEXITCODE -ne 0) { Fail "could not save the localstack-auth secret" }
+    # The Journey Service's LTA, OneMap and Google Maps keys (k8s/local/journey-service.yaml); without them it runs on
+    # saved data and saves routes without Street View photos
+    $yaml = kubectl create secret generic journey-api-keys --from-env-file=.env -n $Ns --dry-run=client -o yaml
+    $yaml | kubectl apply -f - | Out-Null
+    if ($LASTEXITCODE -ne 0) { Fail "could not save the journey-api-keys secret" }
   } else {
     kubectl get secret localstack-auth -n $Ns 2>$null | Out-Null
     if ($LASTEXITCODE -ne 0) { Fail "no localstack-auth secret, run with -Setup" }
@@ -218,7 +224,9 @@ Run kubectl @("config", "use-context", "kind-$Cluster")
 if ($Setup) { Build-Images }
 Initialize-Secret
 Start-Stack
-foreach ($port in $Health.Keys) { Wait-Url "http://localhost:$port/health" $Health[$port] }
+# 127.0.0.1, not localhost: Windows PowerShell tries ::1 first, kind only listens on IPv4, and every check
+# would time out (2 s each, 60 tries per service) before falling back
+foreach ($port in $Health.Keys) { Wait-Url "http://127.0.0.1:$port/health" $Health[$port] }
 $app = Start-App
 $traveller = Start-TravellerApp
 

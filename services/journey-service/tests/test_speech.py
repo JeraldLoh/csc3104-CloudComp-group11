@@ -158,7 +158,7 @@ def test_sending_a_changed_plan_makes_the_new_steps_audio_before_the_phone_asks(
     from test_bridge import Trip
     t = Trip()
     polly, bucket = FakePolly(), FakeBucket()
-    t.j._packs, t.j._speech = bucket, Speech(polly, bucket)
+    t.j._packs, t.j._speech, t.j.photos._packs = bucket, Speech(polly, bucket), bucket   # links come from photos
     t.j.watch_bridges(NOW)
     assert polly.calls == []                                            # only proposed
     t.j.send_bridge(t.id, Caller("G-003", "caregiver"))
