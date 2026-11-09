@@ -4,6 +4,8 @@
     python evaluation/coordinator/run.py C1 --seeds 1       # quick check
     python evaluation/coordinator/run.py C2                 # same journeys, one detector broken at a time
     python evaluation/coordinator/run.py C2 --fresh         # start over instead of resuming
+    python evaluation/coordinator/run.py C2 --only "wrong, silenced"   # rerun one fault on every detector,
+                                                            # into a copy of the newest C2 result
 
 C2 takes about 45 minutes, so each finished condition is saved to results/C2-progress.json at
 once. If the run stops (laptop asleep, stack too slow), running it again with the same --seeds
@@ -99,11 +101,14 @@ def load_progress(progress: Path, seeds: int, fresh: bool) -> dict | None:
     return saved
 
 
-def c2(stack: Stack, seeds: int, run_id: str, started_at: str, progress: Path, fresh: bool = False) -> dict:
+def c2(stack: Stack, seeds: int, run_id: str, started_at: str, progress: Path, fresh: bool = False,
+       only: str | None = None) -> dict:
     """C2: the same journeys as C1 with every detector healthy, then with one detector broken at
     a time: slow, dead, wrong, and wrong with its reliability set to 0. Each finished condition
-    is saved to `progress`, and a rerun resumes after the last one saved."""
+    is saved to `progress`, and a rerun resumes after the last one saved. `only`: just that fault."""
     conditions = [("healthy", None)] + [(f, d) for d in DETECTORS for f in FAULTS]
+    if only:
+        conditions = [(f, d) for f, d in conditions if f == only]
     saved = load_progress(progress, seeds, fresh)
     if saved:
         run_id, started_at = saved["runId"], saved["startedAt"]
@@ -172,6 +177,21 @@ def check_fault_reached_the_coordinator(journeys: list[dict], fault: str, detect
                          "computer awake (a stalled switch times out instead of answering)")
 
 
+def newest_c2() -> Path:
+    runs = sorted(RESULTS.glob("C2-*T*Z.json"))
+    if not runs:
+        raise SystemExit("--only replaces conditions in an earlier C2 result, and there is none: run C2 first")
+    return runs[-1]
+
+
+def merge_rerun(base: dict, rerun: dict, only: str, run_id: str, at: str) -> dict:
+    """`base` with its `only` conditions replaced by the rerun's, in the same order."""
+    new = {(c["fault"], c["detector"]): c for c in rerun["conditions"]}
+    conditions = [new.get((c["fault"], c["detector"]), c) for c in base["conditions"]]
+    reruns = base.get("reruns", []) + [{"fault": only, "runId": run_id, "at": at}]
+    return {**base, "conditions": conditions, "reruns": reruns}
+
+
 EXPERIMENTS = {"C1": c1, "C2": c2}
 
 
@@ -180,7 +200,11 @@ def main() -> None:
     p.add_argument("experiment", choices=sorted(EXPERIMENTS))
     p.add_argument("--seeds", type=int, default=5, help="journeys per scenario (different random seeds)")
     p.add_argument("--fresh", action="store_true", help="C2: start over instead of resuming an unfinished run")
+    p.add_argument("--only", choices=sorted(FAULTS), help="C2: rerun just this fault (on every detector) and "
+                   "replace it in a copy of the newest C2 result")
     a = p.parse_args()
+    if a.only and a.experiment != "C2":
+        p.error("--only is for C2")
 
     stack = Stack()
     stack.check()
@@ -188,15 +212,25 @@ def main() -> None:
     run_id = f"{a.experiment}{now.strftime('%m%d%H%M%S')}"
     print(f"{a.experiment}: run {run_id}", flush=True)
     RESULTS.mkdir(parents=True, exist_ok=True)
-    if a.experiment == "C2":
-        progress = RESULTS / "C2-progress.json"
-        data = c2(stack, a.seeds, run_id, now.isoformat(), progress, a.fresh)
-    else:
-        progress = None
-        data = EXPERIMENTS[a.experiment](stack, a.seeds, run_id)
     out = RESULTS / f"{a.experiment}-{now.strftime('%Y%m%dT%H%M%SZ')}.json"
-    out.write_text(json.dumps({"experiment": a.experiment, "runId": run_id, "startedAt": now.isoformat(),
-                               "seeds": a.seeds, **data}, indent=1))
+    if a.only:
+        base_file = newest_c2()
+        base = json.loads(base_file.read_text())
+        if base["seeds"] != a.seeds:
+            raise SystemExit(f"{base_file.name} used --seeds {base['seeds']}: rerun with the same seeds")
+        progress = RESULTS / "C2-only-progress.json"
+        rerun = c2(stack, a.seeds, run_id, now.isoformat(), progress, a.fresh, only=a.only)
+        out.write_text(json.dumps(merge_rerun(base, rerun, a.only, rerun["runId"], now.isoformat()), indent=1))
+        print(f"  replaced the '{a.only}' conditions of {base_file.name}")
+    else:
+        if a.experiment == "C2":
+            progress = RESULTS / "C2-progress.json"
+            data = c2(stack, a.seeds, run_id, now.isoformat(), progress, a.fresh)
+        else:
+            progress = None
+            data = EXPERIMENTS[a.experiment](stack, a.seeds, run_id)
+        out.write_text(json.dumps({"experiment": a.experiment, "runId": run_id, "startedAt": now.isoformat(),
+                                   "seeds": a.seeds, **data}, indent=1))
     if progress:
         progress.unlink(missing_ok=True)   # finished: nothing left to resume
     print(f"saved {out.relative_to(Path.cwd()) if out.is_relative_to(Path.cwd()) else out}")

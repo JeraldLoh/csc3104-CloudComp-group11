@@ -28,3 +28,30 @@ What caregivers got (incidents the Alert Service created):
 Journeys without a problem: 2 alerts on 15 journeys (not counting *tracking lost*).
 *Tracking lost* (some problem types couldn't be checked for 2 min) raised on: normal 0/5, off_route 0/16, wrong_direction 0/5, long_dwell 0/5, normal_bus_wait 0/5, poor_gps 5/5 journeys.
 Check-in on the queue to decision recorded: p50 35 ms, p95 112 ms (one machine, light load; C3 measures load).
+
+## C2: the Coordinator's decision with one detector broken
+
+Run `C21109061157`: the C1 journeys (5 per scenario) replayed once per condition, 8 journeys at a time. Each fault is put on one real detector by a switch in front of it (`compose.c2.yaml`): *slow* answers after 2 s (the Coordinator waits 500 ms), *dead* fails every request, *wrong* inverts the real vote (problem ↔ normal), *wrong, silenced* is wrong with its reliability set to 0 in `detector:weights`. Caught = journeys where the Coordinator raised the right problem; alerted = journeys with a problem that got any alert (*tracking lost* included); outage noticed = journeys where the caregiver was told *tracking lost* because detectors failed or were silenced (every detector for a type down or at reliability 0 for 2 min); false alerts = incidents other than *tracking lost* on the journeys without a problem; p95 = check-in on the queue to decision recorded.
+
+| Fault | Detector | off route (leaves the corridor) | off route near another leg | wrong direction | long dwell | alerted | outage noticed | false alerts | false alarm rate | p95 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| healthy | all healthy | 5/5 | 9/11 | 5/5 | 5/5 | 26/26 | 0/41 | 2/15 | 1.5% | 580 ms |
+| slow | route-corridor | 5/5 | 9/11 | 5/5 | 5/5 | 26/26 | 0/41 | 2/15 | 1.5% | 1312 ms |
+| dead | route-corridor | 5/5 | 9/11 | 5/5 | 5/5 | 26/26 | 0/41 | 2/15 | 1.5% | 589 ms |
+| wrong | route-corridor | 5/5 | 11/11 | 5/5 | 5/5 | 26/26 | 0/41 | 32/15 | 79.7% | 730 ms |
+| wrong, silenced | route-corridor | 5/5 | 9/11 | 5/5 | 5/5 | 26/26 | 0/41 | 2/15 | 1.5% | 602 ms |
+| slow | heading-speed | 5/5 | 9/11 | 5/5 | 5/5 | 24/26 | 0/41 | 0/15 | 0.9% | 1338 ms |
+| dead | heading-speed | 5/5 | 9/11 | 5/5 | 5/5 | 24/26 | 0/41 | 0/15 | 0.9% | 378 ms |
+| wrong | heading-speed | 5/5 | 9/11 | 5/5 | 5/5 | 26/26 | 0/41 | 30/15 | 64.8% | 601 ms |
+| wrong, silenced | heading-speed | 5/5 | 9/11 | 5/5 | 5/5 | 24/26 | 0/41 | 0/15 | 0.9% | 554 ms |
+| slow | dwell-time | 5/5 | 9/11 | 5/5 | 0/5 | 26/26 | 36/41 | 2/15 | 0.6% | 1426 ms |
+| dead | dwell-time | 5/5 | 9/11 | 5/5 | 0/5 | 26/26 | 36/41 | 2/15 | 0.6% | 580 ms |
+| wrong | dwell-time | 5/5 | 9/11 | 5/5 | 0/5 | 26/26 | 0/41 | 32/15 | 81.6% | 593 ms |
+| wrong, silenced | dwell-time | 5/5 | 9/11 | 5/5 | 0/5 | 26/26 | 36/41 | 2/15 | 0.6% | 638 ms |
+| slow | route-progress | 5/5 | 0/11 | 5/5 | 5/5 | 26/26 | 36/41 | 2/15 | 1.5% | 1327 ms |
+| dead | route-progress | 5/5 | 0/11 | 5/5 | 5/5 | 26/26 | 36/41 | 2/15 | 1.5% | 573 ms |
+| wrong | route-progress | 5/5 | 11/11 | 5/5 | 5/5 | 26/26 | 0/41 | 32/15 | 79.7% | 611 ms |
+| wrong, silenced | route-progress | 5/5 | 0/11 | 5/5 | 5/5 | 26/26 | 36/41 | 2/15 | 1.5% | 605 ms |
+
+Check-ins not decided in any condition: 0.
+Rerun after a Coordinator change: the *wrong, silenced* rows (run `C21109082852`).

@@ -149,5 +149,9 @@ def test_c2_outage_noticed_counts_tracking_lost_from_failed_detectors_but_not_fr
             {"scenario": "poor_gps", "rows": [poor_gps], "incidents": [{"problemType": "tracking_lost"}]}]}]})
     [dead] = s["conditions"]
     assert dead["outageNoticed"] == [1, 2]   # the poor-GPS tracking_lost isn't an outage
+    outage["decision"]["uncheckedReason"] = "detectors silenced"   # an operator switched it off: still told
+    assert c2({"runId": "t", "seeds": 1, "parallel": 8, "conditions": [
+        {"fault": "wrong, silenced", "detector": "dwell-time", "journeys": [
+            {"scenario": "long_dwell", "rows": [outage], "incidents": []}]}]})["conditions"][0]["outageNoticed"] == [1, 1]
     # the dwell itself is still missed (its only detector is dead), but the caregiver was told
     assert dead["caught"] == {"long_dwell": [0, 1]} and dead["alerted"] == [1, 1] and dead["falseAlerts"] == 0

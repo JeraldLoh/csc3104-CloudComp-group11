@@ -94,6 +94,25 @@ def test_resuming_with_other_seeds_is_refused(tmp_path):
         run.c2(FakeStack(), 5, "R2", "y", progress)
 
 
+def test_only_runs_just_that_fault_on_every_detector(tmp_path, monkeypatch, one_journey):
+    played = []
+    monkeypatch.setattr(run, "run_journey", lambda s, j: fake_journey(s, j, played=played))
+    data = run.c2(FakeStack(), 5, "R3", "z", tmp_path / "p.json", only="wrong, silenced")
+    assert [(c["fault"], c["detector"]) for c in data["conditions"]] == [("wrong, silenced", d) for d in DETECTORS]
+    assert len(played) == len(DETECTORS)
+
+
+def test_a_rerun_replaces_only_its_conditions_and_says_so():
+    base = {"runId": "R1", "seeds": 5, "conditions": [
+        {"fault": "healthy", "detector": None, "journeys": "old"},
+        {"fault": "wrong, silenced", "detector": "dwell-time", "journeys": "old"},
+        {"fault": "dead", "detector": "dwell-time", "journeys": "old"}]}
+    rerun = {"conditions": [{"fault": "wrong, silenced", "detector": "dwell-time", "journeys": "new"}]}
+    merged = run.merge_rerun(base, rerun, "wrong, silenced", "R2", "t")
+    assert [c["journeys"] for c in merged["conditions"]] == ["old", "new", "old"]   # same order
+    assert merged["runId"] == "R1" and merged["reruns"] == [{"fault": "wrong, silenced", "runId": "R2", "at": "t"}]
+
+
 def test_the_wrong_fault_is_recognised_by_the_switchs_own_reason():
     # run.py checks the fault reached the Coordinator by this prefix; it must match what the switch writes.
     switch = (REPO / "services" / "fault-switch" / "app" / "main.py").read_text()

@@ -210,9 +210,13 @@ def c1_markdown(s: dict) -> str:
     return "\n".join(lines)
 
 
+OUTAGE_REASONS = ("detectors failed", "detectors silenced")
+
+
 def outage_noticed(journey: dict) -> bool:
-    """The Coordinator told the caregiver it couldn't check (tracking_lost) because detectors failed."""
-    return any((r["decision"] or {}).get("uncheckedReason") == "detectors failed"
+    """The Coordinator told the caregiver it couldn't check (tracking_lost) because detectors
+    failed or were silenced (not because of poor GPS)."""
+    return any((r["decision"] or {}).get("uncheckedReason") in OUTAGE_REASONS
                and any(a.get("problemType") == TRACKING_LOST for a in (r["decision"] or {}).get("alerts") or [])
                for r in journey["rows"])
 
@@ -235,7 +239,8 @@ def c2(data: dict) -> dict:
             "falseAlarmRate": s["judges"]["combined"]["falseAlarmRate"],
             "undecided": s["undecided"], "endToEndMs": s["endToEndMs"],
         })
-    return {"runId": data["runId"], "seeds": data["seeds"], "parallel": data["parallel"], "conditions": rows}
+    return {"runId": data["runId"], "seeds": data["seeds"], "parallel": data["parallel"], "conditions": rows,
+            "reruns": data.get("reruns", [])}
 
 
 def c2_markdown(s: dict) -> str:
@@ -248,7 +253,7 @@ def c2_markdown(s: dict) -> str:
              "its reliability set to 0 in `detector:weights`. Caught = journeys where the Coordinator raised the "
              "right problem; alerted = journeys with a problem that got any alert (*tracking lost* included); "
              "outage noticed = journeys where the caregiver was told *tracking lost* because detectors failed "
-             "(every detector for a type down for 2 min); false alerts = incidents other than *tracking lost* on "
+             "or were silenced (every detector for a type down or at reliability 0 for 2 min); false alerts = incidents other than *tracking lost* on "
              "the journeys without a problem; p95 = check-in on the queue to decision recorded.",
              "",
              "| Fault | Detector | " + " | ".join(CASE_NAMES[c] for c in CASES) +
@@ -263,6 +268,8 @@ def c2_markdown(s: dict) -> str:
                      f"| {r['falseAlarmRate']:.1%} | {p95} |")
     undecided = sum(r["undecided"] for r in s["conditions"])
     lines += ["", f"Check-ins not decided in any condition: {undecided}."]
+    for r in s.get("reruns", []):
+        lines.append(f"Rerun after a Coordinator change: the *{r['fault']}* rows (run `{r['runId']}`).")
     return "\n".join(lines)
 
 
