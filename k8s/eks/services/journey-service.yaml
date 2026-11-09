@@ -68,3 +68,50 @@ spec:
   type: ClusterIP
   selector: { app: journey-service }
   ports: [{ port: 8000, targetPort: 8000 }]
+---
+# The caregiver and traveller apps' paths on the team's load balancer (one ALB for every service: IngressGroup
+# "careroute", evaluated by group.order; the catch-all "/" in k8s/eks/ingress.yaml comes last). /internal/*,
+# /api/dev/*, /health and /ready are not listed, so they stay private.
+# AUTH_MODE is "off" until Cognito (issue 1.5): anyone with the address can call these paths. Use test travellers only
+# on AWS, and tear the stack down after each session.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: journey-service
+  namespace: __NAMESPACE__
+  annotations:
+    alb.ingress.kubernetes.io/group.name: careroute
+    alb.ingress.kubernetes.io/group.order: "30"
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip        # required for Fargate
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+    alb.ingress.kubernetes.io/healthcheck-path: /ready
+spec:
+  ingressClassName: alb
+  rules:
+    - http:
+        paths:
+          - path: /api/trips          # also /api/trips/{id}/pack, /start, /end, /location ...
+            pathType: Prefix
+            backend:
+              service:
+                name: journey-service
+                port: { number: 8000 }
+          - path: /api/routes
+            pathType: Prefix
+            backend:
+              service:
+                name: journey-service
+                port: { number: 8000 }
+          - path: /api/places
+            pathType: Prefix
+            backend:
+              service:
+                name: journey-service
+                port: { number: 8000 }
+          - path: /api/easy-read
+            pathType: Prefix
+            backend:
+              service:
+                name: journey-service
+                port: { number: 8000 }
