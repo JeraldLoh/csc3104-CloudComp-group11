@@ -27,6 +27,13 @@ spec:
             - { name: AWS_ACCESS_KEY_ID, value: "csc3104" }                       # remove on EKS (use IAM role)
             - { name: AWS_SECRET_ACCESS_KEY, value: "csc3104" }                   # remove on EKS
             - { name: AWS_DEFAULT_REGION, value: "ap-southeast-1" }
+            # Route packs and step photos in LocalStack's S3, as in compose.journey.yaml. Without a bucket the Pack
+            # button and photo uploads answer 503, and a trip link can't open in the traveller app.
+            - { name: PACKS_BUCKET, value: "careroute-packs" }
+            - { name: CREATE_RESOURCES, value: "true" }                         # makes the bucket; remove on EKS
+            # Pack and photo links are opened by a browser, which reaches LocalStack on localhost:4566
+            # (kind-config.yaml + expose), not by its in-cluster name.
+            - { name: S3_PUBLIC_ENDPOINT_URL, value: "http://localhost:4566" }   # remove on EKS
             - name: LTA_API_KEY
               valueFrom:
                 secretKeyRef:

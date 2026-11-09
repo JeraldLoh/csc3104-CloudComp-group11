@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { easyReadPoints, fromBulletLines, isRoughPhoto, landmarkSeenIn, namedLandmarks, photoHint, roughPhotoHint, toBulletLines } from "../src/planner/format";
 
 describe("photoHint", () => {
@@ -72,5 +74,17 @@ describe("landmarkSeenIn", () => {
     expect(landmarkSeenIn({ name: "Punggol Coast Mall", sameView: "step" })).toBe(
       "Look for Punggol Coast Mall: it is in the step photo above.");
     expect(landmarkSeenIn({ name: "Block 12", sameView: "City Plaza" })).toBe("Look for Block 12: it is in the photo of City Plaza.");
+  });
+});
+
+// The shared cases (contracts/examples/easy-read-points.json): the caregiver app and the traveller app run the same
+// list, so their points can't drift apart.
+describe("easyReadPoints: the cases both apps share", () => {
+  const shared = JSON.parse(
+    readFileSync(join(process.cwd(), "../../contracts/examples/easy-read-points.json"), "utf-8"),   // run from the app folder
+  ) as { cases: { text: string | null; points: string[] }[] };
+
+  it.each(shared.cases)("$text", ({ text, points }) => {
+    expect(easyReadPoints(text)).toEqual(points);
   });
 });

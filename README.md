@@ -409,22 +409,26 @@ kubectl apply -k k8s/local/expose
 | <http://localhost:8002/dashboard> | Aggregator dashboard |
 | <http://localhost:8005> | Alert Service |
 | <http://localhost:8006> | Journey Service |
+| <http://localhost:4566> | LocalStack: route pack and photo links, opened by the browser |
 
-The caregiver app's dev server (`apps/caregiver`, `npm run dev`) already calls these addresses.
+The caregiver app's dev server (`apps/caregiver`, `npm run dev`) and the traveller app's (`apps/traveller`,
+`npm run dev`, port 5173) already call these addresses.
 
 ### Everything in one command, with a simulated trip
 
 `local-sim` does all of the above: it creates the cluster with the config, builds and loads every image, makes the
-LocalStack secret from `.env`, applies everything, waits until it's ready, starts the caregiver app and can send a
-simulated trip through the whole chain. Run it from the repo root.
+LocalStack secret from `.env`, applies everything, waits until it's ready, starts the caregiver app and the traveller
+app (<http://localhost:5173>, where the caregiver app's trip links lead) and can send a simulated trip through the
+whole chain. Run it from the repo root.
 
 | | Windows (PowerShell) | Mac or Linux |
 |---|---|---|
 | First time, and after changing service code | `.\scripts\windows\local-sim.ps1 -Setup` | `bash scripts/macos/local-sim.sh --setup` |
 | Start everything and send a trip | `.\scripts\windows\local-sim.ps1 -Scenario off_route -Caregiver G-777` | `bash scripts/macos/local-sim.sh --scenario off_route --caregiver G-777` |
 
-Then open <http://localhost:5174>, type the caregiver in **Act as** and open the traveller on the Dashboard. The
-script keeps the app running until Ctrl+C; the cluster keeps running after that. `-Setup` on a cluster made
+Then open <http://localhost:5174>, type the caregiver in **Act as** and open the traveller on the Dashboard. For a
+real trip instead of a simulated one, make a trip in the caregiver app and open its link: the traveller app follows
+it (`apps/traveller/README.md`, "With the whole team's system"). The script keeps the apps running until Ctrl+C; the cluster keeps running after that. `-Setup` on a cluster made
 without the config deletes and recreates it, so its data is lost. Scenarios and the `live` command:
 `services/detectors/README.md`, "Watch a scenario in the caregiver app".
 

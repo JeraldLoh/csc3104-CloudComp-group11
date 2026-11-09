@@ -30,10 +30,41 @@ Open **http://localhost:5173/?demo=1&debug=1**.
 - A real trip link looks like `/?trip=T-001&traveller=U-042`. With logins on (`VITE_COGNITO_*`, README "Logins (Cognito)"),
   the phone is first set up with the traveller ID and setup code from the caregiver app.
 
-The dev server forwards `/api/checkins` to the Check-in Service on `localhost:8001`, so start
-that first (see `services/checkin-service/README.md`). `/api/help` goes to port 8005 and
-`/api/trips` to 8006; until those services exist, those requests wait in the queue and retry.
-Change the ports with `CHECKIN_URL`, `ALERT_URL` and `JOURNEY_URL` environment variables.
+The dev server forwards `/api/checkins` to the Check-in Service on `localhost:8001`,
+`/api/help` and `/api/arrived` to the Alert Service on 8005, and `/api/trips` to the Journey
+Service on 8006: the ports the team's local stack opens. Until a service is running, its
+requests wait in the queue and retry. Change the ports with `CHECKIN_URL`, `ALERT_URL` and
+`JOURNEY_URL` environment variables.
+
+## With the whole team's system (real trips, no demo)
+
+The team's one-command local stack runs every service on kind and starts both apps:
+
+```powershell
+.\scripts\windows\local-sim.ps1 -Setup     # first time, and after changing service code
+.\scripts\windows\local-sim.ps1            # afterwards
+```
+
+(`bash scripts/macos/local-sim.sh --setup` on a Mac.) Then, in the caregiver app
+(http://localhost:5174, **Act as** `G-003`): add a traveller, plan and approve a route, make a
+trip, press **Pack**, and open the trip's link. It opens this app on a real trip:
+
+| What the traveller does | Where it goes |
+|---|---|
+| Opens the link | Pack and photos from the Journey Service's S3 links (LocalStack on `localhost:4566`) |
+| Start my trip | Journey Service: trip `active` |
+| Every 10 s | Check-in Service, then Redis (the caregiver's live map, Heartbeat Monitor) and SQS (Coordinator, detectors) |
+| Goes the wrong way | Detectors flag it; the Aggregator opens an `off_route` incident for the caregiver |
+| Help | Alert Service: a `help_requested` incident |
+| I've arrived | Alert Service tells the caregiver; Journey Service: trip `completed` |
+
+**Check it all in one go:** with the stack running, `python apps/traveller/e2e/team_trip.py`
+does that trip in a headless browser (a caregiver's API calls, then the real app) and checks
+each row above (`--headed` to watch; `pip install httpx playwright` and
+`python -m playwright install chromium` first). Its last run passed 9 of 9 checks.
+
+A cluster made before the LocalStack port (4566) was added is recreated by `-Setup`. Stop the
+service's own compose stacks first: they use the same ports.
 
 **On a phone:** browsers only give GPS to `https` pages or `localhost`. For a quick test on
 your phone, use Chrome on Android with USB debugging and port forwarding of 5173, or deploy
@@ -84,13 +115,22 @@ GPS (watchPosition) ──► latest position
 | Caregiver asks "Where are you?" | While travelling the app checks every 5 s (`src/lib/where.ts`) and shows a sheet with **I'm OK** and **I need help**, vibrating where the phone can. The answer goes through the request queue like Help, with the location; **I need help** also sends Help. The app has to be open: push notifications would reach it when closed. |
 | Caregiver asks with the app closed | With `firebase-web-config.json` in the repo root, "Start my trip" also asks to show notifications (`src/lib/push.ts`). A push then reaches the phone with the app closed, and a tap opens it at the question. Push needs a secure page: `localhost` or HTTPS, so not a phone opening `http://192.168…`; on an iPhone the app must be added to the Home Screen. |
 
+## How a step is shown
+
+Each step is one sign: the step photo, then the wording, then the landmarks it names, then the backup plan.
+
+- **One action per line.** The Easy-read Service writes one short action per sentence, and the caregiver's editor shows each sentence as a bullet point. The app splits the wording by the same rule (`src/lib/easyRead.ts`, matching `easyReadPoints` in `apps/caregiver/src/planner/format.ts`), so the traveller reads exactly the points the caregiver checked. A one-sentence step stays a sentence.
+- **Landmarks.** The Journey Service sends `landmarks: [{name, photoUrl, sameView}]` per step (`contracts/examples/route-pack.json`): the buildings the wording tells them to look out for. Each one with a photo is shown under the wording as "Look for Oasis Terraces", side by side when there are two or more. One without a photo (it would look the same as the step photo or another landmark's) gets a line saying where to look: "Look for Block 221: it is in the step photo above.", or with `sameView` another landmark's name, "it is in the photo of Oasis Terraces".
+- **A bad landmark never breaks a trip.** `validatePack()` drops an entry with no name and treats a missing or broken list as none; the steps still work.
+- `tests/fixtures/journey-pack.json` is a pack made by the Journey Service's own `build_pack` (regenerate it with `python apps/traveller/tests/fixtures/journey_pack.py`), so the tests check the pack the phone really receives.
+
 ## Working with no signal (issue 2.4)
 
 | What | How it's kept on the phone |
 |---|---|
 | The app itself | A service worker (built by `vite-plugin-pwa`/Workbox) stores every built file. Opening the app with no signal shows the app, not the browser's offline page. Production builds only, so try it with `npm run build` then `npm run preview` (port 4173). |
 | The route pack | IndexedDB. Loaded network-first so a route the caregiver changed is picked up, but **only replaced by a pack that passes `validatePack()`**: a cut-off or broken download can never overwrite a good saved pack. |
-| Photos and audio | Downloaded into Cache Storage as soon as the trip opens, before the traveller sets off. Shown from there as `blob:` URLs, so they work with no signal. |
+| Photos and audio | Downloaded into Cache Storage as soon as the trip opens, before the traveller sets off: each step's photo and audio, and the photo of every landmark the step names. Shown from there as `blob:` URLs, so they work with no signal. |
 | Unsent check-ins | The outbox (see above). |
 
 Details that matter:
@@ -167,7 +207,8 @@ old version of the app) and lets the hashed files in `/assets` be cached for a y
 | `src/lib/requests.ts` | durable queue for help, trip start, trip end |
 | `src/lib/api.ts` | HTTP, timeouts, sorting responses into ok / invalid / unauthorized / retry |
 | `src/lib/pack.ts` | loads and saves the route pack |
-| `src/lib/offline.ts` | validates packs, downloads photos/audio, serves stored copies |
+| `src/lib/offline.ts` | validates packs, downloads photos (landmarks too)/audio, serves stored copies |
+| `src/lib/easyRead.ts` | one action per line, landmark captions |
 | `src/lib/sw-register.ts` | registers the service worker |
 | `src/lib/wakelock.ts` | keeps the screen on during a trip |
 | `src/config.ts` | API address (`VITE_API_BASE`) |
