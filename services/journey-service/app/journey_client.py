@@ -262,6 +262,7 @@ class JourneyClient:
         easyread_http: httpx.Client | None = None,   # the Easy-read Service (tests pass a mocked one)
         notify: Callable[[dict], None] | None = None,  # tells the caregiver (careroute-disruptions, see trip changes)
         photo_http: httpx.Client | None = None,      # Google Street View
+        speech=None,                                 # speech.Speech: spoken instructions in packs; None = none
     ):
         self._s = settings
         self._r = redis_client
@@ -288,6 +289,7 @@ class JourneyClient:
         self._easyread_http = easyread_http or httpx.Client()
         self._notify = notify
         self._photo_http = photo_http or httpx.Client()
+        self._speech = speech
 
     # OneMap transport =====
 
@@ -852,6 +854,9 @@ class JourneyClient:
             raise Forbidden("Only the route's caregiver can approve it.")
         if current["approved"]:
             return current
+        # Read the steps aloud now, once (speech.py): only approved routes get trips, and an approved route's
+        # wording is final, so its packs find the audio ready instead of waiting for Polly.
+        self._speak(current["steps"])
         route = {**current, "approved": True, "updatedAt": self._now_iso()}
         self._route_store().replace(route, current["version"])
         return route
@@ -1374,6 +1379,8 @@ class JourneyClient:
             replaced = [p for part in old[a:b + 1] for p in part]
             step_paths = [self._step_path(replaced, s) for s in offer["steps"]]
         sent = {**offer, "status": "sent", "sentAt": self._iso(now), "sentBy": by}
+        # The new steps' audio before the new plan is saved: the phone fetches the new pack as soon as it sees it
+        self._speak(offer["steps"])
         changed = self._change_trip(trip, sent, new_plan, [*old[:a], *step_paths, *old[b + 1:]])
         if changed["status"] != "active":
             return changed                                   # not started: start_trip publishes the new plan
@@ -1648,15 +1655,20 @@ class JourneyClient:
         until that service exists; the app must cope with null."""
         trip = self._stored_trip(trip_id, caller)
         route = self._route_for_trip(trip)
+        plan_steps = self._plan_for_trip(trip, route)
+        wording = [self._pack_wording(step) for step in plan_steps]
+        audio = self._audio_keys(plan_steps, wording)
         steps = []
-        for step in self._plan_for_trip(trip, route):
+        for step, words, audio_key in zip(plan_steps, wording, audio):
             target = step.get("to") or {}
             steps.append({
                 "stepIndex": step["stepIndex"], "mode": step["mode"],
-                "easyRead": step.get("easyRead") or easy_read(step),
+                "easyRead": words,
                 "lat": target.get("lat"), "lng": target.get("lng"),     # where this step ends
                 "underground": step.get("underground"),
-                "photoUrl": self._photo_url(step.get("photoKey")), "audioUrl": step.get("audioKey"),
+                # audioUrl: the step read aloud (speech.py), a temporary link like the photo's; null = the phone
+                # reads it with its own voice
+                "photoUrl": self._photo_url(step.get("photoKey")), "audioUrl": self._photo_url(audio_key),
                 "backup": (step.get("backup") or {}).get("instruction"),
                 # What the wording tells them to look out for, with a photo of each.
                 "landmarks": [{"name": m["name"], "photoUrl": self._photo_url(m.get("photoKey"))}
@@ -1671,6 +1683,28 @@ class JourneyClient:
             "caregiver": {"name": None, "phone": None}, "messages": dict(PACK_MESSAGES),
             "generatedAt": self._now_iso(),
         }
+
+    @staticmethod
+    def _pack_wording(step: dict) -> str:
+        """The words the pack shows (and reads aloud) for a step. One place, so audio made early (_speak) has the
+        same key the pack looks for."""
+        return step.get("easyRead") or easy_read(step)
+
+    def _speak(self, steps: list[dict]) -> None:
+        """Makes the steps' spoken audio now, at a single caregiver action (approving a route, sending a changed plan),
+        so building a pack doesn't call Polly and two pods building the same new pack don't both make it.
+        Best-effort: what fails here is made when the pack is built."""
+        self._audio_keys(steps, [self._pack_wording(s) for s in steps])
+
+    def _audio_keys(self, plan: list[dict], wording: list[str]) -> list[str | None]:
+        """Each step's audio in the pack bucket: the step's own `audioKey` if it has one, else its wording read
+        aloud (made now if it doesn't exist yet; usually it was, by _speak). None with TTS_MODE=off or when Polly
+        fails."""
+        own = [step.get("audioKey") for step in plan]
+        if self._speech is None or self._packs is None:
+            return own
+        spoken = self._speech.keys([None if key else words for key, words in zip(own, wording)])
+        return [key or said for key, said in zip(own, spoken)]
 
     def trip_pack(self, trip_id: str, caller: Caller | None = None) -> dict:
         """Builds the pack, stores it in S3 and returns a temporary link: {"packUrl", "packVersion"}."""

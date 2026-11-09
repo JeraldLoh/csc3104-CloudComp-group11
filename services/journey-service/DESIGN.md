@@ -14,6 +14,7 @@ The service has two deployable parts that share a little code, so the files are 
 | `journey_client.py` (the API's logic in one class: OneMap, planning, routes, trips, packs) | yes | no |
 | `easy_read.py` (plain-language wording for route steps, no imports from the rest of `app/`) | yes | no |
 | `easy_read_ai.py` (asks the Easy-read Service for simpler wording), `streetview.py` (step photos) | yes | no |
+| `speech.py` (each step read aloud by Amazon Polly, for the pack's `audioUrl`) | yes | no |
 | `landmarks.py` (buildings along a route for the AI wording to mention), `geo.py` (distances between points and to a path) | yes | no |
 | `route_store.py`, `trip_store.py`, `pack_store.py` (DynamoDB / Redis / S3 storage) | yes | no |
 | `lta.py` (LTA DataMall client), `cache.py` (Redis JSON cache), `config.py` (settings), `data_mode.py` (live/saved switch) | yes | **yes** (shared) |
@@ -27,8 +28,11 @@ so its package needs only `httpx` and `redis` (boto3 is already in the Lambda ru
 `app/` into the container (including `saved_data/`); the Lambda package lists its 8 files explicitly (`deploy/lambda/make_zip.py`),
 so saved data never ships to AWS. Packaging, schedule and permissions are in `deploy/` (see `deploy/README.md`).
 
-Tests are split by area in `tests/` (`test_planning.py`, `test_routes_trips.py`, `test_disruption.py`, `test_lta.py`, `test_api.py`, `test_auth.py`, `test_replay.py`; shared setup in `helpers.py`), so you can run just the file you changed. `app/saved_data/fixtures/` holds the real LTA and OneMap responses they use
-(made by `capture_data.py --target tests`; gitignored like the rest of `app/saved_data/`).
+Tests are split by area in `tests/` (`test_planning.py`, `test_routes_trips.py`, `test_bridge.py`, `test_disruption.py`,
+`test_lta.py`, `test_api.py`, `test_auth.py`, `test_replay.py`, `test_easy_read.py`, `test_easy_read_ai.py`,
+`test_landmarks.py`, `test_streetview.py`, `test_speech.py`; shared setup in `helpers.py`), so you can run just the file
+you changed. `app/saved_data/fixtures/` holds the real LTA and OneMap responses they use (made by
+`capture_data.py --target tests`; in Git, like the rest of `app/saved_data/`).
 
 ## Route planning (`POST /api/routes/plan`)
 
@@ -118,8 +122,9 @@ instead of the internet. Everything after the API call is the real code: parsing
 the LTA cross-check, saving, trips, packs and the disruption demo. AWS sets both to `live` (the EKS manifests and the
 Lambda stack).
 
-`app/saved_data/` is **gitignored**, so a fresh clone has none: run `python scripts/capture_data.py --target both`
-first. Without it, saved-data requests answer `404` saying exactly that.
+`app/saved_data/` is **in Git**, so a fresh clone runs on it straight away. To refresh it from the real APIs, run
+`python services/journey-service/scripts/capture_data.py --target both` from the repo root. A request the saved data
+doesn't cover answers `404` saying so.
 
 **Switching while it runs** (with `DEMO_UI=true`, as in compose): the caregiver app's header has a **Data: Saved / Live**
 box, or run `docker exec careroute-journey-service-1 python -m app.demo_tools mode live` (`mode saved` to go back,
@@ -231,7 +236,8 @@ created, starting it or building its pack returns `409` and a new trip has to be
 - `GET /api/trips/{id}/pack` builds the offline file (`contracts/examples/route-pack.json`), saves it to S3 as
   `packs/{routeId}/v{version}.json` and returns `{packUrl, packVersion}`; the link is temporary
   (`PACK_URL_TTL_S`, default 1 h). `travellerName` and `caregiver` are `null` until the Profiles service exists.
-- `GET /api/trips/{id}` and `GET /api/trips?travellerId=&date=` are not in the contract yet.
+  Each step's `photoUrl` and `audioUrl` (see "Spoken instructions") are presigned links that last `PHOTO_URL_TTL_S`.
+- `GET /api/trips/{id}` and `GET /api/trips?travellerId=&date=` look trips up (`expiresAt` and the plan internals left out).
 
 Pack storage is **off unless `PACKS_BUCKET` is set** (so a deployment without a bucket still becomes ready); then
 `/api/trips/{id}/pack` returns `503`. The compose overlay sets `PACKS_BUCKET=careroute-packs` and creates the bucket,
@@ -351,6 +357,29 @@ get off at, the destination), turned to face it, so the traveller can check they
 - `photoKey` must be a key under `media/` (`models.py`), because answers hand out a presigned `photoUrl` for it.
   `photoUrl` is made for each answer (route answers and packs, valid for `PHOTO_URL_TTL_S`, 7 days) and never stored.
 - Google's terms limit how long Street View images may be stored; keeping them in S3 is a shortcut for this project.
+
+## Spoken instructions
+
+The traveller app's **Listen** button plays each step's `audioUrl` from the pack: the step's easy-read wording read
+aloud by Amazon Polly (`app/speech.py`). The phone downloads it with the photos, so it plays with no signal. Without
+one, the phone reads the text with its own voice.
+
+- `TTS_MODE=polly` turns it on (set in `k8s/eks/services/journey-service.yaml`; the platform stack's IAM role allows
+  `polly:SynthesizeSpeech`). Default `off`: LocalStack has no Polly, so locally packs have `audioUrl: null`. To try
+  Polly locally, set `TTS_MODE=polly` with real AWS credentials; `TTS_ENDPOINT_URL` stays unset, so Polly is real
+  AWS while S3 stays LocalStack.
+- **When it is made:** when the caregiver approves a route (only approved routes get trips, and their wording is
+  final), and for the new steps when a changed plan (bridging bus, re-route) is sent, before the phone can see the new
+  pack. Not on every draft save. Building a pack only makes what is still missing (Polly was down earlier), so the
+  phone's pack request normally doesn't wait for Polly, and two pods don't both make the same file.
+- **Stored** in the pack bucket as `media/speech/v1/<voice>-<engine>-<rate>/<hash of the words>.mp3`, so the same
+  words are made once and an edited step gets a new file. Nothing is saved on the route. The link in the pack is
+  presigned like `photoUrl` (`PHOTO_URL_TTL_S`).
+- **How it reads:** a little slower than normal (`TTS_RATE`, `90%`), with a pause between sentences; bus numbers and
+  bus stop codes are read digit by digit ("bus one nine zero"). Voice: `TTS_VOICE` (`Joanna`), `TTS_ENGINE`
+  (`neural`). The step's text is escaped, so it can't add SSML of its own.
+- **Failures:** Polly down or refusing gives that step `audioUrl: null`; approving, sending and the pack all still
+  work. A step's own `audioKey` (an S3 key under `media/`) is used instead of Polly when present.
 
 ## Route geometry
 
