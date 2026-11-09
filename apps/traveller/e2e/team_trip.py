@@ -15,7 +15,8 @@ Needs the team's local stack and the traveller app running on their usual ports,
     python -m playwright install chromium
     python apps/traveller/e2e/team_trip.py            # add --headed to watch, --out <folder> for screenshots
 
-Prints one line per check and exits 1 if any required check fails. The off-route check needs the Coordinator,
+Prints one line per check and exits 1 if any required check fails. Afterwards it removes the traveller and route it
+made (the trip record stays until its DynamoDB TTL); --keep leaves them for a look in the caregiver app. The off-route check needs the Coordinator,
 detectors and Aggregator; without them it's reported as skipped, not failed.
 """
 import argparse
@@ -37,6 +38,7 @@ p.add_argument("--journey", default="http://localhost:8006")
 p.add_argument("--caregiver", default="G-003")
 p.add_argument("--out", default=None, help="folder for screenshots")
 p.add_argument("--headed", action="store_true")
+p.add_argument("--keep", action="store_true", help="keep the test traveller, route and trip afterwards")
 args = p.parse_args()
 G = {"X-Dev-User": args.caregiver}
 OUT = Path(args.out) if args.out else None
@@ -57,7 +59,7 @@ def png(rgb: tuple[int, int, int], w: int = 64, h: int = 48) -> bytes:
         chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b"")
 
 
-def make_trip(h: httpx.Client) -> tuple[str, str]:
+def make_trip(h: httpx.Client) -> tuple[str, str, str]:
     t = h.post(f"{args.alerts}/api/travellers", json={"name": "Alex"}, headers=G)
     t.raise_for_status()
     traveller = t.json()["travellerId"]
@@ -102,7 +104,20 @@ def make_trip(h: httpx.Client) -> tuple[str, str]:
     h.post(f"{args.journey}/api/routes/{rid}/approve", headers=G).raise_for_status()
     trip = h.post(f"{args.journey}/api/trips", json={"routeId": rid, "date": time.strftime("%Y-%m-%d")}, headers=G)
     trip.raise_for_status()
-    return traveller, trip.json()["tripId"]
+    return traveller, rid, trip.json()["tripId"]
+
+
+def clean_up(h: httpx.Client, traveller: str, rid: str, trip: str) -> None:
+    """Removes what make_trip() made, so runs don't pile up on the caregiver's lists. Best-effort: a failure is
+    printed, never turned into a failed run."""
+    try:
+        if h.get(f"{args.journey}/api/trips/{trip}", headers=G).json().get("status") == "active":
+            h.post(f"{args.journey}/api/trips/{trip}/end", headers=G)   # a route with a trip under way can't go
+        h.delete(f"{args.journey}/api/routes/{rid}", headers=G).raise_for_status()
+        h.delete(f"{args.alerts}/api/travellers/{traveller}", headers=G).raise_for_status()
+        print(f"cleaned up: traveller {traveller}, route {rid}")
+    except httpx.HTTPError as e:
+        print(f"couldn't clean up traveller {traveller} / route {rid}: {e}")
 
 
 def incidents(h: httpx.Client, traveller: str) -> list[dict]:
@@ -124,7 +139,15 @@ async def main() -> int:
         except httpx.HTTPError as e:
             print(f"{name} isn't answering at {url} ({e}). Start the local stack first (see this file's top).")
             return 1
-    traveller, trip = make_trip(h)
+    traveller, rid, trip = make_trip(h)
+    try:
+        return await run_trip(h, traveller, trip)
+    finally:
+        if not args.keep:
+            clean_up(h, traveller, rid, trip)
+
+
+async def run_trip(h: httpx.Client, traveller: str, trip: str) -> int:
     link = f"{args.app}/?trip={trip}&traveller={traveller}&debug=1"
     print(f"trip link: {link}")
 

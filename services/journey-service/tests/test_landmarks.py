@@ -134,3 +134,18 @@ def test_nearby_buildings_failing_means_none():
     assert JourneyClient(SETTINGS, redis_client=fakeredis.FakeRedis()).nearby_buildings(1.35, 103.94) == []
     no_token = dataclasses.replace(SETTINGS, onemap_api_key="")
     assert JourneyClient(no_token, redis_client=fakeredis.FakeRedis()).nearby_buildings(1.35, 103.94) == []
+
+
+def test_pack_says_which_photo_shows_a_landmark_without_its_own():
+    """The phone's "it is in the photo of ..." line needs sameView in the pack (apps/traveller easyRead.ts)."""
+    from helpers import approved_route, route_data, trip_client
+    client, _ = trip_client()
+    data = route_data()
+    data["steps"][1]["easyRead"] = "Wait for bus number 190. Look out for Oasis Terraces and Block 221. Get off at Block 221."
+    data["steps"][1]["landmarks"] = [
+        {"name": "Oasis Terraces", "kind": "mall", "lat": 1.4026, "lng": 103.9128, "photoKey": "media/uploads/a.jpg"},
+        {"name": "Block 221", "lat": 1.3936, "lng": 103.8963, "sameView": "Oasis Terraces"}]
+    route = approved_route(client, steps=data["steps"])
+    pack = client.build_pack(client.create_trip(route["routeId"], "2026-10-22")["tripId"])
+    assert [(m["name"], m["sameView"]) for m in pack["steps"][1]["landmarks"]] == [
+        ("Oasis Terraces", None), ("Block 221", "Oasis Terraces")]

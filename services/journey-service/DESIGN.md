@@ -322,7 +322,7 @@ on by default).
   the other landmark's name), and the app says so under the photos ("it is in the step photo above").
 - Saved, a step keeps `landmarks: [{name, kind, lat, lng, seenFrom, photoKey}]`, but only those its `easyRead` still
   names: a landmark the caregiver edits out of the wording goes with it. Answers add a `photoUrl` to each, and the
-  route pack gives the traveller `landmarks: [{name, photoUrl}]` per step.
+  route pack gives the traveller `landmarks: [{name, photoUrl, sameView}]` per step.
 
 ## Step photos
 

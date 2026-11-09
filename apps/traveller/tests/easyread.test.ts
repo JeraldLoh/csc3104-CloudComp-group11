@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { easyReadPoints, landmarkCaption } from "../src/lib/easyRead";
 
 describe("easyReadPoints", () => {
@@ -44,5 +46,17 @@ describe("landmarkCaption", () => {
   it("never points at a step photo that doesn't exist", () => {
     expect(landmarkCaption({ name: "Block 221", photoUrl: null, sameView: "step" }, false)).toBe("Look for Block 221.");
     expect(landmarkCaption({ name: "Block 221", photoUrl: null }, false)).toBe("Look for Block 221.");
+  });
+});
+
+// The shared cases (contracts/examples/easy-read-points.json): the caregiver app and the traveller app run the same
+// list, so their points can't drift apart.
+describe("easyReadPoints: the cases both apps share", () => {
+  const shared = JSON.parse(
+    readFileSync(join(process.cwd(), "../../contracts/examples/easy-read-points.json"), "utf-8"),   // run from the app folder
+  ) as { cases: { text: string | null; points: string[] }[] };
+
+  it.each(shared.cases)("$text", ({ text, points }) => {
+    expect(easyReadPoints(text)).toEqual(points);
   });
 });

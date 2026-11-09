@@ -77,14 +77,31 @@ cluster_ready() {
   "$ENGINE" port "$CLUSTER-control-plane" 30566/tcp >/dev/null 2>&1 || return 2
 }
 
+# host ports in the config that something else already uses (a compose stack, another LocalStack), so kind
+# couldn't create the cluster; with an old cluster ($1 = 1), the ports it publishes itself are its own and skipped
+busy_ports() {
+  local have_cluster=$1 container host busy=""
+  while read -r container host; do
+    if [ "$have_cluster" = 1 ] && "$ENGINE" port "$CLUSTER-control-plane" "$container/tcp" >/dev/null 2>&1; then
+      continue
+    fi
+    # bash's /dev/tcp: connects only if something listens there
+    if (exec 3<>"/dev/tcp/127.0.0.1/$host") 2>/dev/null; then busy="$busy $host"; fi
+  done < <(sed -nE 's/.*containerPort: *([0-9]+), *hostPort: *([0-9]+).*/\1 \2/p' "$CONFIG")
+  echo "${busy# }"
+}
+
 ensure_cluster() {
-  local state=0
+  local state=0 busy
   cluster_ready || state=$?
   [ "$state" = 0 ] && return
   [ "$SETUP" = 1 ] || {
     [ "$state" = 1 ] && die "no kind cluster $CLUSTER yet, run once with --setup"
-    die "cluster $CLUSTER was made without $CONFIG, run with --setup to recreate it"
+    die "cluster $CLUSTER was made with an older $CONFIG (it has no port 4566 for LocalStack's pack and photo links). Run with --setup to recreate it; its data (Redis, LocalStack) is lost"
   }
+  # before deleting anything: a port kind needs that is taken would leave no cluster at all
+  busy=$(busy_ports "$([ "$state" = 2 ] && echo 1 || echo 0)")
+  [ -z "$busy" ] || die "port(s) $busy on localhost are already in use, e.g. by services/journey-service/compose.journey.yaml (Journey Service on 8006, LocalStack on 4566). Stop it first (docker compose ... down); $CLUSTER was not changed"
   if [ "$state" = 2 ]; then
     echo "recreating $CLUSTER with $CONFIG, its data is lost"
     # rootless podman can report a network clean up error after removing the cluster

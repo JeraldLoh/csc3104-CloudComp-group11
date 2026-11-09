@@ -30,29 +30,34 @@ function useStoredMedia(tripId: string, url: string | null, packVersion: string)
   return src;
 }
 
-/** Reads the step aloud: the recorded audio if the pack has it, otherwise the phone's voice. */
-function useListen(text: string, audioSrc: string | null) {
+/**
+ * Reads the step aloud: the recorded audio if the pack has it, otherwise the phone's voice. `after` (the landmark
+ * lines, which the recorded audio doesn't have) follows in the phone's voice.
+ */
+function useListen(text: string, audioSrc: string | null, after = "") {
   const audio = useRef<HTMLAudioElement | null>(null);
   const [speaking, setSpeaking] = useState(false);
   useEffect(() => () => {
     audio.current?.pause();
     if ("speechSynthesis" in window) window.speechSynthesis.cancel();
-  }, [text]);
+  }, [text, after]);
+  const all = after ? `${text} ${after}` : text;
   const play = () => {
     if (audioSrc) {
       audio.current ??= new Audio();
       audio.current.src = audioSrc;
       setSpeaking(true);
-      audio.current.onended = audio.current.onerror = () => setSpeaking(false);
-      void audio.current.play().catch(() => speak());
+      audio.current.onended = () => (after ? speak(after) : setSpeaking(false));
+      audio.current.onerror = () => speak(all);          // the recording can't play: the phone reads it all
+      void audio.current.play().catch(() => speak(all));
       return;
     }
-    speak();
+    speak(all);
   };
-  const speak = () => {
-    if (!("speechSynthesis" in window)) return;
+  const speak = (words: string) => {
+    if (!("speechSynthesis" in window)) return setSpeaking(false);
     window.speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text);
+    const u = new SpeechSynthesisUtterance(words);
     u.rate = 0.9;
     u.onend = u.onerror = () => setSpeaking(false);
     setSpeaking(true);
@@ -72,10 +77,15 @@ function Photo({ tripId, loaded, path, className }: { tripId: string; loaded: Lo
 
 export function StepCard({ step, loaded, index, total, tripId }: { step: RoutePackStep; loaded: LoadedPack; index: number; total: number; tripId: string }) {
   const audio = useStoredMedia(tripId, mediaUrl(loaded, step.audioUrl), loaded.pack.packVersion);
-  const { play, speaking, canListen } = useListen(step.easyRead, audio);
+  const landmarks = step.landmarks ?? [];
+  // The landmark lines as shown, read after the step: with a photo first, then those without, as on screen
+  const landmarkLines = [...landmarks.filter((m) => m.photoUrl), ...landmarks.filter((m) => !m.photoUrl)]
+    .map((m) => landmarkCaption(m, !!step.photoUrl))
+    .map((line) => (/[.!?]$/.test(line) ? line : `${line}.`))
+    .join(" ");
+  const { play, speaking, canListen } = useListen(step.easyRead, audio, landmarkLines);
   const mode = MODE_NAME[step.mode] ? step.mode : "walk";
   const points = easyReadPoints(step.easyRead);
-  const landmarks = step.landmarks ?? [];
 
   return (
     <article className={`sign sign--${mode}`} aria-labelledby="step-text">

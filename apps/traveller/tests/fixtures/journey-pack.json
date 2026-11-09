@@ -1,6 +1,6 @@
 {
-  "packVersion": "R-DE2001-v1",
-  "routeId": "R-DE2001",
+  "packVersion": "R-2C1C66-v1",
+  "routeId": "R-2C1C66",
   "routeVersion": 1,
   "travellerName": null,
   "steps": [
@@ -17,7 +17,8 @@
       "landmarks": [
         {
           "name": "Waterway Point",
-          "photoUrl": "https://careroute-files.s3.ap-southeast-1.amazonaws.com/media/streetview/v2/1.40640_103.90220_from_1.40450_103.90180.jpg?X-Amz-Signature=test"
+          "photoUrl": "https://careroute-files.s3.ap-southeast-1.amazonaws.com/media/streetview/v2/1.40640_103.90220_from_1.40450_103.90180.jpg?X-Amz-Signature=test",
+          "sameView": null
         }
       ]
     },
@@ -34,11 +35,13 @@
       "landmarks": [
         {
           "name": "Oasis Terraces",
-          "photoUrl": "https://careroute-files.s3.ap-southeast-1.amazonaws.com/media/streetview/v2/1.40260_103.91280_from_1.40100_103.91000.jpg?X-Amz-Signature=test"
+          "photoUrl": "https://careroute-files.s3.ap-southeast-1.amazonaws.com/media/streetview/v2/1.40260_103.91280_from_1.40100_103.91000.jpg?X-Amz-Signature=test",
+          "sameView": null
         },
         {
           "name": "Block 221",
-          "photoUrl": null
+          "photoUrl": null,
+          "sameView": "step"
         }
       ]
     }

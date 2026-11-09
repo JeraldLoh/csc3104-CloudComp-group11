@@ -160,7 +160,7 @@ Only route steps are sent. Never names, addresses or labels like "Home": a place
   sides and distances only, never coordinates, and none within 200 m of a place without a stop code. The answer's
   `landmarks` lists the ids of those its wording mentions (`[]` otherwise); every name is checked like the rest.
 - `easyRead` (here and on route steps) stays one string, written as one short action per sentence ("Wait for bus
-  number 45. Tap your card. Count 5 stops."). Apps may show each sentence as a bullet point.
+  number 45. Tap your card. Count 5 stops."). Apps may show each sentence as a bullet point, split as in `examples/easy-read-points.json` (both apps test against it).
 
 The caregiver app reaches it through the Journey Service: `POST /api/routes/{routeId}/easy-read` (route owner only)
 returns `{"steps": [{"stepIndex", "easyRead", "fallback", "landmarks": [{name, kind, lat, lng, seenFrom, photoKey, sameView, photoUrl}]}], "provider"}` and saves nothing; the caregiver checks
@@ -174,7 +174,7 @@ Route steps may carry `landmarks: [{name, kind, lat, lng, seenFrom, photoKey, sa
 the traveller to look out for, each with a Street View photo of it taken from `seenFrom`, the traveller's spot on the
 route (`sameView`: no photo of its own, as it would repeat the step's photo, `"step"`, or that landmark's). The
 service keeps only those the step's `easyRead` names; answers add `photoUrl` to each, and the route pack
-has `landmarks: [{name, photoUrl}]` per step.
+has `landmarks: [{name, photoUrl, sameView}]` per step (`sameView` null unless it has no photo of its own).
 
 Step photos (Journey Service): saving a route adds a Google Street View photo of where each walk/bus step ends
 (`photoKey`, an S3 key under `media/`; a recent panorama, Google's own first, else a recent upload close by, else an older one under `media/streetview/v2/rough/` for the caregiver to check; a walk to a station shows its nearest exit). `POST /api/routes/{routeId}/photos` (multipart field `photo`, JPEG/PNG/WebP

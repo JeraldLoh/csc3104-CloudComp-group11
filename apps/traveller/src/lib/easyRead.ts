@@ -3,6 +3,7 @@
 // The Easy-read Service writes one action per sentence, and the caregiver's editor shows (and saves) each
 // sentence as a bullet point (apps/caregiver/src/planner/format.ts, easyReadPoints). The traveller sees the same
 // points in the same order, split by the same rule, so what the caregiver checked is exactly what the traveller reads.
+// Both apps' tests run the cases in contracts/examples/easy-read-points.json: change the rule there and in both apps.
 import type { Landmark } from "../types";
 
 // A full stop after these is part of a name ("St. Andrew's Village"), not the end of a sentence.
@@ -16,6 +17,11 @@ export function easyReadPoints(text: string | null | undefined): string[] {
     else points.push(part);
   }
   return points.map((p) => p.trim().replace(/\.$/, "")).filter(Boolean);
+}
+
+/** Words that start a sentence: "your caregiver" -> "Your caregiver". A name stays as it is. */
+export function sentenceStart(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 /**

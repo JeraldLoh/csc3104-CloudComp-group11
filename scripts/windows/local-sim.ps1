@@ -75,12 +75,36 @@ function Get-ClusterState {
   return 0
 }
 
+# Host ports in $Config that something else already uses (a compose stack, another LocalStack), so kind couldn't
+# create the cluster. With $HaveCluster, ports the old cluster publishes itself are its own and are skipped.
+function Get-BusyPorts([bool]$HaveCluster) {
+  $busy = @()
+  foreach ($m in Select-String -Path $Config -Pattern 'containerPort:\s*(\d+),\s*hostPort:\s*(\d+)') {
+    $containerPort = $m.Matches[0].Groups[1].Value
+    $hostPort = [int]$m.Matches[0].Groups[2].Value
+    if ($HaveCluster) {
+      & $Engine port "$Cluster-control-plane" "$containerPort/tcp" 2>$null | Out-Null
+      if ($LASTEXITCODE -eq 0) { continue }
+    }
+    $tcp = New-Object System.Net.Sockets.TcpClient
+    try { if ($tcp.ConnectAsync("127.0.0.1", $hostPort).Wait(500)) { $busy += $hostPort } } catch { } finally { $tcp.Dispose() }
+  }
+  return , $busy
+}
+
 function Initialize-Cluster {
   $state = Get-ClusterState
   if ($state -eq 0) { return }
   if (-not $Setup) {
     if ($state -eq 1) { Fail "no kind cluster $Cluster yet, run once with -Setup" }
-    Fail "cluster $Cluster was made without $Config, run with -Setup to recreate it"
+    Fail ("cluster $Cluster was made with an older $Config (it has no port 4566 for LocalStack's pack and photo " +
+          "links). Run with -Setup to recreate it; its data (Redis, LocalStack) is lost")
+  }
+  # Before deleting anything: a port kind needs that is taken would leave no cluster at all
+  $busy = Get-BusyPorts ($state -eq 2)
+  if ($busy.Count) {
+    Fail ("port(s) $($busy -join ', ') on localhost are already in use, e.g. by services/journey-service/compose.journey.yaml " +
+          "(Journey Service on 8006, LocalStack on 4566). Stop it first (docker compose ... down); $Cluster was not changed")
   }
   if ($state -eq 2) {
     Write-Host "recreating $Cluster with $Config, its data is lost"
@@ -158,7 +182,7 @@ function Start-App {
   }
   if (-not (Test-Path apps/caregiver/node_modules)) {
     Push-Location apps/caregiver
-    npm ci --no-audit --no-fund
+    npm ci --no-audit --no-fund | Out-Host   # to the screen, so the function returns only the process
     $code = $LASTEXITCODE
     Pop-Location
     if ($code -ne 0) { Fail "npm ci failed" }
@@ -208,13 +232,15 @@ try {
   Write-Host "aggregator dashboard: http://localhost:8002/dashboard"
   Write-Host "another trip: $Python -m tools.simulator live --scenario off_route --caregiver $Caregiver"
   # keep running while either app started here runs, so stopping the script stops both
-  $started = @($app, $traveller) | Where-Object { $_ }
+  # only real processes: anything else a function printed would give Wait-Process a null id. @() + @() flattens,
+  # so a process inside such an array is still found
+  $started = @(@($app) + @($traveller) | Where-Object { $_ -is [System.Diagnostics.Process] })
   if ($started) {
     Write-Host "press Ctrl+C to stop the apps, the cluster keeps running"
     Wait-Process -Id ($started | ForEach-Object { $_.Id })
   }
 } finally {
-  foreach ($proc in @($app, $traveller)) {
-    if ($proc -and -not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
+  foreach ($proc in @(@($app) + @($traveller) | Where-Object { $_ -is [System.Diagnostics.Process] })) {
+    if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
   }
 }

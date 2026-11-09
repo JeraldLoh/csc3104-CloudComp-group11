@@ -119,7 +119,7 @@ GPS (watchPosition) ──► latest position
 Each step is one sign: the step photo, then the wording, then the landmarks it names, then the backup plan.
 
 - **One action per line.** The Easy-read Service writes one short action per sentence, and the caregiver's editor shows each sentence as a bullet point. The app splits the wording by the same rule (`src/lib/easyRead.ts`, matching `easyReadPoints` in `apps/caregiver/src/planner/format.ts`), so the traveller reads exactly the points the caregiver checked. A one-sentence step stays a sentence.
-- **Landmarks.** The Journey Service sends `landmarks: [{name, photoUrl}]` per step (`contracts/examples/route-pack.json`): the buildings the wording tells them to look out for. Each one with a photo is shown under the wording as "Look for Oasis Terraces", side by side when there are two or more. One without a photo (it would look the same as the step photo or another landmark's) gets a line saying where to look: "Look for Block 221: it is in the step photo above." If the pack also sends `sameView`, the line names that photo.
+- **Landmarks.** The Journey Service sends `landmarks: [{name, photoUrl, sameView}]` per step (`contracts/examples/route-pack.json`): the buildings the wording tells them to look out for. Each one with a photo is shown under the wording as "Look for Oasis Terraces", side by side when there are two or more. One without a photo (it would look the same as the step photo or another landmark's) gets a line saying where to look: "Look for Block 221: it is in the step photo above.", or with `sameView` another landmark's name, "it is in the photo of Oasis Terraces".
 - **A bad landmark never breaks a trip.** `validatePack()` drops an entry with no name and treats a missing or broken list as none; the steps still work.
 - `tests/fixtures/journey-pack.json` is a pack made by the Journey Service's own `build_pack` (regenerate it with `python apps/traveller/tests/fixtures/journey_pack.py`), so the tests check the pack the phone really receives.
 
@@ -232,8 +232,6 @@ and nothing else, and the Help button never moves. Status messages are calm and 
 - On AWS, only the Check-in Service is behind the load balancer. The Journey and Alert Services have no Ingress
   yet, so the app on Amplify can't fetch packs, start or end a trip, ask for help or say it has arrived there.
   Locally everything works (above).
-- The pack's landmarks don't include `sameView` yet, so a landmark without its own photo says "it is in the
-  photo above" rather than naming the photo.
 - Server push to the phone ("where are you?", `/api/travellers/{id}/where-are-you`): not built by the Alert
   Service yet. Route changes reach the phone by polling the pack every 60 s.
 - Login: issue 1.5. `HttpTransport` already takes a `getToken` function for it.

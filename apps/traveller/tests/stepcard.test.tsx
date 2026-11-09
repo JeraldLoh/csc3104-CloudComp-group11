@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { StepCard } from "../src/components/StepCard";
 import { validatePack } from "../src/lib/offline";
 import { DEMO_PACK } from "../src/lib/demo";
@@ -31,7 +31,8 @@ describe("StepCard", () => {
     expect(photos(container)[0]).toContain("1.39350_103.89620.jpg");
     expect(photos(container)[1]).toContain("1.40260_103.91280_from_");
     expect(screen.getByText("Look for Oasis Terraces")).toBeTruthy();
-    expect(screen.getByText("Look for Block 221: it is in the photo above.")).toBeTruthy();
+    // The pack says which photo (sameView "step"), so the line names it
+    expect(screen.getByText("Look for Block 221: it is in the step photo above.")).toBeTruthy();
   });
 
   it("a landmark seen in the step photo says so (sameView, when the pack sends it)", async () => {
@@ -55,5 +56,20 @@ describe("StepCard", () => {
     render(<StepCard step={step} loaded={demo} index={2} total={4} tripId="T-1" />);
     expect(screen.queryByRole("list", { name: "Things to look out for" })).toBeNull();
     expect(screen.getByText("Look for Block 221: it is in the step photo above.")).toBeTruthy();
+  });
+
+  it("Listen reads the step and then the landmark lines (the phone's voice, no recording)", () => {
+    const said: string[] = [];
+    const speech = { cancel: vi.fn(), speak: vi.fn((u: { text: string }) => said.push(u.text)) };
+    vi.stubGlobal("speechSynthesis", speech);
+    vi.stubGlobal("SpeechSynthesisUtterance", class { rate = 1; onend = null; onerror = null; constructor(public text: string) {} });
+    try {
+      const step = fromJourneyService.pack.steps[1];
+      render(<StepCard step={step} loaded={fromJourneyService} index={1} total={2} tripId="T-1" />);
+      fireEvent.click(screen.getByRole("button", { name: /listen/i }));
+      expect(said).toEqual([`${step.easyRead} Look for Oasis Terraces. Look for Block 221: it is in the step photo above.`]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

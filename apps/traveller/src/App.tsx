@@ -6,6 +6,7 @@ import { StepCard } from "./components/StepCard";
 import { HelpSheet } from "./components/HelpSheet";
 import { WhereSheet } from "./components/WhereSheet";
 import { DebugPanel } from "./components/DebugPanel";
+import { sentenceStart } from "./lib/easyRead";
 import type { Session } from "./types";
 
 export default function App() {
@@ -42,7 +43,7 @@ function Journey({ session, demo, debug }: { session: Session; demo: boolean; de
   }, [app.routeChangedAt]);
   const pack = app.loaded?.pack;
   const caregiver = pack?.caregiver.name ?? "your caregiver";
-  const Caregiver = caregiver.charAt(0).toUpperCase() + caregiver.slice(1); // at the start of a sentence
+  const Caregiver = sentenceStart(caregiver);
   const debugPanel = debug ? <DebugPanel app={app} /> : null;
 
   if (app.phase === "loading") {

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import type { RequestQueueState } from "../lib/requests";
+import { sentenceStart } from "../lib/easyRead";
 
 /**
  * Shown after pressing Help. The help request is queued and keeps retrying, but if it
@@ -18,7 +19,7 @@ export function HelpSheet({
   const delivered = !stillSending && requests?.lastDone?.label === "help" && requests.lastDone.at >= askedAt;
   const stuck = stillSending && (requests?.pending.find((r) => r.label === "help")?.attempts ?? 0) > 0;
   const canCall = !!phone;
-  const who = caregiver.charAt(0).toUpperCase() + caregiver.slice(1); // "your caregiver" starts a sentence
+  const who = sentenceStart(caregiver);
 
   return (
     <div className="sheet" role="dialog" aria-modal="true" aria-labelledby="help-title" tabIndex={-1} ref={ref}>
