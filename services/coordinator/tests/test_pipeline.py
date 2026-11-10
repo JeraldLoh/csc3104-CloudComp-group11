@@ -1,6 +1,4 @@
-"""The pipeline in fixed4, the mode the Coordinator runs in: every check-in, all 4 detectors.
-The world (fake detectors, fake Alert Service, fakeredis) is in fakes.py; the experiment's
-adaptive and fixed2 modes are tested in test_adaptive.py."""
+"""The pipeline in fixed4: every check-in, all 4 detectors. The fakes are in fakes.py."""
 import asyncio
 import json
 
@@ -135,7 +133,7 @@ def test_every_detector_silenced_is_inconclusive():
     assert state["decisions"][0]["decision"] == "inconclusive"
 
 
-# --- risk (recorded and shown on the dashboard; adaptive also uses it, test_adaptive.py) ----------
+# --- risk ------------------------------------------------------------------------------------------
 
 def test_risk_over_a_journey():
     redis = new_redis()
@@ -148,7 +146,6 @@ def test_risk_over_a_journey():
 
 
 def test_start_of_trip_inconclusive_leaves_risk_unchanged():
-    # The detectors need history before they can judge (their own reasons), so nobody can call it.
     warming_up = ("abstain", "only 1 usable check-in(s), need 3")
     world = World(detector_votes={d: warming_up for d in HOSTS.values()} | {"dwell-time": "normal"})
     result, state = process(world)

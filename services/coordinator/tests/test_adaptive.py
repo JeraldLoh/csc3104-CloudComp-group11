@@ -1,6 +1,4 @@
-"""The experiment (adaptive.py, evaluation C5): adaptive and fixed2 ask a pair of detectors first.
-The pair choice and escalation rules on their own, then the pipeline in those modes, in the
-same world as test_pipeline.py (fakes.py)."""
+"""The experiment (adaptive.py, evaluation C5): adaptive and fixed2 ask a pair of detectors first."""
 import json
 
 import pytest

@@ -17,9 +17,7 @@ def example(name: str) -> dict:
 
 @pytest.fixture
 def contract_case():
-    """The checkin and votes behind contracts/examples/problem-report.json.
-    The report keeps only detectorId/verdict/confidence per vote; the detectors' own votes
-    also carry problemType, so it's added back for the "problem" ones."""
+    """The checkin and votes behind contracts/examples/problem-report.json."""
     expected = example("problem-report.json")
     checkin = example("checkin.json")
     votes = [{**v, "problemType": "off_route"} if v["verdict"] == "problem" else dict(v)
@@ -104,7 +102,6 @@ def test_unknown_step_and_battery_are_null():
     (64, 64), (64.0, 64), (63.6, 64), (63.4, 63), ("57", 57), (None, None), ("low", None),
 ])
 def test_battery_is_sent_as_a_whole_number(battery, expected):
-    # The Alert Service (Member 5) only accepts an int; 63.5 would be rejected and the alert lost.
     d = Decision("problem", "off_route", 0.9, 0.9, 2)
     report = build_problem_report("T-001#17", {**example("checkin.json"), "batteryPct": battery}, [], d, NOW)
     assert report["batteryPct"] == expected

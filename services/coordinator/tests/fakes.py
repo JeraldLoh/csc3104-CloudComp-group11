@@ -1,6 +1,4 @@
-"""The world the pipeline tests run in: an in-memory Redis (fakeredis), fake detectors and a fake
-Alert Service behind httpx.MockTransport. Decisions are real (decision.py, voting.py).
-Shared by test_pipeline.py (fixed4, the default) and test_adaptive.py (the experiment)."""
+"""Fakeredis, fake detectors and a fake Alert Service for the pipeline tests; decisions are real."""
 import asyncio
 import json
 from pathlib import Path

@@ -7,8 +7,6 @@ from app.voting import ALL_DETECTORS, COVERAGE, aggregate, checks, vote_weight
 
 CONTRACTS = Path(__file__).resolve().parents[3] / "contracts" / "examples"
 
-# Who checks what (Member 4's detectors): route -> off_route, heading -> wrong_direction,
-# dwell -> long_dwell, progress -> off_route/wrong_direction/missed_stop.
 ROUTE, HEADING, DWELL, PROGRESS = ALL_DETECTORS
 OWN_TYPE = {ROUTE: "off_route", HEADING: "wrong_direction", DWELL: "long_dwell", PROGRESS: "off_route"}
 
@@ -42,8 +40,7 @@ def test_checks():
 # --- rule 1: one credible problem claim is enough --------------------------------------------------------
 
 def test_off_route_is_not_cancelled_by_detectors_that_dont_check_the_route():
-    # Check-in #18 from the demo. Counting all four, "normal" outweighed "problem" (1.76 vs 1.56)
-    # and the off-route traveller was missed. heading-speed and dwell-time don't check the route.
+    # Weighing all four, "normal" would outweigh "problem" (1.76 vs 1.56) and miss it.
     d = aggregate([v(ROUTE, "problem", 0.84), v(PROGRESS, "problem", 0.72),
                    v(HEADING, "normal", 0.82), v(DWELL, "normal", 0.94)])
     assert d.decision == "problem" and d.problem_type == "off_route"
@@ -181,7 +178,7 @@ def test_no_claims_without_a_problem():
     assert aggregate([v(ROUTE, "normal"), v(DWELL, "normal")]).claims == ()
 
 
-# --- rules 2 and 3: normal needs enough answers -------------------------------------------------------------
+# --- rule 2: normal needs enough answers -------------------------------------------------------------
 
 def test_all_say_normal():
     d = aggregate([v(ROUTE, "normal", 0.9), v(DWELL, "normal", 0.6)])

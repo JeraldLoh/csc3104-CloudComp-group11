@@ -178,8 +178,7 @@ async def detector_server(delay_s: float):
 
 
 def test_timed_out_calls_give_their_connection_back():
-    # A burst of slow answers used to leave every pooled connection stuck "in use" (cancelled
-    # mid-request), so afterwards even a detector answering at once timed out, for good.
+    # After a burst of slow answers, a fast detector must still answer in time.
     async def go():
         slow, slow_url = await detector_server(delay_s=0.6)
         fast, fast_url = await detector_server(delay_s=0.0)
