@@ -187,7 +187,16 @@ if ! { grep -q '^ONEMAP_API_EMAIL=' "$SECRET_FILE" && grep -q '^ONEMAP_API_PASSW
 fi
 kubectl get namespace "$APP_NAMESPACE" >/dev/null 2>&1 \
   || die "Namespace $APP_NAMESPACE does not exist in the cluster. The platform's deploy script creates it."
-kubectl create secret generic journey-api-keys --from-env-file="$SECRET_FILE" -n "$APP_NAMESPACE" --dry-run=client -o yaml \
+if [ -s "$SECRET_FILE" ]; then
+  FROM_FILE=(--from-env-file="$SECRET_FILE")
+else
+  # No keys at all: an empty Secret, so the service still starts (the manifest reads every key as optional) and a
+  # re-run after removing the keys from .env clears them from the cluster too. Same as the Windows script.
+  info "WARNING: no API keys found in $ENV_FILE. Creating an empty Secret so the Journey Service still starts,"
+  info "         but live LTA data, OneMap route planning and Google step photos need the keys: add them and re-run this script."
+  FROM_FILE=()
+fi
+kubectl create secret generic journey-api-keys ${FROM_FILE[@]+"${FROM_FILE[@]}"} -n "$APP_NAMESPACE" --dry-run=client -o yaml \
   | kubectl apply -f - || die "Could not create the Secret"
 
 # ---------------------------------------------------------------------------
