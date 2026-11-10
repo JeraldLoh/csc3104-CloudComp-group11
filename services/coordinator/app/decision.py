@@ -7,11 +7,8 @@
                3. Save the decision record   for the dashboard    |  transaction
                4. Mark tripId + seq decided  repeats are skipped  /
 
-Step 1 runs before anything is written. If the Alert Service fails, record() raises with no
-Redis state changed: the message stays on the queue and is retried. Reports already sent (an
-earlier type, or all of them if the Redis write failed) are sent again, which the Alert
-Service deduplicates by incident id. Steps 2-4 are one transaction, so a check-in is either fully decided or not
-at all: risk is never raised twice for the same check-in.
+Step 1 runs before anything is written, so if the Alert Service fails nothing has changed
+and the check-in is retried; a re-sent report only updates its incident (same incident id).
 """
 import json
 import logging
@@ -69,8 +66,6 @@ def summary(d: Decision, risk_level: str | None) -> dict:
 def decision_record(request_id: str, checkin: dict, votes: list[dict], d: Decision, escalated: bool,
                     risk_before: Risk, risk_after: Risk, alerts: list[dict], now: datetime,
                     situation: str | None = None, cause: tuple[str, list[str]] | None = None) -> dict:
-    """One entry of decisions:{travellerId}: what the dashboard and the experiment read.
-    `cause`: tracking.unchecked(), why some problem types couldn't be checked, and which."""
     return {
         "requestId": request_id,
         "tripId": checkin.get("tripId"),
@@ -91,7 +86,6 @@ def decision_record(request_id: str, checkin: dict, votes: list[dict], d: Decisi
         "confidence": round(d.confidence, 4),
         "riskBefore": {"level": risk_before.level, "score": round(risk_before.score, 4)},
         "riskAfter": {"level": risk_after.level, "score": round(risk_after.score, 4)},
-        # The strongest problem's incident, as before; `alerts` has one entry per type reported.
         "incidentId": alerts[0]["incidentId"] if alerts else None,
         "alertCreated": alerts[0]["created"] if alerts else None,
         "alerts": alerts,
@@ -122,8 +116,6 @@ class DecisionRecorder:
         now = now or datetime.now(timezone.utc)
         traveller_id = checkin["travellerId"]
 
-        # One report per problem type, strongest first. If one fails, the whole check-in is retried:
-        # the ones already sent go again and only update their incident (same incident id).
         alerts = []
         if d.decision == "problem":
             for report in build_problem_reports(request_id, checkin, votes, d, now):
@@ -131,7 +123,7 @@ class DecisionRecorder:
                 alerts.append({"problemType": report["problemType"], "incidentId": incident.get("incidentId"),
                                "created": incident.get("created")})
 
-        # Tracking lost (tracking.py): some problem types couldn't be checked, for too long.
+        # Tracking lost: some problem types unchecked for too long.
         trip_id = checkin["tripId"]
         route = await self.redis.get(f"trip:{trip_id}:route") if d.decision == "inconclusive" else None
         cause = unchecked(d, checkin, votes, route, self.s.gps_max_accuracy_m)
@@ -141,7 +133,7 @@ class DecisionRecorder:
             timestamp = checkin.get("timestamp") or iso_z(now)
             untracked_since = await self.redis.hget(untracked_key(trip_id), "since") or timestamp
             if seconds_since(untracked_since, timestamp) >= self.s.tracking_lost_after_s:
-                if reason != POOR_GPS:   
+                if reason != POOR_GPS:   # the operator should fix it
                     log.error("%s: %s unchecked since %s (%s)", request_id, ", ".join(types), untracked_since, reason)
                 report = build_tracking_lost_report(request_id, checkin, votes, reason, types, now)
                 incident = await self._report_problem(report)
@@ -167,7 +159,7 @@ class DecisionRecorder:
             tx.hset(untracked_key(trip_id), "since", untracked_since)
             tx.expire(untracked_key(trip_id), ttl)
         else:
-            tx.delete(untracked_key(trip_id))   # trackable again: the streak ends
+            tx.delete(untracked_key(trip_id))
         tx.set(decided_key(trip_id, int(checkin["seq"])), "1", ex=self.s.decided_ttl_s)
         await tx.execute()
 

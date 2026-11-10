@@ -2,19 +2,11 @@
 
     1. Already decided (tripId + seq)?     SQS delivers at least once: skip repeats
     2. Read risk:{travellerId}             normal / elevated
-    3. Ask all 4 detectors, decide         in parallel, decide once (rule-based, decision.py,
-                                           voting.py). Too few real votes -> inconclusive:
-                                           there is no one left to ask.
-       A detector that times out or fails counts as an abstain (detectors.py).
-    4. Record                              alert, risk, dashboard record, mark decided
+    3. Ask all 4 detectors in parallel     voting.py decides
+    4. Record                              alert, risk, dashboard record, mark decided (decision.py)
 
-That is fixed4, the default (REDUNDANCY_MODE). The experiment's other arms (adaptive, fixed2:
-ask a pair first) are in adaptive.py; only step 3 differs.
-
-Redis or Alert Service failures raise. The caller (the SQS consumer) then doesn't delete the
-message, so it comes back after the visibility timeout and any replica retries it.
-Step 3 changes nothing, and step 4 only writes after the alert went out, in one transaction
-(decision.py), so a retry costs at most a repeated report, never a lost check-in.
+Step 3 differs only in the experiment's modes (adaptive.py). A Redis or Alert Service failure
+raises, so the message isn't deleted and is retried.
 """
 import logging
 from dataclasses import dataclass
@@ -65,7 +57,6 @@ class Pipeline:
                 self.detectors, self.decisions, self.redis, self.s, checkin, risk_level, request)
 
         decision = await self.decisions.record(request_id, checkin, votes, d, escalated, situation)
-        # k is logged for every decision: the experiment and the dashboard depend on it.
         log.info("decided %s k=%d escalated=%s risk=%s step=%s -> %s", request_id, len(votes), escalated,
                  risk_level, situation or "-", decision["decision"])
         return Result(outcome="decided", k=len(votes), escalated=escalated, decision=decision,

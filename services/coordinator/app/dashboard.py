@@ -1,11 +1,5 @@
-"""Read side for the dashboard: what decision.py has already written to Redis.
-
-    decisions:recent         last decisions across all travellers (newest first)
-    decisions:{travellerId}  one traveller's last decisions
-    risk:{travellerId}       current risk score / level
-
-Nothing here writes. Entries that can't be parsed are skipped, so one bad record
-can't break the page.
+"""Read-only dashboard data from Redis (decisions:recent, decisions:{travellerId},
+risk:{travellerId}). Unreadable entries are skipped, so one bad record can't break the page.
 """
 import json
 import logging
@@ -35,13 +29,7 @@ async def decisions(redis, traveller_id: str | None = None, limit: int = 50) -> 
 
 
 async def traveller_status(redis) -> list[dict]:
-    """GET /api/status/travellers (contracts/api.md): one row per traveller with a risk score.
-
-    Contract fields travellerId, tripId, riskLevel, detectorsUsed, plus what the dashboard
-    shows: score, calm streak, when it last changed and the latest decision.
-    detectorsUsed is how many were asked last time; nextDetectors is how many the
-    Coordinator will ask next (adaptive mode: 4 while elevated).
-    """
+    """GET /api/status/travellers: one row per traveller with a risk score, elevated first."""
     rows = []
     async for key in redis.scan_iter(match=f"{RISK_PREFIX}*", count=200):
         traveller_id = key[len(RISK_PREFIX):]
@@ -67,7 +55,6 @@ async def traveller_status(redis) -> list[dict]:
             "lastDecision": last.get("decision"),
             "lastSeq": last.get("seq"),
         })
-    # Elevated first, then most recently updated.
     rows.sort(key=lambda r: r["updatedAt"] or "", reverse=True)
     rows.sort(key=lambda r: r["riskLevel"] != ELEVATED)
     return rows

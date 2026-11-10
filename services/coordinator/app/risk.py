@@ -1,23 +1,12 @@
-"""Per-traveller risk score. Pure functions, no I/O. Stored in Redis as risk:{travellerId}
-(contracts/redis-keys.md) and shown on the dashboard. In fixed4 (the default) that's all it does;
-in adaptive mode (the experiment, adaptive.py) it also decides whether 2 or 4 detectors are asked next.
+"""Per-traveller risk score (risk:{travellerId}), shown on the dashboard. In adaptive mode it
+also decides whether 2 or 4 detectors are asked.
 
-After every final decision the score moves towards a signal (exponential moving average):
+After each final decision: score = (1 - alpha) * score + alpha * signal, where signal is 1.0
+for a problem, the problem score for a normal, and 1.0 for an inconclusive caused by failed
+detectors. An inconclusive where the detectors couldn't judge yet leaves the risk unchanged.
 
-    score  = (1 - alpha) * score + alpha * signal
-    signal = 1.0                      decision "problem"
-             problem score (0..1)     decision "normal": a shaky normal nudges risk up
-             1.0                      still inconclusive after every detector *because some
-                                      failed* (timeout, error): we're blind, so look harder
-
-An inconclusive result where the detectors simply couldn't judge yet (the start of a trip,
-when they need a few check-ins of history; poor GPS) leaves the risk unchanged. Otherwise
-every trip would start at elevated risk and ask all detectors for nothing.
-
-The level has hysteresis, so k doesn't flip-flop between 2 and 4:
-  - normal -> elevated as soon as score >= escalate_at (one problem is enough)
-  - elevated -> normal only when score < deescalate_below AND the last `calm_checkins`
-    decisions were all "normal"
+normal -> elevated once score >= escalate_at; back to normal only below deescalate_below and
+after `calm_checkins` normal decisions in a row.
 """
 from dataclasses import dataclass
 
@@ -73,12 +62,10 @@ def signal(d: Decision) -> float:
         return 1.0
     if d.decision == "normal":
         return d.problem_score or 0.0
-    return 1.0   # final inconclusive because detectors failed: keep looking hard
+    return 1.0   # inconclusive because detectors failed
 
 
-# Abstain reasons that mean a detector *failed*, rather than looked and couldn't judge:
-# the Coordinator's "timeout" / "error: ..." (detectors.py) and the detectors' own
-# "internal error: ..." (services/detectors/detectors/app.py).
+# Abstain reasons that mean a detector failed (contracts/api.md), not "can't judge yet".
 FAILURE_REASONS = ("timeout", "error:", "internal error")
 
 
@@ -93,12 +80,11 @@ def detectors_failed(votes: list[dict]) -> bool:
 
 
 def update_risk(prev: Risk, d: Decision, policy: RiskPolicy = RiskPolicy(), failed: bool = True) -> Risk:
-    """`failed`: whether any detector failed for this decision (detectors_failed). Only matters
-    for a final inconclusive; the default keeps that cautious when the caller doesn't know."""
+    """`failed`: whether any detector failed for this decision (detectors_failed)."""
     if d.needs_more_votes:
         return prev   # not a final decision; the Coordinator is still collecting votes
     if d.decision == "inconclusive" and not failed:
-        return prev   # detectors couldn't judge yet (e.g. start of a trip): nothing learned
+        return prev   # detectors couldn't judge yet (e.g. start of a trip)
 
     score = min(1.0, max(0.0, (1 - policy.alpha) * prev.score + policy.alpha * signal(d)))
     streak = prev.calm_streak + 1 if d.decision == "normal" else 0

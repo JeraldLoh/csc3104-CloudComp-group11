@@ -44,35 +44,69 @@ Service) is measured separately by Member 2 in [`evaluation/`](../README.md).
   own case, *off route near another leg*: route-corridor can't see them by definition, so they
   show what the second judge (route-progress) adds. Seeds are drawn until there are 5 that
   leave the corridor; every near-leg one on the way is kept.
+- **C4 crashes real containers.** `compose.c4.yaml` adds a second Coordinator replica on the same
+  queue (as on EKS). `run.py` SIGKILLs one replica every 20 s, alternating, and starts it again
+  5 s later; or stops the Alert Service for 45 s. How often each check-in was decided comes from
+  both replicas' logs, and every decision is compared with the run without crashes.
+- **C5 switches the Coordinator's mode.** `run.py` restarts the Coordinator with each
+  `REDUNDANCY_MODE` in turn (`fixed4`, `adaptive`, `fixed2`), checks from the decisions that it
+  really switched, and leaves it in `fixed4`.
 - No AWS: the numbers describe the design on one machine, not EKS performance.
+
+## Requirements
+
+- **Docker** with Compose v2 (`docker compose`), and about 4 CPUs and 8 GB of memory for it. The
+  first `up --build` pulls and builds every image, which takes a few minutes.
+- **Python 3.10 or newer**, run from the repo root (the scripts import Member 4's simulator from
+  `tools/`).
+- **These ports free on localhost:** 8000 (Coordinator and dashboard), 8004 (Alert Service), 6379
+  (Redis), 9324 (ElasticMQ), 9001-9004 (detectors) and, for C2, 9101-9104 (fault switches).
+- **A machine that stays awake.** C2 and C4 fail, on purpose, if the stack becomes too slow to
+  measure (over 1% of healthy detector calls timing out), which happens when the computer sleeps.
+  On a Mac, prefix the long runs with `caffeinate -dimsu` (`-i` alone doesn't wake a sleeping Mac).
+  On Windows, set *Sleep* to *Never* while plugged in; on Linux, `systemd-inhibit` does the same.
 
 ## Running
 
-From the repo root, with the local stack up in `fixed4` (the default):
+From the repo root. Each block starts the stack the way that experiment needs it;
+`--remove-orphans` stops what another experiment added (C2's switches, C4's second replica).
 
 ```bash
-docker compose -f services/analysis-dev/compose.yaml up --build -d
+python -m venv .venv && . .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install -r evaluation/coordinator/requirements.txt
+python -m pytest evaluation/coordinator/tests     # the scoring definitions (no stack needed)
+
+# C1: one Coordinator calling the detectors directly, in fixed4 (the default)
+docker compose -f services/analysis-dev/compose.yaml up --build -d --remove-orphans
 python evaluation/coordinator/run.py C1           # about 2 minutes; --seeds 1 for a quick check
 
-# C2 needs the fault switches too (restarts the Coordinator pointing at them):
-docker compose -f services/analysis-dev/compose.yaml -f evaluation/coordinator/compose.c2.yaml up --build -d
+# C2: a fault switch in front of each detector (restarts the Coordinator pointing at them)
+docker compose -f services/analysis-dev/compose.yaml -f evaluation/coordinator/compose.c2.yaml up --build -d --remove-orphans
 caffeinate -dimsu python evaluation/coordinator/run.py C2   # about 45 minutes; --seeds 1 takes about 15
-# Keep the Mac fully awake (caffeinate -u wakes the display; -i alone doesn't). If it stops anyway,
-# run the same command again: it resumes after the last condition saved (--fresh starts over).
 
-# C4 needs a second Coordinator replica (compose.c4.yaml; drops the C2 switches):
+# C4: a second Coordinator replica (kills and restarts containers with the docker CLI)
 docker compose -f services/analysis-dev/compose.yaml -f evaluation/coordinator/compose.c4.yaml up --build -d --remove-orphans
-caffeinate -dimsu python evaluation/coordinator/run.py C4   # kills and restarts containers with docker
+caffeinate -dimsu python evaluation/coordinator/run.py C4   # about 5 minutes
 
-# C5 restarts the Coordinator in each REDUNDANCY_MODE itself (alone: it removes C4's second replica),
-# and leaves it in fixed4:
-caffeinate -dimsu python evaluation/coordinator/run.py C5   # about 10 minutes
+# C5: restarts the Coordinator in each mode itself, alone, and leaves it in fixed4
+caffeinate -dimsu python evaluation/coordinator/run.py C5   # about 6 minutes
+
 python evaluation/coordinator/analyse.py          # -> results/summary.json and RESULTS.md
-python -m pytest evaluation/coordinator/tests     # the scoring definitions (no stack needed)
 ```
 
-`run.py` saves each raw run to `results/<experiment>-<time>.json` (not committed, like every
-`results/` folder); `analyse.py` scores the newest run of each experiment and writes
-`RESULTS.md`, which is committed. How C1 is scored is at the top of
-`analyse.py`.
+If C2, C4 or C5 stops part-way, run the same command again: it resumes after the last
+condition saved (`--fresh` starts over). After a Coordinator change, `run.py C2 --only <fault>`
+reruns just that fault and replaces it in a copy of the newest C2 result.
+
+## What to expect when you rerun them
+
+- **Detection results should match [RESULTS.md](RESULTS.md).** The journeys come from fixed
+  simulator seeds and the decisions are deterministic: the same check-ins get the same decisions,
+  so caught / missed, delays (in simulated seconds), false alarms, alerts, and C4's lost /
+  decided twice / changed counts should come out the same.
+- **Timings won't.** Latency (p50 / p95), how many check-ins C4 counts as late, and which crash
+  catches which check-in in flight depend on the machine and on timing.
+- **The raw runs aren't in git.** `run.py` saves each run to `results/<experiment>-<time>.json`
+  (gitignored, like every `results/` folder; a full C2 run is about 100 MB). `analyse.py` scores
+  the newest finished run of each experiment and writes `RESULTS.md`, which is committed. How
+  the decisions are scored is at the top of `analyse.py`.

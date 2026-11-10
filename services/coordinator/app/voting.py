@@ -1,27 +1,11 @@
-"""Rule-based decision over detector votes.
+"""Rule-based decision over the detectors' votes. A missed alert is the unsafe failure, so:
 
-The detectors are diverse: each one checks a different thing:
+  1. Any detector that checks a type (COVERAGE) says "problem" of that type -> problem.
+     A "normal" never cancels it: dwell-time's "normal" means "not stuck", not "on route".
+  2. Otherwise "normal" needs at least `quorum` real votes; fewer -> inconclusive.
 
-    route-corridor   far from the planned path?            -> off_route
-    heading-speed    moving against the route direction?   -> wrong_direction
-    dwell-time       standing in one place too long?       -> long_dwell
-    route-progress   getting closer along the route?       -> off_route, wrong_direction, missed_stop
-
-A missed alert is the unsafe failure, so the rules lean towards alerting:
-
-  1. Any detector that checks a problem type says "problem" of that type -> problem.
-     off_route alerts if route-corridor OR route-progress says so; wrong_direction if
-     heading-speed OR route-progress; missed_stop if route-progress; long_dwell if dwell-time.
-     A "normal" never cancels a problem: dwell-time's "normal" means "not stuck", not "on route".
-  2. Inconclusive: too few detectors answered to call it normal. The Coordinator asks
-     the rest if some weren't asked yet (needs_more_votes).
-
-A silenced detector (reliability 0 in detector:weights, set by an operator) is ignored
-completely: neither its "problem" nor its "normal" counts, as if it hadn't answered.
-A problem vote is ignored if the detector doesn't check that type (COVERAGE), or if its weight is 0.
-weight = vote confidence x detector reliability (detector:weights, default 1.0). When several types are raised at once, each one
-is reported (one problem-report per type, so the caregiver gets an incident for each); the
-strongest claim (highest weight) is the decision's problem_type and comes first.
+weight = vote confidence x detector reliability (detector:weights, default 1.0). A silenced
+detector (reliability 0) is ignored completely. Every type raised is reported, strongest first.
 """
 from dataclasses import dataclass
 
@@ -31,8 +15,7 @@ COUNTED = {"problem", "normal"}
 UNKNOWN = "unknown"             # a "problem" vote without a type
 ANY = "*"
 
-# Which problem types each detector actually checks (contracts/problem-definitions.md).
-# Unlisted detectors are treated as generalists. A "problem" without a type counts from anyone.
+# Which problem types each detector checks (contracts/problem-definitions.md).
 COVERAGE: dict[str, frozenset] = {
     "route-corridor": frozenset({"off_route"}),
     "heading-speed": frozenset({"wrong_direction"}),
@@ -51,8 +34,7 @@ class Decision:
     counted: int                   # votes that took part (not abstains)
     reason: str | None = None      # why inconclusive: "quorum" | "no_weight"
     needs_more_votes: bool = False # inconclusive and some detectors weren't asked yet
-    claims: tuple = ()             # every problem type raised, strongest first: ((type, weight), ...).
-                                   # Each one is reported; problem_type is the first.
+    claims: tuple = ()             # every problem type raised, strongest first: ((type, weight), ...)
     silenced: tuple = ()           # detectors that answered but were ignored (reliability 0), sorted
 
 
@@ -112,10 +94,9 @@ def aggregate(votes: list[dict], reliability: dict[str, float] | None = None, qu
         problem_type, weight = reported[0]
         return Decision("problem", problem_type, weight, weight, len(counted), claims=reported, silenced=off)
 
-    # Rules 2 and 3: "normal" needs enough detectors to have actually looked.
+    # Rule 2: "normal" needs enough detectors to have actually looked.
     if len(counted) < quorum:
         return Decision("inconclusive", None, 0.0, None, len(counted), "quorum", can_ask_more, silenced=off)
     if sum(vote_weight(v, reliability) for v in counted) == 0:
-        # Votes were cast but all with zero confidence or zero reliability.
         return Decision("inconclusive", None, 0.0, None, len(counted), "no_weight", can_ask_more, silenced=off)
     return Decision("normal", None, 1.0, 0.0, len(counted), silenced=off)

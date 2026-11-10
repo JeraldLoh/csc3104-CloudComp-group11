@@ -1,19 +1,8 @@
 """The detectors: which exist, where they are, and calling them:
 POST http://detector-<name>:8000/internal/detect (contracts/api.md).
 
-All chosen detectors are called at the same time, so a decision waits for the slowest
-one, not the sum. Each call has an overall deadline (500 ms by contract): httpx's own
-timeout applies per phase (connect, read, ...), so a detector that trickles its answer
-could otherwise take much longer.
-
-The deadline only stops the waiting: the request itself is never cancelled. Cancelling an
-httpx request part-way leaves its pooled connection marked in use for good (httpcore 1.0), so
-a burst of slow detectors used to use up the pool, after which every call and every alert
-failed until the Coordinator restarted. A late request instead runs on in the background
-until its own httpx timeout ends it, and its connection goes back to the pool.
-
-A detector that is slow, down, errors or answers garbage becomes an "abstain" vote.
-Nothing here raises: one bad detector can never block or crash the pipeline.
+All chosen detectors are called at the same time, each with a 500 ms deadline. A detector
+that is slow, down, errors or answers garbage becomes an "abstain" vote; nothing here raises.
 """
 import asyncio
 import logging
@@ -88,12 +77,12 @@ class DetectorClient:
         task = asyncio.ensure_future(self._post(detector_id, request))
         task.add_done_callback(_ignore_late)
         try:
-            # Wait up to the deadline without cancelling the request (see the top of this file).
+            # Not wait_for: cancelling an httpx request leaks its pooled connection.
             done, _ = await asyncio.wait({task}, timeout=self.timeout_s)
             if not done:
                 raise asyncio.TimeoutError
             vote = task.result()
-        except Exception as e:  #any failure is an abstain
+        except Exception as e:  # any failure is an abstain
             ms = int((time.perf_counter() - start) * 1000)
             reason = _reason(e)
             log.warning("detector %s abstained for %s (%s, %d ms)", detector_id, request_id, reason, ms)

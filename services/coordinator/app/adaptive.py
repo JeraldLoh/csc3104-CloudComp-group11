@@ -1,24 +1,17 @@
-"""The experiment (evaluation C5): asking fewer detectors. Not used in fixed4, the default.
+"""Evaluation C5: asking fewer detectors. Not used in fixed4, the default.
 
-REDUNDANCY_MODE picks the arm; pipeline.py calls ask_pair_first() for any mode but fixed4:
-
-    adaptive   k = 2 when the traveller's risk is normal, k = 4 (every detector) when elevated
+    adaptive   k = 2 when the traveller's risk is normal, 4 when elevated
     fixed2     k = 2 always
 
-Either way, too few real votes, or still undecided, asks the remaining detectors too.
+Too few real votes, or still undecided, asks the remaining detectors too.
 
-Which pair is asked at k = 2 depends on PAIR_STRATEGY:
-
-    step   (default) route-corridor plus the detector that fits the current journey step:
-               walking                      + heading-speed   (wrong direction)
-               bus/train step, slow         + dwell-time      (waiting too long for it)
-               bus/train step, moving       + route-progress  (missed stop)
-               step unknown                 + route-progress  (covers the most problem types)
-           A bus/train step covers both waiting at the stop and riding, so the check-in's
-           speed tells them apart.
-    fixed  the same pair for every check-in (NORMAL_PAIR, default route-corridor + dwell-time).
-
-The pair choice and escalation rules are pure functions; ask_pair_first() does the calls.
+The pair at k = 2 (PAIR_STRATEGY):
+    step   route-corridor plus one that fits the journey step:
+               walking            + heading-speed
+               bus/train, slow    + dwell-time      (waiting at the stop)
+               bus/train, moving  + route-progress  (riding)
+               unknown            + route-progress
+    fixed  NORMAL_PAIR for every check-in.
 """
 import json
 import logging
@@ -32,7 +25,6 @@ log = logging.getLogger("coordinator")
 MODES = ("adaptive", "fixed2", "fixed4")
 STRATEGIES = ("step", "fixed")
 
-# Step modes in contracts/examples/route.json; "train" as the detectors use it, "mrt" just in case.
 TRANSIT_MODES = frozenset({"bus", "train", "mrt"})
 WALKING_PAIR = ("route-corridor", "heading-speed")
 WAITING_PAIR = ("route-corridor", "dwell-time")
@@ -56,7 +48,7 @@ def step_mode(route_json: str | None, step_index) -> str | None:
 
 
 def pair_for_step(mode: str | None, speed_mps, waiting_below_mps: float = 2.0) -> tuple[tuple[str, ...], str]:
-    """(pair, situation) for the journey step. situation is for logs and the dashboard."""
+    """(pair, situation) for the journey step."""
     if mode == "walk":
         return WALKING_PAIR, "walking"
     if mode in TRANSIT_MODES:
@@ -70,7 +62,7 @@ def pair_for_step(mode: str | None, speed_mps, waiting_below_mps: float = 2.0) -
 
 def choose_detectors(risk_level: str, mode: str = "adaptive",
                      pair: tuple[str, ...] = DEFAULT_PAIR) -> list[str]:
-    """Detectors to call first. `mode` is REDUNDANCY_MODE (the experiment's three arms)."""
+    """Detectors to call first. `mode` is REDUNDANCY_MODE."""
     if mode not in MODES:
         raise ValueError(f"unknown REDUNDANCY_MODE {mode!r}; expected one of {MODES}")
     if mode == "fixed4" or (mode == "adaptive" and risk_level == "elevated"):
@@ -98,7 +90,6 @@ async def pair_for(redis, s: Settings, checkin: dict) -> tuple[tuple[str, ...], 
         raise ValueError(f"unknown PAIR_STRATEGY {s.pair_strategy!r}; expected one of {STRATEGIES}")
     if s.pair_strategy == "fixed":
         return s.normal_pair, "fixed"
-    # The step comes with the check-in; its mode from the trip's route (Journey Service).
     route = await redis.get(f"trip:{checkin['tripId']}:route")
     mode = step_mode(route, checkin.get("stepIndex"))
     return pair_for_step(mode, checkin.get("speedMps"), s.waiting_below_mps)
@@ -106,18 +97,17 @@ async def pair_for(redis, s: Settings, checkin: dict) -> tuple[tuple[str, ...], 
 
 async def ask_pair_first(detectors: DetectorClient, decisions, redis, s: Settings, checkin: dict,
                          risk_level: str, request: dict) -> tuple[list[dict], Decision, bool, str | None]:
-    """adaptive / fixed2: a pair first, then the rest if the pair can't decide.
-    Returns (votes, decision, escalated, situation); situation is why that pair (None = all asked)."""
+    """A pair first, then the rest if the pair can't decide. Returns (votes, decision, escalated,
+    situation); situation is None when all were asked."""
     request_id = request["requestId"]
     asked = choose_detectors(risk_level, s.redundancy_mode, s.normal_pair)
     situation = None
-    if len(asked) == 2:   # a pair, not everyone: pick the one that fits the journey step
+    if len(asked) == 2:
         pair, situation = await pair_for(redis, s, checkin)
         asked = choose_detectors(risk_level, s.redundancy_mode, pair)
     votes = await detectors.call_many(asked, request)
     escalated = False
 
-    # Too few real votes: no point deciding yet.
     if needs_escalation(votes, s.quorum):
         extra = remaining(asked)
         log.info("escalating %s: too few real votes, asking %s", request_id, extra)
@@ -127,7 +117,7 @@ async def ask_pair_first(detectors: DetectorClient, decisions, redis, s: Setting
 
     d = await decisions.decide(votes)
 
-    # Still can't call it (e.g. the answers carry no weight): more evidence instead of a guess.
+    # Still undecided (e.g. the answers carry no weight): ask the rest.
     extra = remaining(asked)
     if d.needs_more_votes and extra:
         log.info("escalating %s: %s, asking %s", request_id, d.reason, extra)

@@ -1,21 +1,13 @@
-"""Tracking lost: for some problem types couldn't be checked at all.
+"""Tracking lost: some problem types couldn't be checked, so the caregiver is told to ask
+the traveller where they are.
 
-So the caregiver knows to ask the traveller with "Where are you?" (Alert Service, Member 5).
-
-A check-in leaves types unchecked (unchecked()) when:
-  - route missing: the decision is inconclusive and the trip's route isn't in Redis, so no
-    detector can judge anything; or
-  - poor GPS (untrackable()): the decision is inconclusive, GPS accuracy is missing or worse
-    than GPS_MAX_ACCURACY_M (the detectors' own limit), and the step is not underground: no GPS
-    is expected there, and the Heartbeat Monitor already allows for it. Same rule as the
-    Heartbeat Monitor: `underground: true`, or a train step with `underground: null` (OneMap
-    doesn't say which stretches are in a tunnel); or
-  - detectors failed: every detector that checks a type (voting.COVERAGE) failed (timeout,
-    error; risk.failed), e.g. dwell-time down leaves long_dwell unchecked while the others
-    still decide. Kubernetes restarts a crashed pod; this catches a detector that is up but
-    not answering properly. A silenced detector (reliability 0) counts as failed too: it
-    answers, but nothing it says is used, so its types are just as unchecked.
-The streak starts at the first such check-in (untracked:{tripId}) and any fully checked one ends it.
+A check-in leaves types unchecked when:
+  - route missing: inconclusive, and the trip's route isn't in Redis;
+  - poor GPS: inconclusive, GPS worse than GPS_MAX_ACCURACY_M, and not underground
+    (no GPS is expected there);
+  - detectors failed or silenced: every detector that checks a type failed or has
+    reliability 0 (e.g. dwell-time down leaves long_dwell unchecked).
+The streak (untracked:{tripId}) starts at the first such check-in; a fully checked one ends it.
 """
 import json
 from datetime import datetime
@@ -55,7 +47,7 @@ def step_underground(route_json: str | None, step_index) -> bool:
     if step is None:
         return False
     flag = step.get("underground")
-    if flag is None:
+    if flag is None:   # OneMap doesn't say which train stretches are in a tunnel
         return str(step.get("mode") or "").lower() in ("train", "mrt")
     return bool(flag)
 
