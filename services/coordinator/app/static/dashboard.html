@@ -402,8 +402,7 @@ function renderTravellers(rows) {
         el("div", { class: "id" }, r.travellerId),
         el("div", { class: "meta" }, `score ${(Number(r.riskScore) || 0).toFixed(2)} · calm ${r.calmStreak ?? "–"}`
           + (r.lastDecision ? ` · last #${r.lastSeq} ${r.lastDecision}` : ""))),
-      el("div", { class: "tags" }, riskPill(r.riskLevel),
-        pill("accent", icon("layers", "sm"), `next k ${r.nextDetectors ?? "–"}`)));
+      el("div", { class: "tags" }, riskPill(r.riskLevel)));
     const toggle = () => setFilter(r.travellerId === traveller ? null : r.travellerId);
     item.addEventListener("click", toggle);
     item.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } });

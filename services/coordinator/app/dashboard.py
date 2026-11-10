@@ -50,7 +50,6 @@ async def traveller_status(redis) -> list[dict]:
             "detectorsUsed": used,
             "riskScore": round(risk.score, 4),
             "calmStreak": risk.calm_streak,
-            "nextDetectors": 4 if risk.level == ELEVATED else 2,
             "updatedAt": h.get("updatedAt"),
             "lastDecision": last.get("decision"),
             "lastSeq": last.get("seq"),

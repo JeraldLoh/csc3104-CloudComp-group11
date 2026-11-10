@@ -1,8 +1,3 @@
-"""Dashboard read API (/api/status/travellers, /api/decisions) and page, over HTTP.
-
-Decisions are produced the real way (DecisionRecorder.decide + record), so the API is tested
-against exactly what the pipeline writes.
-"""
 import asyncio
 import json
 from datetime import datetime, timedelta, timezone
@@ -117,16 +112,14 @@ def test_status_has_the_contract_fields():
     # contracts/api.md: [{"travellerId", "tripId", "riskLevel", "detectorsUsed"}]
     assert {k: row[k] for k in ("travellerId", "tripId", "riskLevel", "detectorsUsed")} == \
         {"travellerId": "U-1", "tripId": "T-1", "riskLevel": "normal", "detectorsUsed": 2}
-    assert row["nextDetectors"] == 2
     assert row["lastDecision"] == "normal" and row["lastSeq"] == 1
 
 
-def test_status_after_a_problem_is_elevated_with_4_next():
+def test_status_after_a_problem_is_elevated():
     [r] = scenario([("U-1", "T-1", 1, PROBLEM, False)], [("GET", "/api/status/travellers")])
     [row] = r.json()
     assert row["riskLevel"] == "elevated"
     assert row["riskScore"] == 0.5
-    assert row["nextDetectors"] == 4
     assert row["calmStreak"] == 0
 
 
@@ -146,7 +139,7 @@ def test_status_follows_risk_back_to_normal():
     rows = [("U-1", "T-1", 1, PROBLEM, False)] + [("U-1", "T-1", s, NORMAL, False) for s in (2, 3, 4)]
     [r] = scenario(rows, [("GET", "/api/status/travellers")])
     [row] = r.json()
-    assert row["riskLevel"] == "normal" and row["nextDetectors"] == 2 and row["calmStreak"] == 3
+    assert row["riskLevel"] == "normal" and row["calmStreak"] == 3
 
 
 # --- the page ---------------------------------------------------------------------------------------
