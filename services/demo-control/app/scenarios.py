@@ -1,8 +1,5 @@
-"""Journey scenarios for the demo panel. Pure, no I/O.
-
-Each scenario is a list of check-ins on the example trip (contracts/examples/route.json:
-step 0 walk to Punggol Int, step 1 bus to Opp Block 221). Positions and speeds are chosen
-so the Coordinator picks the matching pair: walking, waiting at the stop, riding.
+"""Journey scenarios for the demo panel, on the example trip (contracts/examples/route.json:
+step 0 walk to Punggol Int, step 1 bus to Opp Block 221).
 """
 from dataclasses import dataclass
 from datetime import datetime, timezone

@@ -1,11 +1,9 @@
-# C4: a second Coordinator replica, so killing one shows what SQS redelivery does (as on EKS,
-# where the Coordinator runs 2-4 replicas on the same queue).
+# C4: a second Coordinator replica on the same queue, as on EKS.
 #
 #   docker compose -f services/analysis-dev/compose.yaml -f evaluation/coordinator/compose.c4.yaml up --build -d
 #
-# Paths are relative to services/analysis-dev (the first file). Same settings as `coordinator`
-# in compose.yaml, without its port (only one container can have 8000). Back to one replica:
-# run compose.yaml on its own with --remove-orphans.
+# Paths are relative to services/analysis-dev (the first file). Same settings as `coordinator`,
+# without its port.
 
 services:
   coordinator-2:

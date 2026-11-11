@@ -2,24 +2,14 @@
 
     python evaluation/coordinator/analyse.py
 
-Scores each "judge" against the Coordinator's decision and each detector's own vote taken 
-as if it were the decision.
-  - Detected: a journey with a problem counts as caught if the judge says that problem, of the
-    right type, on at least one check-in labelled with it. Delay: seconds from the first
-    labelled check-in to the first one caught.
-  - False alarm: "problem" on a check-in whose label is normal (poor_gps check-ins, labelled
-    "abstain", must not alert either).
-  - Wrong type: "problem" during a real problem, but not of its type (the right type is not
-    among those raised).
-  The Coordinator reports every problem type raised (one alert each), so it is judged on all of
-  them, not only the strongest.
+Each "judge" (the Coordinator's decision, and each detector's vote on its own) is scored:
+  - Detected: the right problem type raised on at least one check-in labelled with it.
+    Delay: seconds from the first labelled check-in to the first caught.
+  - False alarm: "problem" on a check-in labelled normal or poor GPS.
+  - Wrong type: "problem" during a real problem, but none of the types raised is the right one.
   - No answer: abstain (a detector) or inconclusive (the Coordinator).
-  - Alerts: incidents the Alert Service actually created; on journeys with no problem, every
-    one is an alert a caregiver would get for nothing.
-A detector is only scored on the problem types it checks (contracts/problem-definitions.md).
-Journeys are grouped by case: their scenario, except off_route journeys that never leave the
-corridor (they wander towards another leg of the route), which are a case of their own
-(stack.case_of).
+  - Alerts: incidents the Alert Service created; on journeys without a problem, each is a false alert.
+The Coordinator is judged on every type it raised; a detector only on the types it checks.
 """
 import json
 import statistics
@@ -30,11 +20,10 @@ HERE = Path(__file__).resolve().parent
 RESULTS = HERE / "results"
 
 PROBLEMS = ("off_route", "wrong_direction", "long_dwell")
-# Problem cases, as columns. off_route_near is labelled off_route but stays within 100 m of the route.
 CASES = ("off_route", "off_route_near", "wrong_direction", "long_dwell")
 CASE_NAMES = {"off_route": "off route (leaves the corridor)", "off_route_near": "off route near another leg",
               "wrong_direction": "wrong direction", "long_dwell": "long dwell"}
-JUDGES =("combined", "route-corridor", "heading-speed", "dwell-time", "route-progress")
+JUDGES = ("combined", "route-corridor", "heading-speed", "dwell-time", "route-progress")
 COVERS = {
     "combined": set(PROBLEMS),
     "route-corridor": {"off_route"},
@@ -43,7 +32,7 @@ COVERS = {
     "route-progress": {"off_route", "wrong_direction"},
 }
 NOT_PROBLEMS = {"normal", "abstain"}
-TRACKING_LOST = "tracking_lost"   # raised by the Coordinator itself after 2 min of types it couldn't check
+TRACKING_LOST = "tracking_lost"
 
 
 def answer(row: dict, judge: str) -> tuple[str, set]:
@@ -53,7 +42,6 @@ def answer(row: dict, judge: str) -> tuple[str, set]:
         return "none", set()
     if judge == "combined":
         verdict = d["decision"]
-        # Every type the Coordinator reported (one alert each); older records have only the strongest.
         types = {a["problemType"] for a in d.get("alerts") or []} or {d.get("problemType")}
     else:
         vote = next((v for v in d["votes"] if v["detectorId"] == judge), None)
@@ -95,7 +83,6 @@ def score_journey(journey: dict, judge: str) -> dict:
         out["problem"] = journey.get("case") or problem
         out["detected"] = first_hit is not None
         out["delayS"] = _seconds(first_label, first_hit) if first_hit else None
-        # Any alert at all, even of another type: the caregiver is told something is wrong.
         out["anyDelayS"] = _seconds(first_label, first_any) if first_any else None
     return out
 
@@ -120,15 +107,12 @@ def c1(data: dict) -> dict:
         judges[judge] = {
             "checkins": checkins,
             "falseAlarms": sum(s["falseAlarms"] for s in scores),
-            # per check-in where nothing was wrong: the only ones a false alarm can happen on
             "falseAlarmRate": round(sum(s["falseAlarms"] for s in scores) / not_problem, 4) if not_problem else 0.0,
             "wrongType": sum(s["wrongType"] for s in scores),
             "noAnswerRate": round(sum(s["noAnswer"] for s in scores) / checkins, 4),
             "problems": per_problem,
         }
-    # What caregivers actually got: the Alert Service's incidents per journey. tracking_lost ("we
-    # can't fully check on them": poor GPS, detectors failed or route missing for 2 min) is counted
-    # on its own, per scenario: on poor_gps journeys it's the right answer, not a false alert.
+    # What caregivers got. tracking_lost is counted on its own: on poor_gps it's the right answer.
     alerts = {"withoutProblem": {"journeys": 0, "falseAlerts": 0}, "cases": {}, "trackingLost": {}}
     for j in journeys:
         problem = next((r["expected"] for r in j["rows"] if r["expected"] in PROBLEMS), None)
@@ -214,8 +198,7 @@ OUTAGE_REASONS = ("detectors failed", "detectors silenced")
 
 
 def outage_noticed(journey: dict) -> bool:
-    """The Coordinator told the caregiver it couldn't check (tracking_lost) because detectors
-    failed or were silenced (not because of poor GPS)."""
+    """tracking_lost was sent because detectors failed or were silenced."""
     return any((r["decision"] or {}).get("uncheckedReason") in OUTAGE_REASONS
                and any(a.get("problemType") == TRACKING_LOST for a in (r["decision"] or {}).get("alerts") or [])
                for r in journey["rows"])
@@ -346,8 +329,7 @@ def c4_markdown(s: dict) -> str:
 
 
 def c5(data: dict) -> dict:
-    """Each REDUNDANCY_MODE scored like C1 (the Coordinator's decision only: in adaptive a detector
-    isn't always asked, so detector-alone columns wouldn't compare), plus what it cost in calls."""
+    """Each REDUNDANCY_MODE scored like C1 (the Coordinator only), plus its detector calls."""
     modes = {c["mode"]: c for c in data["conditions"]}
     base = {_key(j): j for j in modes["fixed4"]["journeys"]} if "fixed4" in modes else {}
     out = []
@@ -355,7 +337,7 @@ def c5(data: dict) -> dict:
         s = c1({"runId": data["runId"], "seeds": data["seeds"], "journeys": c["journeys"]})
         combined, alerts = s["judges"]["combined"], s["alerts"]
         decided = [r["decision"] for j in c["journeys"] for r in j["rows"] if r["decision"]]
-        # Check-ins where fixed4 raised the labelled problem and this mode didn't: what asking fewer missed.
+        # Check-ins where fixed4 raised the labelled problem and this mode didn't.
         missed = 0
         for j in c["journeys"]:
             b = base.get(_key(j))

@@ -1,20 +1,13 @@
-"""Demo control panel (local development only, never deployed).
+"""Demo control panel (local only, never deployed): drives the local stack from a browser.
 
-Lets a presenter drive the local stack from a browser instead of the command line:
-
-GET  /                      the panel: buttons on top, the dashboard embedded below
+GET  /                      the panel, with the dashboard embedded
 GET  /api/demo/status       scenarios, whether one is running, last seq sent
 POST /api/demo/run          {"scenario": "walk"}  sends that scenario's check-ins, one every INTERVAL_S
 POST /api/demo/duplicate    sends the last check-in again (same seq: the Coordinator skips it)
 POST /api/demo/service      {"target": "alert-service", "action": "stop" | "start"}
-                            stops or starts that container, through the Docker socket
-POST /api/demo/fault        {"target": "detector-route", "delayMs": 2000}   sent to the fault switch in
-                            front of that detector (only when started with compose.c2.yaml)
-POST /api/demo/reset        clears Redis, re-seeds the trip, clears the Alert Service's incidents
+POST /api/demo/fault        {"target": "detector-route", "delayMs": 2000}   (needs compose.c2.yaml)
+POST /api/demo/reset        clears Redis, re-seeds the trip, clears the incidents
 
-It stands in for the Check-in Service (Member 2) the same way send_checkin.py does: it writes
-trip:{id}:recent and :context to Redis (the detectors read them), then puts the check-in on
-careroute-checkins.
 """
 import asyncio
 import json
@@ -37,10 +30,7 @@ logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(asctime)s %(
 log = logging.getLogger("demo-control")
 
 PAGE = Path(__file__).parent / "static" / "demo.html"
-# Services the panel may stop or start. Compose service names.
 SERVICE_TARGETS = {"alert-service", "detector-route", "detector-heading", "detector-dwell", "detector-progress"}
-# Detectors the panel may send fault orders to, and the fault switch in front of each
-# (services/fault-switch, evaluation/coordinator/compose.c2.yaml): the real detector stays behind it.
 SWITCHES = {"detector-route": "switch-route", "detector-heading": "switch-heading",
             "detector-dwell": "switch-dwell", "detector-progress": "switch-progress"}
 SERVICE_LABEL = "com.docker.compose.service"
@@ -57,12 +47,11 @@ class Settings:
     route_file: str = field(default_factory=lambda: os.getenv("ROUTE_FILE", "/tools/route.json"))
     interval_s: float = field(default_factory=lambda: float(os.getenv("INTERVAL_S", "1.5")))
     dashboard_url: str = field(default_factory=lambda: os.getenv("DASHBOARD_URL", "http://localhost:8000/dashboard"))
-    # Member 5's caregiver app (Alerts tab), shown beside the dashboard. Started with npm, not compose.
+
     caregiver_url: str = field(default_factory=lambda: os.getenv("CAREGIVER_URL", "http://localhost:5174/#alerts"))
-    # Stop/start buttons: the containers of this compose project, through the Docker socket.
     compose_project: str = field(default_factory=lambda: os.getenv("COMPOSE_PROJECT", "careroute-analysis"))
     docker_socket: str = field(default_factory=lambda: os.getenv("DOCKER_SOCKET", "/var/run/docker.sock"))
-    # Reset clears the Alert Service's incidents in local DynamoDB. Unset: skipped.
+    # Unset: reset doesn't clear the incidents.
     dynamodb_endpoint_url: str | None = field(default_factory=lambda: os.getenv("DYNAMODB_ENDPOINT_URL") or None)
     incidents_table: str = field(default_factory=lambda: os.getenv("INCIDENTS_TABLE", "careroute-incidents"))
 
@@ -82,8 +71,8 @@ class DemoControl:
         self.sqs = sqs
         self.http = http
         self.s = s
-        self.docker = docker        # base_url http://docker, over the Docker socket; None: no buttons
-        self.dynamodb = dynamodb    # local DynamoDB of the real Alert Service; None: nothing to clear
+        self.docker = docker
+        self.dynamodb = dynamodb
         self.running: str | None = None
         self._task: asyncio.Task | None = None
         self._queue_url: str | None = None
@@ -145,7 +134,7 @@ class DemoControl:
         return checkin
 
     async def fault(self, target: str, body: dict) -> tuple[int, dict]:
-        """Set the fault switch in front of this detector. No switch: the stack runs without them."""
+        """Set the fault switch in front of this detector."""
         switch = SWITCHES[target]
         try:
             r = await self.http.post(f"http://{switch}:8000/control", json=body, timeout=3)
@@ -177,7 +166,7 @@ class DemoControl:
                 for name in sorted(SERVICE_TARGETS) if name in found}
 
     async def switch(self, target: str, action: str) -> tuple[int, dict]:
-        """Stop or start a service's container(s): a real outage, not a simulated one."""
+        """Stop or start a service's container(s)."""
         if self.docker is None:
             return 503, {"error": {"code": "no_docker", "message": "the Docker socket isn't mounted"}}
         try:
@@ -217,7 +206,7 @@ class DemoControl:
         await self.redis.set(f"trip:{t}:route", json.dumps({"steps": route["steps"], "path": route["path"]}), ex=86400)
         await self.redis.hset(f"trip:{t}:context", mapping={
             "travellerId": self.s.traveller_id, "stepIndex": 0, "routeVersion": route["version"], "status": "active"})
-        if self.dynamodb is not None:   # the real Alert Service keeps incidents in DynamoDB
+        if self.dynamodb is not None:
             try:
                 log.info("cleared %d incidents", await asyncio.to_thread(self._clear_incidents))
             except Exception as e:  # noqa: BLE001 - table not created yet
@@ -316,7 +305,7 @@ def create_app(control: DemoControl | None = None, s: Settings | None = None) ->
     async def fault(body: FaultBody, request: Request):
         if body.target not in SWITCHES:
             return error(404, "unknown_target", f"can't send faults to {body.target!r}")
-        payload ={k: v for k, v in {"mode": body.mode, "delayMs": body.delayMs}.items() if v is not None}
+        payload = {k: v for k, v in {"mode": body.mode, "delayMs": body.delayMs}.items() if v is not None}
         if not payload:
             return error(422, "invalid_request", "give mode or delayMs")
         code, result = await request.app.state.control.fault(body.target, payload)

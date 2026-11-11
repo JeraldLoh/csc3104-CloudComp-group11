@@ -65,6 +65,11 @@ Service) is measured separately by Member 2 in [`evaluation/`](../README.md).
   measure (over 1% of healthy detector calls timing out), which happens when the computer sleeps.
   On a Mac, prefix the long runs with `caffeinate -dimsu` (`-i` alone doesn't wake a sleeping Mac).
   On Windows, set *Sleep* to *Never* while plugged in; on Linux, `systemd-inhibit` does the same.
+- **Enough free CPU.** The same check stops the run if other containers or programs leave the
+  stack short of CPU: `30 of 2472 votes from healthy detectors timed out` means it was. Stop other
+  Docker containers (`docker ps`), give Docker more CPUs (Docker Desktop: *Settings > Resources*),
+  or set `PARALLEL = 4` in `run.py` (journeys at once; the run takes longer, the detection results
+  are the same). Then run the same command again.
 
 ## Running
 

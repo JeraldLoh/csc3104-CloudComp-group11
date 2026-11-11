@@ -1,8 +1,5 @@
-"""Talks to the local stack (services/analysis-dev) the way the rest of CareRoute does.
-
-Check-ins go in like the Check-in Service sends them: trip:{id}:recent and :context in Redis
-(Member 4's simulator helpers), then the check-in on careroute-checkins. Results come out where
-the system keeps them: the Coordinator's decision log in Redis and the Alert Service's incidents.
+"""Talks to the local stack (services/analysis-dev): check-ins go in as the Check-in Service sends
+them, results come out of the Coordinator's decision log in Redis and the Alert Service.
 """
 import json
 import os
@@ -19,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from tools.simulator.geometry import distance_m                                  # noqa: E402
-from tools.simulator.replay import record_checkin, seed_trip                     # noqa: E402  (Member 4's)
+from tools.simulator.replay import record_checkin, seed_trip                     # noqa: E402
 from tools.simulator.route import build_route, build_track                       # noqa: E402
 from tools.simulator.scenarios import OFF_ROUTE_LABEL_M, generate, strip_labels   # noqa: E402
 
@@ -32,7 +29,6 @@ ALERT_URL = os.getenv("ALERT_SERVICE_URL", "http://localhost:8004")
 QUEUE = os.getenv("CHECKINS_QUEUE", "careroute-checkins")
 TTL_S = 86400
 DETECTORS = ("route-corridor", "heading-speed", "dwell-time", "route-progress")
-# C2's fault switches (compose.c2.yaml), one in front of each real detector.
 SWITCH_URLS = {"route-corridor": "http://localhost:9101", "dwell-time": "http://localhost:9102",
                "heading-speed": "http://localhost:9103", "route-progress": "http://localhost:9104"}
 WEIGHTS_KEY = "detector:weights"
@@ -57,8 +53,7 @@ def get_json(url: str, timeout: float = 5):
 
 
 def journey(scenario: str, seed: int, run_id: str) -> list[dict]:
-    """A labelled simulated journey (with phone-like gaps and missing fields) under its own
-    trip and traveller, so runs never share risk, dedup markers or incidents."""
+    """A labelled simulated journey under its own trip and traveller, so runs share nothing."""
     trip, traveller = f"T-{run_id}-{scenario}-{seed}", f"U-{run_id}-{scenario}-{seed}"
     return [{**c, "tripId": trip, "travellerId": traveller} for c in generate(scenario, seed, browser=True)]
 
@@ -68,12 +63,7 @@ NEAR_LEG = "off_route_near"   # off_route, but never more than 100 m from some p
 
 def case_of(scenario: str, checkins: list[dict]) -> tuple[str, float | None]:
     """The case a journey is scored under, and (off_route only) the farthest it got from the route.
-
-    The simulator labels off_route once the traveller is 100 m sideways from where they should
-    be. The contract (and route-corridor) measure to the nearest point of the whole route. A walk
-    towards another leg of the route (the road north to the bus stop) is labelled off_route but
-    never leaves the corridor: route-corridor can't see it by definition, only route-progress
-    can. Those journeys are scored as their own case, so the two kinds aren't mixed."""
+    An off_route journey that never leaves the 100 m corridor is its own case (README.md)."""
     if scenario != "off_route":
         return scenario, None
     labelled = [c for c in checkins if c["expected"] == "off_route"]
@@ -165,8 +155,7 @@ class Stack:
     # --- C5: the Coordinator in another REDUNDANCY_MODE -----------------------------------------
 
     def use_mode(self, mode: str, ready_s: float = 60) -> None:
-        """Restart the Coordinator with REDUNDANCY_MODE=mode, as the only replica: --remove-orphans
-        also stops C4's second replica and C2's switches, which would otherwise keep their mode."""
+        """Restart the Coordinator with REDUNDANCY_MODE=mode, as the only replica."""
         subprocess.run(["docker", "compose", "-f", str(COMPOSE_FILE), "up", "-d", "--remove-orphans", "coordinator"],
                        env={**os.environ, "REDUNDANCY_MODE": mode}, capture_output=True, text=True, check=True)
         end = time.monotonic() + ready_s
@@ -194,9 +183,8 @@ class Stack:
 
 
 def play(stack: Stack, checkins: list[dict], timeout_s: float = 10) -> list[dict]:
-    """Send a journey one check-in at a time, each only after the previous one was decided, as
-    a phone checking in every 10 s would (the detectors read the trip's recent check-ins, so
-    they must not see later ones early). One row per check-in."""
+    """Send a journey one check-in at a time, each after the previous one was decided, so the
+    detectors never see later check-ins early. One row per check-in."""
     stack.start_trip(checkins[0])
     rows = []
     for c in checkins:

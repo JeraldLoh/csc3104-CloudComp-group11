@@ -10,21 +10,8 @@
     python evaluation/coordinator/run.py C5                 # fixed4 vs adaptive vs fixed2 (restarts the
                                                             # Coordinator in each mode, then back in fixed4)
 
-C2, C4 and C5 take a while, so each finished condition is saved to results/<experiment>-progress.json
-at once. If the run stops (laptop asleep, stack too slow), running it again with the same --seeds
-resumes from the next condition; the progress file is removed when all of them are done.
-
-Needs the local stack (services/analysis-dev) with the real detectors, in fixed4 mode:
-
-    docker compose -f services/analysis-dev/compose.yaml up --build -d                  # C1
-    docker compose -f services/analysis-dev/compose.yaml \\
-                   -f evaluation/coordinator/compose.c2.yaml up --build -d               # C2 (fault switches)
-    docker compose -f services/analysis-dev/compose.yaml \\
-                   -f evaluation/coordinator/compose.c4.yaml up --build -d               # C4 (2 replicas)
-
-Writes evaluation/coordinator/results/<experiment>-<time>.json; analyse.py takes it from there.
-Environment: REDIS_URL, AWS_ENDPOINT_URL, COORDINATOR_URL, ALERT_SERVICE_URL (defaults: the
-stack's ports on localhost).
+C2, C4 and C5 save each finished condition, so running them again resumes. Starting the stack
+for each experiment: README.md. Writes results/<experiment>-<time>.json for analyse.py.
 """
 import argparse
 import json
@@ -42,10 +29,8 @@ RESULTS = Path(__file__).resolve().parent / "results"
 
 
 def select_journeys(seeds: int, run_id: str) -> list[dict]:
-    """`seeds` journeys per scenario. off_route journeys come in two kinds (stack.case_of): seeds
-    are drawn until there are `seeds` that leave the corridor, and every one that wanders near
-    another leg on the way is kept too, as its own case. Same seeds -> same journeys, so C1 and
-    C2 replay identical check-ins."""
+    """`seeds` journeys per scenario; for off_route, `seeds` that leave the corridor plus every
+    near-leg one on the way. Same seeds -> same journeys in every experiment."""
     out = []
     for scenario in SCENARIOS:
         kept, seed = 0, 0
@@ -61,9 +46,8 @@ def select_journeys(seeds: int, run_id: str) -> list[dict]:
 
 
 def run_journey(stack: Stack, j: dict, wait_s: float = 10, incidents: bool = True, mode: str = "fixed4") -> dict:
-    """Play one journey. `incidents`: read the Alert Service's incidents for it straight away
-    (C4 reads them once the Alert Service is surely up again). `mode`: the REDUNDANCY_MODE the
-    Coordinator should be in; every decision's k is checked against it."""
+    """Play one journey and check every decision's k matches `mode`. C4 passes incidents=False and
+    reads them once the Alert Service is surely up again."""
     checkins = j["checkins"]
     rows = play(stack, checkins, timeout_s=wait_s)
     ks = {r["decision"]["k"] for r in rows if r["decision"]}
@@ -77,8 +61,7 @@ def run_journey(stack: Stack, j: dict, wait_s: float = 10, incidents: bool = Tru
 
 
 def c1(stack: Stack, seeds: int, run_id: str) -> dict:
-    """C1: the Coordinator's decision vs each detector alone. In fixed4 every decision records
-    all 4 detectors' votes, so one pass gives both. One journey at a time."""
+    """C1: the Coordinator's decision vs each detector alone (every decision records all 4 votes)."""
     journeys = []
     for j in select_journeys(seeds, run_id):
         started = time.perf_counter()
@@ -90,20 +73,20 @@ def c1(stack: Stack, seeds: int, run_id: str) -> dict:
     return {"journeys": journeys}
 
 
-# C2: what each fault does to one detector (POST /control on its switch, compose.c2.yaml).
+# C2: each fault, as set on one detector's switch.
 FAULTS = {
-    "slow": {"mode": "pass", "delayMs": 2000},   # over the Coordinator's 500 ms timeout
-    "dead": {"mode": "error"},                     # answers 500, as a crashed detector would fail
-    "wrong": {"mode": "wrong"},                    # the real vote inverted
-    "wrong, silenced": {"mode": "wrong"},          # ... and its reliability set to 0 in detector:weights
+    "slow": {"mode": "pass", "delayMs": 2000},
+    "dead": {"mode": "error"},
+    "wrong": {"mode": "wrong"},
+    "wrong, silenced": {"mode": "wrong"},          # and reliability 0 in detector:weights
 }
 HEALTHY = {"mode": "pass", "delayMs": 0}
 PARALLEL = 8   # journeys at once: a slow detector costs 500 ms per check-in
-WRONG_REASON = "switch wrong"   # how the fault switch marks a vote it inverted (services/fault-switch)
+WRONG_REASON = "switch wrong"   # how the fault switch marks a vote it inverted
 
 
 def load_progress(progress: Path, seeds: int, fresh: bool) -> dict | None:
-    """The conditions an earlier, unfinished C2 run already saved, if it used the same seeds."""
+    """The conditions an unfinished run already saved, if it used the same seeds."""
     if fresh or not progress.exists():
         return None
     saved = json.loads(progress.read_text())
@@ -115,9 +98,8 @@ def load_progress(progress: Path, seeds: int, fresh: bool) -> dict | None:
 
 def c2(stack: Stack, seeds: int, run_id: str, started_at: str, progress: Path, fresh: bool = False,
        only: str | None = None) -> dict:
-    """C2: the same journeys as C1 with every detector healthy, then with one detector broken at
-    a time: slow, dead, wrong, and wrong with its reliability set to 0. Each finished condition
-    is saved to `progress`, and a rerun resumes after the last one saved. `only`: just that fault."""
+    """C2: the C1 journeys with every detector healthy, then with each fault on each detector.
+    `only`: just that fault."""
     conditions = [("healthy", None)] + [(f, d) for d in DETECTORS for f in FAULTS]
     if only:
         conditions = [(f, d) for f, d in conditions if f == only]
@@ -162,9 +144,8 @@ MAX_HEALTHY_TIMEOUTS = 0.01   # of the healthy detectors' votes
 
 
 def healthy_timeouts(journeys: list[dict], broken: str | None) -> tuple[int, int]:
-    """(timeouts, votes) of the detectors that should be healthy. They answer in a few ms, so any
-    real number of timeouts means the stack itself was too slow (laptop asleep, overloaded): the
-    run would then measure that, not the fault. Stop rather than save it."""
+    """(timeouts, votes) of the healthy detectors. Many timeouts mean the stack itself was too
+    slow (computer asleep), so stop rather than save that."""
     votes = [v for j in journeys for r in j["rows"] if r["decision"]
              for v in r["decision"]["votes"] if v["detectorId"] != broken]
     timeouts = sum(v.get("reason") == "timeout" for v in votes)
@@ -175,8 +156,7 @@ def healthy_timeouts(journeys: list[dict], broken: str | None) -> tuple[int, int
 
 
 def check_fault_reached_the_coordinator(journeys: list[dict], fault: str, detector: str) -> None:
-    """Stop if the Coordinator isn't calling the switches (stack started without compose.c2.yaml):
-    the run would silently measure healthy detectors."""
+    """Stop if the fault doesn't show in the votes (stack started without compose.c2.yaml)."""
     votes = [v for j in journeys for r in j["rows"] if r["decision"]
              for v in r["decision"]["votes"] if v["detectorId"] == detector]
     if fault in ("slow", "dead"):
@@ -185,18 +165,16 @@ def check_fault_reached_the_coordinator(journeys: list[dict], fault: str, detect
         ok = any((v.get("reason") or "").startswith(WRONG_REASON) for v in votes)
     if not ok:
         raise SystemExit(f"{detector} doesn't show the '{fault}' fault: start the stack with "
-                         "evaluation/coordinator/compose.c2.yaml (see the top of this file), and keep the "
+                         "evaluation/coordinator/compose.c2.yaml (see README.md), and keep the "
                          "computer awake (a stalled switch times out instead of answering)")
 
 
-# C4: what is crashed while the journeys play (compose.c4.yaml runs 2 Coordinator replicas).
+# C4 (compose.c4.yaml runs 2 Coordinator replicas). The journeys take about 90 s.
 REPLICAS = ("coordinator", "coordinator-2")
-# The journeys take about 90 s without faults, so the faults come often enough to hit many
-# check-ins in flight.
-FIRST_FAULT_S = 5        # into the condition, once check-ins are flowing
-KILL_EVERY_S = 20        # replica killed: one replica every 20 s, alternating
-RESTART_AFTER_S = 5      # ... and started again, as Kubernetes would restart the pod
-ALERT_DOWN_FOR_S = 45    # Alert Service down: stopped once (a check-in is received 2-3 times, < the 5 before the DLQ)
+FIRST_FAULT_S = 5
+KILL_EVERY_S = 20        # one replica, alternating
+RESTART_AFTER_S = 5      # as Kubernetes would restart the pod
+ALERT_DOWN_FOR_S = 45    # a check-in is received 2-3 times, under the 5 before the DLQ
 C4_WAIT_S = 120          # per check-in: a redelivery takes the 30 s visibility timeout, maybe twice
 SETTLE_S = 60            # after the journeys: last chance for a redelivered check-in
 
@@ -246,8 +224,7 @@ def count_lines(text: str, pattern: re.Pattern) -> dict[str, int]:
 
 
 def settle(stack: Stack, journeys: list[dict], wait_s: float = SETTLE_S) -> None:
-    """Rows not decided within the wait: look once more, for up to wait_s in all. Still nothing
-    is lost; a late one is marked, since its end-to-end time is unknown."""
+    """Look again for rows not decided within the wait; ones found are marked late."""
     pending = [(j, r) for j in journeys for r in j["rows"] if r["decision"] is None]
     end = time.monotonic() + wait_s
     while pending and time.monotonic() < end:
@@ -276,12 +253,11 @@ def ensure_up(stack: Stack) -> None:
 
 def c4(stack: Stack, seeds: int, run_id: str, started_at: str, progress: Path, fresh: bool = False) -> dict:
     """C4: the C1 journeys with 2 Coordinator replicas, while nothing / a replica / the Alert
-    Service is crashed. Counts, from both replicas' logs, how often each check-in was decided
-    (once, by the decided: marker) and how often a repeat was skipped."""
+    Service is crashed. Both replicas' logs say how often each check-in was decided or skipped."""
     for service in REPLICAS:
         if not stack.running(service):
             raise SystemExit(f"{service} isn't running: start the stack with evaluation/coordinator/compose.c4.yaml "
-                             "(see the top of this file)")
+                             "(see README.md)")
     saved = load_progress(progress, seeds, fresh)
     if saved:
         run_id, started_at = saved["runId"], saved["startedAt"]
@@ -329,13 +305,11 @@ def c4(stack: Stack, seeds: int, run_id: str, started_at: str, progress: Path, f
     return {"runId": run_id, "startedAt": started_at, "parallel": PARALLEL, "conditions": out}
 
 
-# C5: the experiment's three arms (services/coordinator/app/adaptive.py), fixed4 first: the baseline.
 C5_MODES = ("fixed4", "adaptive", "fixed2")
 
 
 def c5(stack: Stack, seeds: int, run_id: str, started_at: str, progress: Path, fresh: bool = False) -> dict:
-    """C5: the C1 journeys, one at a time as in C1, once per REDUNDANCY_MODE. The Coordinator is
-    restarted in each mode, and back in fixed4 at the end whatever happens."""
+    """C5: the C1 journeys once per REDUNDANCY_MODE, ending back in fixed4 whatever happens."""
     saved = load_progress(progress, seeds, fresh)
     if saved:
         run_id, started_at = saved["runId"], saved["startedAt"]
@@ -359,7 +333,7 @@ def c5(stack: Stack, seeds: int, run_id: str, started_at: str, progress: Path, f
             print(f"  {mode:<9} {len(ks)} check-ins in {time.perf_counter() - started:.0f} s, "
                   f"{sum(ks) / len(ks):.2f} detectors per check-in  [{len(out)}/{len(C5_MODES)} saved]", flush=True)
     finally:
-        stack.use_mode("fixed4")   # the deployed mode: leave the stack as the other experiments expect it
+        stack.use_mode("fixed4")
     return {"runId": run_id, "startedAt": started_at, "conditions": out}
 
 
@@ -418,7 +392,7 @@ def main() -> None:
         out.write_text(json.dumps({"experiment": a.experiment, "runId": run_id, "startedAt": now.isoformat(),
                                    "seeds": a.seeds, **data}, indent=1))
     if progress:
-        progress.unlink(missing_ok=True)   # finished: nothing left to resume
+        progress.unlink(missing_ok=True)
     print(f"saved {out.relative_to(Path.cwd()) if out.is_relative_to(Path.cwd()) else out}")
 
 

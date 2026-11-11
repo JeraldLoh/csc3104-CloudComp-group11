@@ -1,11 +1,8 @@
-# C2: a fault switch in front of each real detector (services/fault-switch, UPSTREAM_URL).
-# The real detectors still do the detecting; each switch passes their votes on, or makes that
-# detector slow, dead or wrong when run.py tells it to (POST /control).
+# C2: a fault switch (services/fault-switch) in front of each real detector.
 #
 #   docker compose -f services/analysis-dev/compose.yaml -f evaluation/coordinator/compose.c2.yaml up --build -d
 #
-# Paths are relative to services/analysis-dev (the first file). Back to normal: run
-# compose.yaml on its own again (the Coordinator then calls the detectors directly).
+# Paths are relative to services/analysis-dev (the first file).
 
 x-switch: &switch
   build: ../fault-switch

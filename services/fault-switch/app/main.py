@@ -1,20 +1,10 @@
-"""Fault switch: sits in front of one real detector and can make it misbehave, for the evaluation (C2).
+"""Fault switch for the evaluation (C2): sits in front of one real detector (UPSTREAM_URL),
+with the same POST /internal/detect, and can make it misbehave. Set live via POST /control:
 
-Same endpoint and message formats as a real detector (contracts/api.md):
-    POST /internal/detect   detector-request.json -> detector-vote.json
-
-The real detector (UPSTREAM_URL) does the detecting; the switch decides what reaches the
-Coordinator. MODE can be changed while it runs (POST /control):
-
-    pass      the real detector's vote, unchanged (healthy)
-    wrong     the real vote inverted: problem <-> normal (abstains stay abstains); a normal
-              becomes a problem of PROBLEM_TYPE
-    error     HTTP 500 without asking the real detector (the Coordinator records an abstain)
-
-DELAY_MS makes every answer slow (e.g. 2000 -> the Coordinator's 500 ms timeout fires).
-Run one switch per detector (evaluation/coordinator/compose.c2.yaml).
-
-Settings live in this process's memory: fine for a test tool, which runs as one replica.
+    pass      the real vote, unchanged
+    wrong     the real vote inverted: problem <-> normal (a normal becomes PROBLEM_TYPE)
+    error     HTTP 500
+    delayMs   every answer this late (2000 > the Coordinator's 500 ms deadline)
 """
 import asyncio
 import os
@@ -32,9 +22,9 @@ Mode = Literal["pass", "wrong", "error"]
 
 @dataclass(frozen=True)
 class Behaviour:
-    upstream: str                 # the real detector, e.g. http://detector-route:8000
+    upstream: str
     mode: str = "pass"
-    problem_type: str = "off_route"   # what a "wrong" normal turns into
+    problem_type: str = "off_route"
     delay_ms: int = 0
 
 
@@ -51,7 +41,7 @@ def from_env() -> Behaviour:
 
 
 def invert(vote: dict, b: Behaviour) -> dict:
-    """A faulty detector: the real verdict turned around. Abstains (and anything else) pass."""
+    """Abstains pass unchanged."""
     if vote.get("verdict") == "problem":
         return {**vote, "verdict": "normal", "problemType": None, "reason": "switch wrong: real vote was problem"}
     if vote.get("verdict") == "normal":
@@ -104,4 +94,3 @@ def create_app(behaviour: Behaviour | None = None, upstream_transport: httpx.Asy
         return {"status": "ok"}
 
     return app
-# No module-level app: UPSTREAM_URL is required, so uvicorn builds it on start (--factory, Dockerfile).

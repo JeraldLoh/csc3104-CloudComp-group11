@@ -20,8 +20,7 @@ services:
       ROUTE_FILE: /tools/route.json
       DASHBOARD_URL: http://localhost:8000/dashboard
       DYNAMODB_ENDPOINT_URL: http://dynamodb:8000   # Reset demo clears the incidents here
-    # The Docker socket lets the panel's Services buttons stop and start containers of this stack
-    # (real outages). Local only: whoever holds the socket controls Docker, hence root.
+    # For the stop/start buttons. Local only: the socket gives control of Docker.
     user: root
     volumes:
       - ../../contracts/examples/route.json:/tools/route.json:ro

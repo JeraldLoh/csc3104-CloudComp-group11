@@ -15,7 +15,7 @@ UPSTREAM = "http://detector-route:8000"
 
 
 def real_detector(verdict="normal", problem_type=None, status=200):
-    """A stand-in for Member 4's detector behind the switch. Records what it was asked."""
+    """A stand-in for the real detector. Records what it was asked."""
     asked = []
 
     def handler(req: httpx.Request) -> httpx.Response:
@@ -82,7 +82,7 @@ def test_health():
     assert switch().get("/health").json() == {"status": "ok"}
 
 
-# --- live control (run.py flips the switches between C2 conditions) ------------------------------
+# --- live control ------------------------------
 
 def test_control_changes_behaviour_while_running():
     transport, _ = real_detector("normal")
