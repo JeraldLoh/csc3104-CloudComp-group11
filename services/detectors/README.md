@@ -130,12 +130,12 @@ It ends the trip after the last check-in (`--keep-trip` leaves it active) and li
 | `--journey`, `--checkin`, `--alert` | localhost 8006, 8001, 8005 | service addresses |
 | `--seed` | new each run | same seed, same check-ins |
 
-On EKS only the Check-in Service is public, and the Alert Service runs with login off, so it can't tell which
-caregiver is asking for profiles. Port-forward the Journey and Alert Services from the EKS cluster, point
-`--checkin` at the load balancer and give a traveller id:
+On EKS the Check-in, Journey and Alert Services are all on the load balancer, but the Alert Service runs with login
+off, so it can't tell which caregiver is asking for profiles. Point all three addresses at the load balancer and
+give a traveller id:
 
 ```powershell
-python -m tools.simulator live --scenario off_route --traveller U-SIM-001 --checkin http://LOAD-BALANCER-ADDRESS
+python -m tools.simulator live --scenario off_route --traveller U-SIM-001 --checkin http://LOAD-BALANCER-ADDRESS --journey http://LOAD-BALANCER-ADDRESS --alert http://LOAD-BALANCER-ADDRESS
 ```
 
 The detection chain runs and the command lists the incidents, but the caregiver map stays empty until the cloud

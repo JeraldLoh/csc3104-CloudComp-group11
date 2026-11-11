@@ -84,9 +84,9 @@ The web app forwards every `/api/...` call to the service on port 8006 (`apps/ca
 ## 2b. On AWS instead: deploy, turn on the demo extras, connect
 
 The web app still runs on your machine. Only the Journey Service and everything behind it (DynamoDB, S3,
-ElastiCache Redis, SQS, the disruption Lambda) run in AWS. The service has **no public address** (no Ingress yet), so
-the app reaches it through a `kubectl port-forward` on port 8006, the same port as locally. Nothing else changes in
-the app.
+ElastiCache Redis, SQS, the disruption Lambda) run in AWS. The service is on the team's load balancer (HTTP only),
+but this demo reaches it through a `kubectl port-forward` on port 8006, the same port as locally, so nothing else
+changes in the app.
 
 The AWS environment costs about **$0.30 an hour** while it exists, even when idle, so deploy shortly before the demo
 and tear it down afterwards (section 8). Deploying from scratch takes 30-45 minutes.
@@ -624,8 +624,8 @@ laptop and the service has no public address. That needs the Ingress the team ha
 
 - **Real logins** (Cognito): dev mode stands in for them. The user pool and token fields are still to be agreed with the team.
 - **Live data by default:** the default is saved data. Live is the same code with the real APIs.
-- **A public AWS address:** on AWS the service is reached through a port-forward (section 2b). There is no Ingress or
-  HTTPS yet, so the traveller's phone and an Amplify-hosted app can't reach it.
+- **HTTPS on AWS:** the service is on the load balancer, but only over HTTP, so the traveller's phone and an
+  Amplify-hosted app (both HTTPS) can't reach it yet. This demo uses a port-forward (section 2b).
 - **AI wording:** the plain-language steps come from fixed rules, not an AI, so they can't make facts up. The caregiver can rewrite any step by hand (Demo C).
 - **Replacing a route's steps with a new plan**: not built yet. Today a different journey is a new route.
 - **The Dashboard and Travellers tabs:** these need the Alert Service, which this demo doesn't start

@@ -72,7 +72,7 @@ to Amplify (which gives https).
 ## Tests
 
 ```powershell
-npm test          # 103 tests: outbox, sender, tracker, request queue, HTTP, offline, route updates, wake lock, backoff, partial batches, shutdown, Help sheet
+npm test          # 139 tests: outbox, sender, tracker, request queue, HTTP, offline, route updates, wake lock, backoff, partial batches, shutdown, Help sheet, landmarks, where-are-you
 npm run typecheck
 ```
 
@@ -229,10 +229,10 @@ and nothing else, and the Help button never moves. Status messages are calm and 
   `travellerName` and the caregiver's name and phone as `null` (it doesn't read Profiles yet, and Profiles has
   no caregiver phone). The app accepts that: it greets with "Hi there", and the Help sheet has no Call button
   (it tells the traveller to ask someone nearby if help can't get through).
-- On AWS, only the Check-in Service is behind the load balancer. The Journey and Alert Services have no Ingress
-  yet, so the app on Amplify can't fetch packs, start or end a trip, ask for help or say it has arrived there.
+- On AWS, the Check-in, Journey and Alert Services are all on the load balancer (the Ingresses in
+  `k8s/eks/services/`), but it only listens on HTTP. The app on Amplify is served over HTTPS, and a browser blocks
+  an HTTPS page from calling an HTTP address, so it needs an HTTPS address in front of the load balancer
+  (CloudFront) before it can fetch packs, start or end a trip, ask for help or say it has arrived there.
   Locally everything works (above).
-- Server push to the phone ("where are you?", `/api/travellers/{id}/where-are-you`): not built by the Alert
-  Service yet. Route changes reach the phone by polling the pack every 60 s.
 - Login: issue 1.5. `HttpTransport` already takes a `getToken` function for it.
 - Actually deploying to Amplify needs the team's AWS account (steps above).
