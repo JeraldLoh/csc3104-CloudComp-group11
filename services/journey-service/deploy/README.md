@@ -1,12 +1,13 @@
 # Deploying the Journey Service to the platform's AWS stack
 
-These files add our service to the stack the platform owner's scripts build (`scripts/windows/deploy.ps1` or
-`scripts/macos/deploy.sh`, stack
-`careroute-stack-1`, namespace `careroute`). They only add things; they never edit the platform's template, manifests or
-scripts, and they only need what the stack already outputs.
+These files add our service to the platform stack (`careroute-stack-1`, namespace `careroute`), built by the platform
+owner's scripts (`scripts/windows/deploy.ps1` or `scripts/macos/deploy.sh`) or the repo README's "Deploy the
+infrastructure" steps. They only add things; they never edit the platform's template, manifests or scripts, and they
+only need what the stack already outputs.
 
-> **Status: checked offline, never run against real AWS.** Deploying costs money and uses your AWS credentials, so
-> nobody has done it yet. See "What has and hasn't been checked" before the first real run.
+> **Status:** the service's manifest has run on real AWS, deployed with the platform's `deploy.ps1 -AllServices`.
+> These `deploy-eks` and Lambda scripts haven't: they're checked offline only. See "What has and hasn't been
+> checked" before their first real run.
 
 ## Order
 
@@ -28,8 +29,12 @@ The options have the same meaning in both sets: PowerShell `-Region`, `-StackNam
 are bash `--region`, `--stack-name`, `--resource-prefix`, `--bucket`, ... (`--help` lists them). Every script
 defaults to region `ap-southeast-1`.
 
-Your `.env` at the repo root needs `LTA_API_KEY` (and `ONEMAP_API_KEY` for planning). The scripts read them without
-printing them.
+Your `.env` at the repo root needs `LTA_API_KEY`, and for planning either the OneMap account (`ONEMAP_API_EMAIL` and
+`ONEMAP_API_PASSWORD`; the service renews its own token) or a token (`ONEMAP_API_KEY`). `GOOGLE_MAPS_API_KEY` adds
+step photos. The scripts read them without printing them.
+
+Logins: the service runs with `AUTH_MODE=cognito`, so the `careroute-cognito` stack must exist first (repo README,
+"Logins (Cognito)"). `deploy-eks` stops with that message if it doesn't.
 
 ## What each part does
 
@@ -97,9 +102,14 @@ against LocalStack, fails with the right messages for a wrong table or bucket, a
 (The automated tests were trimmed to the essentials and no longer cover the DynamoDB and S3 stores or `/ready`; those
 were checked against LocalStack by hand, so re-check them after changing `route_store.py`, `trip_store.py`, `pack_store.py` or `/ready`.)
 
-**Not checked**: any real AWS behaviour. A first real deploy should watch:
-1. the pods use the service account `cloud-fastapi` and get AWS access (otherwise `/ready` says `AccessDeniedException`);
-2. `/ready` returns 200 and the rollout finishes;
+**Checked on AWS** (deployed with the platform's `deploy.ps1 -AllServices`, not these scripts): both pods became ready,
+so `/ready` returned 200 (the readiness probe calls it), and the service account `cloud-fastapi` gives the pods access
+to the tables and bucket.
+
+**Not checked**: these scripts against real AWS, and the rest of the service's AWS behaviour. A first real run should
+watch:
+1. `deploy-eks` renders the manifest with every placeholder filled, and the rollout finishes;
+2. a signed-in caregiver's request reaches the service (`AUTH_MODE=cognito`);
 3. the Lambda's network interfaces reach Redis and LTA (private subnets through the NAT gateway) and a run returns
    `{"activeTrips": 0, ...}` on a normal day;
 4. a message arrives on `careroute-disruptions` when a trip is active and LTA reports a disruption
@@ -110,11 +120,8 @@ were checked against LocalStack by hand, so re-check them after changing `route_
 7. the LTA key is in the Lambda's environment variables (visible to anyone who can read its configuration): move it
    to Secrets Manager before this is more than a demo.
 
-Logins: the service runs with `AUTH_MODE=cognito`, so the `careroute-cognito` stack must exist first (repo README,
-"Logins (Cognito)"); `deploy-eks` stops with that message if it doesn't.
-
 ## Not covered here (needs the team)
 
-How our API is
-exposed on the load balancer (no Ingress yet), whether M2's "pack builder" or our pack endpoint owns the route pack,
-and folding these steps into the platform's own script.
+HTTPS on the load balancer: our Ingress (in `k8s/eks/services/journey-service.yaml`) listens on HTTP only, and the
+Amplify-hosted apps can only call an `https://` API (`apps/traveller/README.md`, "Hosting on Amplify"). Also folding
+these steps into the platform's own setup.
