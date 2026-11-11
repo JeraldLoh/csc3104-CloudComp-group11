@@ -80,3 +80,75 @@ spec:
   minAvailable: 1
   selector:
     matchLabels: { app: alert-service }
+---
+# The caregiver and traveller apps' paths on the team's load balancer (one ALB for every service: IngressGroup
+# "careroute", evaluated by group.order; the catch-all "/" in k8s/eks/ingress.yaml comes last). /internal/*,
+# /health and /ready are not listed, so they stay private. /api/stream sends a ping every 15 s, inside the ALB's
+# 60 s idle timeout.
+# AUTH_MODE is "off" until Cognito (issue 1.5): anyone with the address can read travellers and their live
+# locations. Use test travellers only on AWS, and tear the stack down after each session.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: alert-service
+  namespace: __NAMESPACE__
+  annotations:
+    alb.ingress.kubernetes.io/group.name: careroute
+    alb.ingress.kubernetes.io/group.order: "40"
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip        # required for Fargate
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+    alb.ingress.kubernetes.io/healthcheck-path: /ready
+spec:
+  ingressClassName: alb
+  rules:
+    - http:
+        paths:
+          - path: /api/help           # traveller app
+            pathType: Prefix
+            backend:
+              service:
+                name: alert-service
+                port: { number: 8000 }
+          - path: /api/arrived        # traveller app
+            pathType: Prefix
+            backend:
+              service:
+                name: alert-service
+                port: { number: 8000 }
+          - path: /api/where-are-you  # traveller app's reply; the caregiver's ask is under /api/travellers
+            pathType: Prefix
+            backend:
+              service:
+                name: alert-service
+                port: { number: 8000 }
+          - path: /api/devices        # push sign-up, both apps
+            pathType: Prefix
+            backend:
+              service:
+                name: alert-service
+                port: { number: 8000 }
+          - path: /api/travellers     # caregiver app: profiles, live view, safe locations
+            pathType: Prefix
+            backend:
+              service:
+                name: alert-service
+                port: { number: 8000 }
+          - path: /api/incidents
+            pathType: Prefix
+            backend:
+              service:
+                name: alert-service
+                port: { number: 8000 }
+          - path: /api/stream         # caregiver app's live alerts (server-sent events)
+            pathType: Prefix
+            backend:
+              service:
+                name: alert-service
+                port: { number: 8000 }
+          - path: /api/links
+            pathType: Prefix
+            backend:
+              service:
+                name: alert-service
+                port: { number: 8000 }

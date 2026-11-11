@@ -35,7 +35,7 @@ printing them.
 
 | File | What it does |
 |---|---|
-| `k8s/eks/services/journey-service.yaml` (the team's, not in this folder) | The one manifest every deploy path uses: these `deploy-eks` scripts, `scripts/*/deploy --service journey-service` and GitHub Actions. Deployment (2 replicas) and a ClusterIP Service in namespace `careroute`. Runs as the service account `cloud-fastapi`, the only one the platform's IAM role trusts. No AWS keys, no `AWS_ENDPOINT_URL`, no `CREATE_RESOURCES`. **No Ingress** (decided to leave exposure for later; use `kubectl port-forward svc/journey-service 8006:8000 -n careroute`). |
+| `k8s/eks/services/journey-service.yaml` (the team's, not in this folder) | The one manifest every deploy path uses: these `deploy-eks` scripts, `scripts/*/deploy --service journey-service` and GitHub Actions. Deployment (2 replicas) and a ClusterIP Service in namespace `careroute`. Runs as the service account `cloud-fastapi`, the only one the platform's IAM role trusts. No AWS keys, no `AWS_ENDPOINT_URL`, no `CREATE_RESOURCES`. An Ingress on the team's load balancer for `/api/trips`, `/api/routes`, `/api/places` and `/api/easy-read` (HTTP only; `/internal` and `/api/dev` stay private). `kubectl port-forward svc/journey-service 8006:8000 -n careroute` still works too. |
 | `lambda/disruption-lambda.yaml` | Our own CloudFormation stack (`careroute-journey-lambda`): the function, its role (SQS send + VPC/logs), a 14-day log group, an EventBridge rule `rate(1 minute)`. |
 | `lambda/make_zip.py` | Lists our 8 app files and writes the zip (run inside the build container). The zip goes to `lambda/dist/` (gitignored). |
 | `windows/` and `macos/`, one script each (`.ps1` / `.sh`): | |
