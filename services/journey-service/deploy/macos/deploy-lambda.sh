@@ -9,7 +9,7 @@
 # own process list while the command runs, and it ends up in the function's environment variables).
 #
 # Safe to re-run: the zip's key contains its content hash, so only a changed package is redeployed.
-# NOT TESTED AGAINST REAL AWS.
+# The PowerShell twin was run against real AWS once (2026-11-11), see deploy/README.md; this bash one was not.
 #
 # Usage: bash services/journey-service/deploy/macos/deploy-lambda.sh
 #          [--region REGION] [--platform-stack NAME] [--lambda-stack NAME]

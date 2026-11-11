@@ -15,7 +15,7 @@
   Safe to re-run. It never touches the platform's own manifests, and the API keys are read from .env and go
   straight into a Kubernetes Secret (a temporary file that is deleted at the end), never into Git or the image.
 
-  NOT TESTED AGAINST REAL AWS. -RenderOnly checks the manifest without any AWS call.
+  Run against real AWS once (2026-11-11): see deploy\README.md. -RenderOnly checks the manifest without any AWS call.
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File services\journey-service\deploy\windows\deploy-eks.ps1

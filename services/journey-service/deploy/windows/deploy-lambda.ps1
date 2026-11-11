@@ -11,7 +11,7 @@
   own process list while the command runs, and it ends up in the function's environment variables).
 
   Safe to re-run: the zip's key contains its content hash, so only a changed package is redeployed.
-  NOT TESTED AGAINST REAL AWS.
+  Run against real AWS once (2026-11-11): see deploy\README.md.
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File services\journey-service\deploy\windows\deploy-lambda.ps1

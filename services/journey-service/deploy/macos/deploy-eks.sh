@@ -14,7 +14,7 @@
 # Safe to re-run. It never touches the platform's own manifests, and the API keys are read from .env and go
 # straight into a Kubernetes Secret (a temporary file that is deleted at the end), never into Git or the image.
 #
-# NOT TESTED AGAINST REAL AWS. --render-only checks the manifest without any AWS call.
+# The PowerShell twin was run against real AWS once (2026-11-11), see deploy/README.md; this bash one was not. --render-only checks the manifest without any AWS call.
 #
 # Usage: bash services/journey-service/deploy/macos/deploy-eks.sh
 #          [--region REGION] [--stack-name NAME] [--tag v1] [--namespace careroute]
