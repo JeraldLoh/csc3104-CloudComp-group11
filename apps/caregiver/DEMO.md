@@ -31,11 +31,11 @@ planned. To use the live APIs, switch the header's **Data** box to **Live** (sec
 ## 1. One-time setup
 
 You need: Docker Desktop, Node.js 22 or newer, and the root `.env` with `LOCALSTACK_AUTH_TOKEN` (never commit it).
-No OneMap or LTA keys are needed to run on saved data, but the saved data is gitignored: on a fresh clone, capture it
-once (this one step needs `LTA_API_KEY` and the OneMap account, `ONEMAP_API_EMAIL` / `ONEMAP_API_PASSWORD`, in `.env`).
+No OneMap or LTA keys are needed to run on saved data, which is in Git. Step 0 only refreshes it from the real APIs
+(it needs `LTA_API_KEY` and the OneMap account, `ONEMAP_API_EMAIL` / `ONEMAP_API_PASSWORD`, in `.env`).
 
 ```powershell
-# 0. Fresh clone only: capture the saved data into services/journey-service/app/saved_data
+# 0. Optional: refresh the saved data in services/journey-service/app/saved_data from the real APIs
 cd services/journey-service; python scripts/capture_data.py --target both --routes live; cd ../..
 
 # 1. Start Docker Desktop, then the backend (Redis and LocalStack start with it):
@@ -48,7 +48,7 @@ cd ../..
 ```
 
 ```bash
-# 0. Fresh clone only (python3 on macOS):
+# 0. Optional: refresh the saved data (python3 on macOS):
 (cd services/journey-service && python3 scripts/capture_data.py --target both --routes live)
 # 1. and 2.: the docker compose and npm lines above are the same in bash.
 ```
@@ -84,9 +84,9 @@ The web app forwards every `/api/...` call to the service on port 8006 (`apps/ca
 ## 2b. On AWS instead: deploy, turn on the demo extras, connect
 
 The web app still runs on your machine. Only the Journey Service and everything behind it (DynamoDB, S3,
-ElastiCache Redis, SQS, the disruption Lambda) run in AWS. The service has **no public address** (no Ingress yet), so
-the app reaches it through a `kubectl port-forward` on port 8006, the same port as locally. Nothing else changes in
-the app.
+ElastiCache Redis, SQS, the disruption Lambda) run in AWS. The service is on the team's load balancer (HTTP only),
+but this demo reaches it through a `kubectl port-forward` on port 8006, the same port as locally, so nothing else
+changes in the app.
 
 The AWS environment costs about **$0.30 an hour** while it exists, even when idle, so deploy shortly before the demo
 and tear it down afterwards (section 8). Deploying from scratch takes 30-45 minutes.
@@ -624,8 +624,8 @@ laptop and the service has no public address. That needs the Ingress the team ha
 
 - **Real logins** (Cognito): dev mode stands in for them. The user pool and token fields are still to be agreed with the team.
 - **Live data by default:** the default is saved data. Live is the same code with the real APIs.
-- **A public AWS address:** on AWS the service is reached through a port-forward (section 2b). There is no Ingress or
-  HTTPS yet, so the traveller's phone and an Amplify-hosted app can't reach it.
+- **HTTPS on AWS:** the service is on the load balancer, but only over HTTP, so the traveller's phone and an
+  Amplify-hosted app (both HTTPS) can't reach it yet. This demo uses a port-forward (section 2b).
 - **AI wording:** the plain-language steps come from fixed rules, not an AI, so they can't make facts up. The caregiver can rewrite any step by hand (Demo C).
 - **Replacing a route's steps with a new plan**: not built yet. Today a different journey is a new route.
 - **The Dashboard and Travellers tabs:** these need the Alert Service, which this demo doesn't start

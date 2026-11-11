@@ -1,15 +1,18 @@
 // Travellers (issue 5.1): the logged-in caregiver's travellers, their safe locations, and adding another
 // caregiver. The Alert Service only ever returns this caregiver's own travellers.
 import { useEffect, useState, type FormEvent } from "react";
+import { login } from "../auth/current";
 import {
   addCaregiver,
   addSafeLocation,
   addTraveller,
   listCaregivers,
   listSafeLocations,
+  newSetupCode,
   removeTraveller,
   type SafeLocation,
   type Traveller,
+  type TravellerLogin,
 } from "./api";
 import { isCaregiverId, type MyTravellers } from "./useMyTravellers";
 import "./profiles.css";
@@ -27,6 +30,8 @@ export function TravellersPage({ caregiverId, my, initialTravellerId }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // The phone login of the traveller just added: shown once, on their page
+  const [created, setCreated] = useState<{ travellerId: string; login: TravellerLogin } | null>(null);
 
   if (!isCaregiverId(caregiverId)) {
     return (
@@ -50,10 +55,12 @@ export function TravellersPage({ caregiverId, my, initialTravellerId }: Props) {
     setError(null);
     setNotice(null);
     try {
-      const created = await addTraveller(caregiverId, name.trim());
+      const added = await addTraveller(caregiverId, name.trim());
       setName("");
       await my.reload();
-      setSelectedId(created.travellerId);
+      setSelectedId(added.travellerId);
+      if (added.login) setCreated({ travellerId: added.travellerId, login: added.login });
+      else if (login.enabled) setNotice(`${added.name} was added, but their phone login couldn't be made. Use "New setup code" on their page.`);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -105,6 +112,7 @@ export function TravellersPage({ caregiverId, my, initialTravellerId }: Props) {
           <section className="pf__card">
             {selected ? (
               <TravellerDetail key={selected.travellerId} caregiverId={caregiverId} traveller={selected}
+                newLogin={created?.travellerId === selected.travellerId ? created.login : null}
                 onRemoved={async (text) => {
                   setSelectedId(null);
                   setNotice(text);
@@ -126,10 +134,12 @@ export function TravellersPage({ caregiverId, my, initialTravellerId }: Props) {
 interface DetailProps {
   caregiverId: string;
   traveller: Traveller;
+  /** The phone login made when this traveller was just added (logins on). */
+  newLogin?: TravellerLogin | null;
   onRemoved: (message: string) => void;
 }
 
-function TravellerDetail({ caregiverId, traveller, onRemoved }: DetailProps) {
+function TravellerDetail({ caregiverId, traveller, newLogin = null, onRemoved }: DetailProps) {
   const [confirming, setConfirming] = useState(false);
   const [locations, setLocations] = useState<SafeLocation[]>([]);
   const [caregivers, setCaregivers] = useState<string[]>([]);
@@ -229,6 +239,8 @@ function TravellerDetail({ caregiverId, traveller, onRemoved }: DetailProps) {
         </div>
       )}
 
+      {login.enabled && <PhoneLogin caregiverId={caregiverId} traveller={traveller} initial={newLogin} />}
+
       <div className="pf__section">
         <h3>Safe locations</h3>
         <p className="pf__muted">Places {traveller.name} knows well, such as home or school.</p>
@@ -269,6 +281,51 @@ function TravellerDetail({ caregiverId, traveller, onRemoved }: DetailProps) {
 
       {message && <p className={`pf__msg ${message.ok ? "pf__msg--ok" : "pf__msg--error"}`} role="status">{message.text}</p>}
     </>
+  );
+}
+
+/** How the traveller's phone signs in (issue 1.5): their ID and a setup code, made by the Alert Service.
+ * The code is shown once; a new one signs out any phone that used the old one. */
+function PhoneLogin({ caregiverId, traveller, initial }: { caregiverId: string; traveller: Traveller; initial: TravellerLogin | null }) {
+  const [shown, setShown] = useState<TravellerLogin | null>(initial);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function makeCode() {
+    setBusy(true);
+    setError(null);
+    try {
+      setShown(await newSetupCode(caregiverId, traveller.travellerId));
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="pf__section">
+      <h3>Phone login</h3>
+      {shown ? (
+        <div className="pf__setup" role="status">
+          <p>On {traveller.name}'s phone, open the traveller app and enter:</p>
+          <dl>
+            <dt>Traveller ID</dt><dd>{shown.username}</dd>
+            <dt>Setup code</dt><dd>{shown.setupCode}</dd>
+          </dl>
+          <p className="pf__muted">This code is only shown now. If it's lost, make a new one.</p>
+        </div>
+      ) : (
+        <p className="pf__muted">
+          {traveller.name} signs in on their phone with their traveller ID and a setup code. A new code signs out any
+          phone that used the old one, for example a lost phone.
+        </p>
+      )}
+      <button type="button" className="pf__btn pf__btn--secondary" onClick={() => void makeCode()} disabled={busy}>
+        {busy ? "Making a code…" : shown ? "Make another code" : "New setup code"}
+      </button>
+      {error && <p className="pf__msg pf__msg--error" role="alert">{error}</p>}
+    </div>
   );
 }
 

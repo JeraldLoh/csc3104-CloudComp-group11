@@ -5,7 +5,7 @@ import httpx
 import pytest
 import respx
 
-from app.journey_client import decode_polyline, distance_to_path_m
+from app.planning import decode_polyline, distance_to_path_m
 from app.lta import SST
 from helpers import (AMK, LTA, NOW, ROUTE, SEARCH, TOA_PAYOH, bus, first_leg, make, mock_lta, mock_onemap, mock_station_search,
                      onemap_fixture, plan)

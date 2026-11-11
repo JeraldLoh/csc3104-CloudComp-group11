@@ -41,6 +41,7 @@ permissions:
 env:
   AWS_REGION: ap-southeast-1
   STACK_NAME: careroute-stack-1
+  COGNITO_STACK_NAME: careroute-cognito   # cloudformation/careroute-cognito.yaml, kept between teardowns
   APP_NAMESPACE: careroute
 
 jobs:
@@ -204,6 +205,16 @@ jobs:
             echo "ALB_SG_ID=$(output AlbSecurityGroupId)"
             echo "FILES_BUCKET=careroute-files-$account_id"
           } >> "$GITHUB_ENV"
+          # Logins (issue 1.5). Empty when the Cognito stack doesn't exist; Deploy to EKS then refuses a manifest
+          # that needs it, rather than starting pods that fail on a missing pool ID.
+          cognito_output() {
+            aws cloudformation describe-stacks --stack-name "$COGNITO_STACK_NAME" \
+              --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text 2>/dev/null || true
+          }
+          {
+            echo "COGNITO_USER_POOL_ID=$(cognito_output UserPoolId)"
+            echo "COGNITO_CLIENT_ID=$(cognito_output UserPoolClientId)"
+          } >> "$GITHUB_ENV"
           echo "up=true" >> "$GITHUB_OUTPUT"
 
       - name: Connect kubectl
@@ -263,6 +274,10 @@ jobs:
               exit 1
             fi
           fi
+          if grep -q '__COGNITO_' "$manifest" && { [ -z "$COGNITO_USER_POOL_ID" ] || [ -z "$COGNITO_CLIENT_ID" ]; }; then
+            echo "::error::$manifest needs the Cognito stack $COGNITO_STACK_NAME (logins). Deploy it once: README, \"Logins (Cognito)\""
+            exit 1
+          fi
 
           # Escapes a value for the right-hand side of sed s|...|...|
           esc() { printf '%s' "$1" | sed -e 's/[\\|&]/\\&/g'; }
@@ -275,6 +290,8 @@ jobs:
               -e "s|__FILES_BUCKET__|$(esc "$FILES_BUCKET")|g" \
               -e "s|__ALB_SG_ID__|$(esc "$ALB_SG_ID")|g" \
               -e "s|__ROLE_ARN__|$(esc "$role_arn")|g" \
+              -e "s|__COGNITO_USER_POOL_ID__|$(esc "$COGNITO_USER_POOL_ID")|g" \
+              -e "s|__COGNITO_CLIENT_ID__|$(esc "$COGNITO_CLIENT_ID")|g" \
               "$manifest" > "$rendered"
           # A misspelled placeholder would otherwise reach the cluster as literal text.
           # YAML comments are skipped, since they may mention placeholders.

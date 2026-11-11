@@ -89,6 +89,17 @@ class Settings:
     photo_url_ttl_s: int = field(default_factory=lambda: int(os.getenv("PHOTO_URL_TTL_S", "604800")))
     photo_max_bytes: int = field(default_factory=lambda: int(os.getenv("PHOTO_MAX_BYTES", str(5 * 1024 * 1024))))
 
+    # Spoken instructions (speech.py): each step's easy-read wording as an MP3 from Amazon Polly, in PACKS_BUCKET
+    # under media/speech/, linked from the route pack as `audioUrl`. "off" (the default; LocalStack has no Polly)
+    # = no audio files, and the phone reads the text with its own voice. "polly" = make them.
+    tts_mode: str = field(default_factory=lambda: os.getenv("TTS_MODE", "off").strip().lower())
+    tts_voice: str = field(default_factory=lambda: os.getenv("TTS_VOICE", "Joanna"))
+    tts_engine: str = field(default_factory=lambda: os.getenv("TTS_ENGINE", "neural"))
+    tts_rate: str = field(default_factory=lambda: os.getenv("TTS_RATE", "90%"))   # a little slower than normal
+    tts_timeout_s: float = field(default_factory=lambda: float(os.getenv("TTS_TIMEOUT_S", "5")))
+    # Polly's address; unset = real AWS (not AWS_ENDPOINT_URL, which is LocalStack locally)
+    tts_endpoint_url: str | None = field(default_factory=lambda: os.getenv("TTS_ENDPOINT_URL") or None)
+
     # Disruption checker (Lambda). contracts/queues.md: the sender (us) creates this queue.
     disruptions_queue: str = field(default_factory=lambda: os.getenv("DISRUPTIONS_QUEUE", "careroute-disruptions"))
     # LTA's Status is 1 for normal/minor delays and 2 for disrupted/major delays. Alerting on

@@ -8,23 +8,24 @@ for trips under way and lets the caregiver re-route them.
 - **Demo script** with every step: [apps/caregiver/DEMO.md](../../apps/caregiver/DEMO.md).
 - **API contract:** [contracts/api.md](../../contracts/api.md).
 
-**Status:** proof of concept, working locally against LocalStack (DynamoDB, S3, SQS) and Redis. Not built: the Profiles
-lookups (traveller and caregiver names, and checking a caregiver is linked to the traveller) and audio.
+**Status:** proof of concept, working locally against LocalStack (DynamoDB, S3, SQS) and Redis. Spoken instructions
+(Amazon Polly) are on for AWS only and not yet tried against real Polly. Not built: the Profiles lookups (traveller and
+caregiver names, and checking a caregiver is linked to the traveller).
 
 ## Run it
 
 Commands are PowerShell (Windows) first, then bash (macOS/Linux) where they differ. Blocks with only `docker`,
 `kubectl`, `pip`, `pytest` and `cd` lines are the same in both. Run them from the repo root.
 
-**Data:** the service answers from **saved API responses** by default, so it needs no keys, internet or OneMap token.
-They are gitignored: on a fresh clone, capture them once (needs `LTA_API_KEY` and the OneMap account in `.env`):
+**Data:** the service answers from **saved API responses** by default (`app/saved_data/`, in Git), so it needs no keys,
+internet or OneMap token. To refresh them from the real APIs (needs `LTA_API_KEY` and the OneMap account in `.env`):
 
 ```powershell
-python scripts/capture_data.py --target both
+python services/journey-service/scripts/capture_data.py --target both
 ```
 
 ```bash
-python3 scripts/capture_data.py --target both
+python3 services/journey-service/scripts/capture_data.py --target both
 ```
 
 Switch to live data with the caregiver app's **Data** box (no restart). AWS always runs on live data.
@@ -70,9 +71,12 @@ kubectl port-forward svc/journey-service 8006:8000 -n csc3104
 | Where | What |
 |---|---|
 | `app/main.py`, `models.py`, `auth.py` | the FastAPI endpoints, request bodies, who is calling |
-| `app/journey_client.py` | the logic: planning, routes, trips, packs, bridging buses, re-routes |
+| `app/journey_client.py` | what the API calls: saved routes, trips and packs, using the parts below |
+| `app/onemap.py`, `app/planning.py` | OneMap client; route options with their live LTA warnings |
+| `app/photos.py`, `app/trip_changes.py` | step photos and their links; bridging buses and re-routes for a trip under way |
 | `app/lta.py`, `app/bridge.py` | LTA DataMall client; working out a bridging bus past a breakdown |
-| `app/easy_read.py`, `easy_read_ai.py`, `landmarks.py`, `streetview.py` | the traveller's wording, AI wording, landmarks, step photos |
+| `app/easy_read.py`, `easy_read_ai.py`, `landmarks.py`, `streetview.py` | the traveller's wording, AI wording, landmarks, finding a Street View photo |
+| `app/speech.py` | spoken instructions: each step read aloud by Amazon Polly, for the pack's `audioUrl` |
 | `app/route_store.py`, `trip_store.py`, `pack_store.py` | storage: DynamoDB or Redis, S3 |
 | `app/disruption.py`, `lambda_handler.py` | the disruption checker (a Lambda; it imports none of the API code) |
 | `app/demo_tools.py` | pretend disruptions and crowding for demos (`DEMO_UI=true` only) |
@@ -160,4 +164,6 @@ Set in the root `.env` (see `.env.example`); the full list with defaults is in `
 | `AUTH_MODE` | `off` | `off`, `dev` (trusts an `X-Dev-User` header) or `cognito` |
 | `DEMO_UI` | `false` (compose: `true`) | the live/saved switch and `demo_tools`; local demos only |
 | `EASYREAD_URL` | (none) | the Easy-read Service, for AI wording |
+| `TTS_MODE` | `off` (AWS: `polly`) | spoken instructions; `off` locally, as LocalStack has no Polly (the phone uses its own voice) |
+| `TTS_VOICE`, `TTS_ENGINE`, `TTS_RATE` | `Joanna`, `neural`, `90%` | the Polly voice and how fast it reads |
 | `BRIDGE_WATCH_S`, `BRIDGE_AUTO_SEND_S` | 30, 180 | how often bridging buses are looked for; how long one waits before it is sent |

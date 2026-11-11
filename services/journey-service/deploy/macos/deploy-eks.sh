@@ -4,7 +4,7 @@
 #
 # Run the platform's deploy script first; this script only adds our service to what it built:
 #   stack outputs -> kubeconfig -> pack bucket CORS -> Secret for the LTA/OneMap keys -> build and push our image
-#   to the stack's ECR repository (tag journey-<tag>) -> render and apply deploy/eks/journey-service.yaml
+#   to the stack's ECR repository (tag journey-<tag>) -> render and apply k8s/eks/services/journey-service.yaml
 #   -> wait for the rollout -> /ready check through a port-forward.
 #
 # Names: tables are <prefix>-routes and <prefix>-trips, the pack bucket is <prefix>-files-<account id>. The prefix is
@@ -26,6 +26,11 @@
 set -euo pipefail
 
 STACK_NAME="${STACK_NAME:-careroute-stack-1}"
+COGNITO_STACK_NAME="${COGNITO_STACK_NAME:-careroute-cognito}"
+# The user pool's IDs (logins, issue 1.5), read from the Cognito stack before deploying. --render-only makes no AWS
+# call, so it renders these stand-ins.
+COGNITO_POOL="render-only-pool"
+COGNITO_CLIENT="render-only-client"
 REGION="${REGION:-ap-southeast-1}"
 RESOURCE_PREFIX="${RESOURCE_PREFIX:-}"
 IMAGE_TAG="${IMAGE_TAG:-v1}"
@@ -60,7 +65,7 @@ done
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SERVICE_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 REPO_ROOT="$(cd "$SERVICE_DIR/../.." && pwd)"
-MANIFEST="$SCRIPT_DIR/../eks/journey-service.yaml"
+MANIFEST="$REPO_ROOT/k8s/eks/services/journey-service.yaml"   # the team's, one manifest for every deploy path
 . "$SCRIPT_DIR/resource-names.sh"
 [ -n "$ENV_FILE" ] || ENV_FILE="$REPO_ROOT/.env"
 WORK_DIR="$(mktemp -d)"
@@ -83,12 +88,16 @@ stack_output() {
 # Escapes a value for the right-hand side of a sed s|...|...| command.
 sed_value() { printf '%s' "$1" | sed -e 's/[\\|&]/\\&/g'; }
 
-# The committed manifest keeps its placeholders; this fills them in and refuses to continue if any is left.
+# The team's manifest (k8s/eks/services/journey-service.yaml, also used by scripts/macos/deploy.sh --service and
+# GitHub Actions) keeps its __PLACEHOLDERS__; this fills them in and refuses to continue if any is left outside a
+# comment. Its tables are careroute-*; another --resource-prefix renames them.
 render_manifest() {  # image redis bucket prefix out-file
   sed -e "s|<JOURNEY_IMAGE>|$(sed_value "$1")|g" -e "s|<REDIS_ENDPOINT>|$(sed_value "$2")|g" \
-      -e "s|<PACKS_BUCKET>|$(sed_value "$3")|g" -e "s|<RESOURCE_PREFIX>|$(sed_value "$4")|g" "$MANIFEST" > "$5"
+      -e "s|<PACKS_BUCKET>|$(sed_value "$3")|g" -e "s|<RESOURCE_PREFIX>|$(sed_value "$4")|g" \
+      -e "s|<COGNITO_USER_POOL_ID>|$(sed_value "$COGNITO_POOL")|g" -e "s|<COGNITO_CLIENT_ID>|$(sed_value "$COGNITO_CLIENT")|g" \
+      "$MANIFEST" > "$5"
   local left
-  left="$(grep -Eo '<[A-Z_]+>' "$5" | head -n 1 || true)"
+  left="$(grep -v '^[[:space:]]*#' "$5" | grep -Eo '__[A-Z_]+__' | head -n 1 || true)"
   [ -z "$left" ] || die "Manifest still has an unfilled placeholder: $left"
 }
 
@@ -191,6 +200,14 @@ docker push "$IMAGE"
 
 # ---------------------------------------------------------------------------
 step "Applying the manifest"
+# Logins (issue 1.5): the user pool lives in its own stack, kept between teardowns.
+COGNITO_POOL="$(aws cloudformation describe-stacks --stack-name "$COGNITO_STACK_NAME" --region "$REGION" \
+  --query "Stacks[0].Outputs[?OutputKey=='UserPoolId'].OutputValue" --output text 2>/dev/null || true)"
+COGNITO_CLIENT="$(aws cloudformation describe-stacks --stack-name "$COGNITO_STACK_NAME" --region "$REGION" \
+  --query "Stacks[0].Outputs[?OutputKey=='UserPoolClientId'].OutputValue" --output text 2>/dev/null || true)"
+[ -n "$COGNITO_POOL" ] && [ "$COGNITO_POOL" != "None" ] && [ -n "$COGNITO_CLIENT" ] \
+  || die "The Journey Service needs the Cognito stack $COGNITO_STACK_NAME (logins). Deploy it once: repo README, 'Logins (Cognito)'"
+info "User pool $COGNITO_POOL"
 RENDERED="$WORK_DIR/journey-service.yaml"
 render_manifest "$IMAGE" "$REDIS_ENDPOINT" "$BUCKET" "$RESOURCE_PREFIX" "$RENDERED"
 EXISTED=false

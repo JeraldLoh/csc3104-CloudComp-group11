@@ -17,6 +17,7 @@
 #                                 __REDIS_ENDPOINT__ __CHECKINS_QUEUE_URL__
 #                                 __DISRUPTIONS_QUEUE_URL__ __FILES_BUCKET__
 #                                 __ALB_SG_ID__ __ROLE_ARN__
+#                                 __COGNITO_USER_POOL_ID__ __COGNITO_CLIENT_ID__
 # The image goes to ECR repository careroute-NAME (created if missing).
 # __ROLE_ARN__ is read from the stack output <Name>RoleArn (e.g. checkin-service ->
 # CheckinServiceRoleArn), in the platform stack or any other stack in the region.
@@ -98,7 +99,7 @@ service_role_arn() {
 # Builds services/NAME, pushes it to ECR repository careroute-NAME, and applies
 # k8s/eks/services/NAME.yaml with its placeholders filled in.
 deploy_service() {
-  local name="$1" dir manifest repo registry image rendered left role_arn existed=false
+  local name="$1" dir manifest repo registry image rendered left role_arn
   printf '%s' "$name" | grep -Eq '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$' \
     || die "Service name must be lowercase letters, digits and dashes: '$name'"
   dir="$REPO_ROOT/services/$name"
@@ -113,6 +114,16 @@ deploy_service() {
   if grep -q '__ROLE_ARN__' "$manifest"; then
     role_arn="$(service_role_arn "$name")"
     info "Role: $role_arn"
+  fi
+
+  # Logins (issue 1.5): the user pool lives in its own stack, kept between teardowns.
+  cognito_pool=""; cognito_client=""
+  if grep -q '__COGNITO_' "$manifest"; then
+    cognito_stack="careroute-cognito"
+    cognito_pool="$(aws cloudformation describe-stacks --stack-name "$cognito_stack" --region "$REGION"       --query "Stacks[0].Outputs[?OutputKey=='UserPoolId'].OutputValue" --output text 2>/dev/null || true)"
+    cognito_client="$(aws cloudformation describe-stacks --stack-name "$cognito_stack" --region "$REGION"       --query "Stacks[0].Outputs[?OutputKey=='UserPoolClientId'].OutputValue" --output text 2>/dev/null || true)"
+    [ -n "$cognito_pool" ] && [ -n "$cognito_client" ]       || die "$name needs the Cognito stack $cognito_stack (logins). Deploy it once: README, 'Logins (Cognito)'"
+    info "User pool: $cognito_pool"
   fi
 
   # Created outside the stack, like the S3 bucket; teardown.sh removes careroute-* repos.
@@ -139,7 +150,7 @@ deploy_service() {
       -e "s|__DISRUPTIONS_QUEUE_URL__|$(sed_value "$DISRUPTIONS_QUEUE_URL")|g" \
       -e "s|__FILES_BUCKET__|$(sed_value "$FILES_BUCKET")|g" \
       -e "s|__ALB_SG_ID__|$(sed_value "$ALB_SG_ID")|g" \
-      -e "s|__ROLE_ARN__|$(sed_value "$role_arn")|g" \
+      -e "s|__ROLE_ARN__|$(sed_value "$role_arn")|g"       -e "s|__COGNITO_USER_POOL_ID__|$(sed_value "$cognito_pool")|g"       -e "s|__COGNITO_CLIENT_ID__|$(sed_value "$cognito_client")|g" \
       "$manifest" > "$rendered"
   # A misspelled or unsupported placeholder would otherwise reach the cluster as
   # literal text. YAML comments are skipped, since they may mention placeholders.
@@ -147,13 +158,23 @@ deploy_service() {
     | grep -Eo '__[A-Z][A-Z0-9_]*__' | sort -u | tr '\n' ' ' || true)"
   [ -z "$left" ] || die "k8s/eks/services/$name.yaml has unknown placeholders: $left"
 
-  kubectl get deployment "$name" -n "$APP_NAMESPACE" >/dev/null 2>&1 && existed=true
+  # The Deployment named after the service, or (one image run as several Deployments, e.g. detectors) every
+  # Deployment labelled app.kubernetes.io/part-of: <name>. Read before applying, to know which already existed.
+  local before targets target
+  before=" $(kubectl get deployment -n "$APP_NAMESPACE" -l "app.kubernetes.io/part-of=$name" -o name 2>/dev/null | tr '\n' ' ')"
+  kubectl get deployment "$name" -n "$APP_NAMESPACE" >/dev/null 2>&1 && before="$before deployment.apps/$name "
   kubectl apply -f "$rendered"
-  # Re-pushing the same tag does not change the spec, so force new pods to pull it.
-  if [ "$existed" = true ]; then
-    kubectl rollout restart deployment/"$name" -n "$APP_NAMESPACE"
+  if kubectl get deployment "$name" -n "$APP_NAMESPACE" >/dev/null 2>&1; then
+    targets="deployment.apps/$name"
+  else
+    targets="$(kubectl get deployment -n "$APP_NAMESPACE" -l "app.kubernetes.io/part-of=$name" -o name)"
   fi
-  kubectl rollout status deployment/"$name" -n "$APP_NAMESPACE" --timeout=10m
+  [ -n "$targets" ] || die "k8s/eks/services/$name.yaml has no Deployment named $name or labelled app.kubernetes.io/part-of: $name"
+  for target in $targets; do
+    # Re-pushing the same tag does not change the spec, so force new pods to pull it.
+    case "$before" in *" $target "*) kubectl rollout restart "$target" -n "$APP_NAMESPACE" ;; esac
+    kubectl rollout status "$target" -n "$APP_NAMESPACE" --timeout=10m
+  done
 }
 
 # ---------------------------------------------------------------------------

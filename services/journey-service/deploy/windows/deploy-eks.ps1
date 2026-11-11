@@ -5,7 +5,7 @@
 .DESCRIPTION
   Run the platform's deploy.ps1 first; this script only adds our service to what it built:
     stack outputs -> kubeconfig -> pack bucket CORS -> Secret for the LTA/OneMap keys -> build and push our image
-    to the stack's ECR repository (tag journey-<ImageTag>) -> render and apply deploy\eks\journey-service.yaml
+    to the stack's ECR repository (tag journey-<ImageTag>) -> render and apply k8s\eks\services\journey-service.yaml
     -> wait for the rollout -> /ready check through a port-forward.
 
   Names: tables are <prefix>-routes and <prefix>-trips, the pack bucket is <prefix>-files-<account id>. The prefix is
@@ -24,6 +24,7 @@
 #>
 param(
   [string]$StackName = 'careroute-stack-1',
+  [string]$CognitoStackName = 'careroute-cognito',
   [string]$Region = 'ap-southeast-1',
   [string]$ResourcePrefix,
   [string]$ImageTag = 'v1',
@@ -38,9 +39,13 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+# The user pool's IDs (logins, issue 1.5), read from the Cognito stack before deploying. -RenderOnly makes no AWS
+# call, so it renders these stand-ins.
+$CognitoPool = 'render-only-pool'
+$CognitoClient = 'render-only-client'
 $ServiceDir = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $RepoRoot = (Resolve-Path (Join-Path $ServiceDir '..\..')).Path
-$Manifest = Join-Path $PSScriptRoot '..\eks\journey-service.yaml'
+$Manifest = Join-Path $RepoRoot 'k8s\eks\services\journey-service.yaml'   # the team's, one manifest for every deploy path
 if (-not $EnvFile) { $EnvFile = Join-Path $RepoRoot '.env' }
 $WorkDir = Join-Path ([IO.Path]::GetTempPath()) ("journey-deploy-" + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $WorkDir | Out-Null
@@ -73,10 +78,13 @@ function Connect-Ecr([string]$Registry) {
   } finally { Remove-Item $file -Force -ErrorAction SilentlyContinue }
 }
 
-# The committed manifest keeps its placeholders; this fills them in and refuses to continue if any is left.
+# The team's manifest (k8s/eks/services/journey-service.yaml, also used by scripts\windows\deploy.ps1 -Service and
+# GitHub Actions) keeps its __PLACEHOLDERS__; this fills them in and refuses to continue if any is left outside a
+# comment. Its tables are careroute-*; another -ResourcePrefix renames them.
 function Get-RenderedManifest([string]$Img, [string]$Redis, [string]$Bkt, [string]$Prefix) {
   $text = [IO.File]::ReadAllText($Manifest)
   $text = $text.Replace('<JOURNEY_IMAGE>', $Img).Replace('<REDIS_ENDPOINT>', $Redis).Replace('<PACKS_BUCKET>', $Bkt).Replace('<RESOURCE_PREFIX>', $Prefix)
+  $text = $text.Replace('<COGNITO_USER_POOL_ID>', $script:CognitoPool).Replace('<COGNITO_CLIENT_ID>', $script:CognitoClient)
   $left = [regex]::Match($text, '<[A-Z_]+>')
   if ($left.Success) { throw "Manifest still has an unfilled placeholder: $($left.Value)" }
   return $text
@@ -185,6 +193,13 @@ try {
 
   # ---------------------------------------------------------------------------
   Write-Step 'Applying the manifest'
+  # Logins (issue 1.5): the user pool lives in its own stack, kept between teardowns.
+  $script:CognitoPool = Invoke-Quiet { aws cloudformation describe-stacks --stack-name $CognitoStackName --region $Region --query "Stacks[0].Outputs[?OutputKey=='UserPoolId'].OutputValue" --output text }
+  $script:CognitoClient = Invoke-Quiet { aws cloudformation describe-stacks --stack-name $CognitoStackName --region $Region --query "Stacks[0].Outputs[?OutputKey=='UserPoolClientId'].OutputValue" --output text }
+  if (-not $script:CognitoPool -or -not $script:CognitoClient -or $script:CognitoPool -eq 'None') {
+    throw "The Journey Service needs the Cognito stack $CognitoStackName (logins). Deploy it once: repo README, 'Logins (Cognito)'"
+  }
+  Write-Info "User pool $script:CognitoPool"
   $Rendered = Join-Path $WorkDir 'journey-service.yaml'
   [IO.File]::WriteAllText($Rendered, (Get-RenderedManifest $Image $RedisEndpoint $Bucket $ResourcePrefix), $Utf8NoBom)
   Invoke-Quiet { kubectl get deployment journey-service -n $AppNamespace } | Out-Null

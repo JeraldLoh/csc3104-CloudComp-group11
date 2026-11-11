@@ -1,8 +1,8 @@
 # Journey Service for the platform's quick path:  .\scripts\windows\deploy.ps1 -Service journey-service
 # deploy.ps1 fills in the __PLACEHOLDERS__ (see scripts/README.md), including the pack bucket. It doesn't create
 # the API-key Secret or the bucket's CORS rule, so pack downloads from the traveller app need those. For that, use
-# services/journey-service/deploy/windows/deploy-eks.ps1 (or macos/deploy-eks.sh) instead (same Deployment, from
-# deploy/eks/journey-service.yaml).
+# services/journey-service/deploy/windows/deploy-eks.ps1 (or macos/deploy-eks.sh) instead: it renders this same
+# manifest, so there is only one to keep up to date.
 # Before the first -Service deploy, create the Secret once:
 #   kubectl create secret generic journey-api-keys --from-env-file=.env -n careroute
 apiVersion: apps/v1
@@ -33,7 +33,11 @@ spec:
             - { name: PACKS_BUCKET, value: "__FILES_BUCKET__" }   # packs go under packs/
             - { name: ONEMAP_MODE, value: "live" }
             - { name: LTA_MODE, value: "live" }
-            - { name: AUTH_MODE, value: "off" }
+            # Logins: Cognito tokens from the careroute-cognito stack, whose IDs the deploy fills in.
+            - { name: AUTH_MODE, value: "cognito" }
+            - { name: COGNITO_REGION, value: "__REGION__" }
+            - { name: COGNITO_USER_POOL_ID, value: "__COGNITO_USER_POOL_ID__" }
+            - { name: COGNITO_CLIENT_ID, value: "__COGNITO_CLIENT_ID__" }
             - name: LTA_API_KEY
               valueFrom: { secretKeyRef: { name: journey-api-keys, key: LTA_API_KEY, optional: true } }
             - name: ONEMAP_API_KEY
@@ -66,3 +70,50 @@ spec:
   type: ClusterIP
   selector: { app: journey-service }
   ports: [{ port: 8000, targetPort: 8000 }]
+---
+# The caregiver and traveller apps' paths on the team's load balancer (one ALB for every service: IngressGroup
+# "careroute", evaluated by group.order; the catch-all "/" in k8s/eks/ingress.yaml comes last). /internal/*,
+# /api/dev/*, /health and /ready are not listed, so they stay private.
+# AUTH_MODE is "off" until Cognito (issue 1.5): anyone with the address can call these paths. Use test travellers only
+# on AWS, and tear the stack down after each session.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: journey-service
+  namespace: __NAMESPACE__
+  annotations:
+    alb.ingress.kubernetes.io/group.name: careroute
+    alb.ingress.kubernetes.io/group.order: "30"
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip        # required for Fargate
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+    alb.ingress.kubernetes.io/healthcheck-path: /ready
+spec:
+  ingressClassName: alb
+  rules:
+    - http:
+        paths:
+          - path: /api/trips          # also /api/trips/{id}/pack, /start, /end, /location ...
+            pathType: Prefix
+            backend:
+              service:
+                name: journey-service
+                port: { number: 8000 }
+          - path: /api/routes
+            pathType: Prefix
+            backend:
+              service:
+                name: journey-service
+                port: { number: 8000 }
+          - path: /api/places
+            pathType: Prefix
+            backend:
+              service:
+                name: journey-service
+                port: { number: 8000 }
+          - path: /api/easy-read
+            pathType: Prefix
+            backend:
+              service:
+                name: journey-service
+                port: { number: 8000 }

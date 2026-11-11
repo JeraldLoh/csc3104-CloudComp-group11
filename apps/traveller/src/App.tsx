@@ -1,16 +1,36 @@
 import { useEffect, useMemo } from "react";
 import { useCareRoute } from "./app/useCareRoute";
 import { readFlags, readSession } from "./app/session";
+import { login, useLogin } from "./auth/current";
+import { SignIn } from "./auth/SignIn";
 import { ConnectionStatus } from "./components/ConnectionStatus";
 import { StepCard } from "./components/StepCard";
 import { HelpSheet } from "./components/HelpSheet";
 import { WhereSheet } from "./components/WhereSheet";
 import { DebugPanel } from "./components/DebugPanel";
+import { sentenceStart } from "./lib/easyRead";
 import type { Session } from "./types";
 
 export default function App() {
   const flags = useMemo(() => readFlags(), []);
   const session = useMemo(() => readSession(), []);
+  const signedIn = useLogin();
+  // With logins on (issue 1.5) the phone is signed in once, with the setup code from the caregiver. The trip still
+  // comes from the trip link; the traveller is whoever signed in.
+  if (login.enabled && !flags.demo) {
+    if (!signedIn) return <SignIn login={login} travellerId={session?.travellerId} />;
+    if (session && session.travellerId !== signedIn.userId) {
+      return (
+        <Screen>
+          <div className="message">
+            <h1>This trip is for someone else</h1>
+            <p>This phone is set up for {signedIn.userId}. Ask your caregiver to check the trip link.</p>
+            <button className="btn btn--primary" onClick={() => login.signOut()}>Set up for someone else</button>
+          </div>
+        </Screen>
+      );
+    }
+  }
   if (!session) {
     return (
       <Screen>
@@ -42,6 +62,7 @@ function Journey({ session, demo, debug }: { session: Session; demo: boolean; de
   }, [app.routeChangedAt]);
   const pack = app.loaded?.pack;
   const caregiver = pack?.caregiver.name ?? "your caregiver";
+  const Caregiver = sentenceStart(caregiver);
   const debugPanel = debug ? <DebugPanel app={app} /> : null;
 
   if (app.phase === "loading") {
@@ -90,7 +111,7 @@ function Journey({ session, demo, debug }: { session: Session; demo: boolean; de
           <Tick />
           <h1>You made it</h1>
           <p className="lead">
-            {told ? `${caregiver} knows you have arrived.` : `We are telling ${caregiver} you have arrived.`}
+            {told ? `${Caregiver} knows you have arrived.` : `We are telling ${caregiver} you have arrived.`}
           </p>
         </div>
         {debugPanel}

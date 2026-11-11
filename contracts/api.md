@@ -94,14 +94,14 @@ Modes: `pass` (the real vote), `wrong` (the real vote inverted), `error` (HTTP 5
 | POST | `/api/incidents/{incidentId}/ack` | — | updated `incident.json` |
 | POST | `/api/incidents/{incidentId}/resolve` | — | updated `incident.json` |
 | GET | `/api/stream` | — | Live events (SSE), each one is `alert-event.json`, `arrival-event.json` or `where-event.json` |
-| POST | `/api/arrived` | `{"tripId": "T-001", "travellerId": "U-042"}` | `{"tripId", "arrivedAt"}`: the traveller pressed "I've arrived". Safe to repeat; only the first call tells caregivers. No login needed until Cognito |
-| POST | `/api/help` | `{"tripId": "T-001", "travellerId": "U-042", "stepIndex": 2, "lat": 1.40, "lng": 103.90}` | `{"incidentId": "..."}`: an urgent `help_requested` incident. Only `tripId` is required; the trip's check-in context fills in the rest. No login needed until Cognito |
+| POST | `/api/arrived` | `{"tripId": "T-001", "travellerId": "U-042"}` | `{"tripId", "arrivedAt"}`: the traveller pressed "I've arrived". Safe to repeat; only the first call tells caregivers. With Cognito, only the traveller |
+| POST | `/api/help` | `{"tripId": "T-001", "travellerId": "U-042", "stepIndex": 2, "lat": 1.40, "lng": 103.90}` | `{"incidentId": "..."}`: an urgent `help_requested` incident. Only `tripId` is required; the trip's check-in context fills in the rest. With Cognito, only the traveller |
 | POST | `/api/travellers/{travellerId}/where-are-you` | — | `202` the question (`requestId`, `askedBy`, `askedAt`, `status`, `answer`, `answeredAt`, `lat`, `lng`). One waits at a time; asking again returns it |
 | GET | `/api/travellers/{travellerId}/where-are-you` | — | the latest question, waiting or answered, or `null` |
-| GET | `/api/where-are-you?travellerId=U-042` | — | from the phone: the question waiting for an answer, or `null`. No login needed until Cognito |
+| GET | `/api/where-are-you?travellerId=U-042` | — | from the phone: the question waiting for an answer, or `null`. With Cognito, only the traveller |
 | POST | `/api/where-are-you/reply` | `{"travellerId", "requestId", "answer": "ok" \| "help", "lat", "lng"}` | the answered question. Safe to repeat: only the first reply counts. "help" is also sent as `POST /api/help` by the phone |
 | POST | `/api/devices` | `{"token": "<firebase token>"}` | `201` `{"registered": true, "pushEnabled": bool}`: a caregiver's browser, for urgent alerts by push. Safe to repeat |
-| POST | `/api/devices/traveller` | `{"travellerId": "U-042", "token": "<firebase token>"}` | `201`, as above: the traveller's phone, for "Where are you?" by push. No login needed until Cognito |
+| POST | `/api/devices/traveller` | `{"travellerId": "U-042", "token": "<firebase token>"}` | `201`, as above: the traveller's phone, for "Where are you?" by push. With Cognito, only the traveller |
 
 ## Profiles (Member 5)
 
@@ -109,7 +109,8 @@ Modes: `pass` (the real vote), `wrong` (the real vote inverted), `error` (HTTP 5
 |---|---|---|---|
 | GET | `/api/travellers` | — | caregiver's linked travellers |
 | GET | `/api/travellers/live` | — | `{"U-042": {"tripId", "stepIndex", "status", "lastSeenAt", "arrivedAt", "lat", "lng", "accuracyM", "batteryPct", "trail": [[lat, lng], ...]}}`: the caller's travellers with a check-in in the last 30 minutes |
-| POST | `/api/travellers` | `{"name": "Alex", "preferences": {...}}` | `201` traveller (new `U-` id); the caller is linked to them |
+| POST | `/api/travellers` | `{"name": "Alex", "preferences": {...}}` | `201` traveller (new `U-` id); the caller is linked to them. With Cognito also `"login": {"username": "U-1A2B3C", "setupCode": "k7mq-4rtx-9cwe"}` (the phone's login, shown once), or `"login": null` if it couldn't be made |
+| POST | `/api/travellers/{travellerId}/login` | — | `{"username", "setupCode"}`: a new setup code for the traveller's phone; the old one stops working and the traveller is signed out everywhere. A linked caregiver only. `409 logins_off` without Cognito |
 | DELETE | `/api/travellers/{travellerId}` | — | `{"travellerId", "removed": true, "profileDeleted": bool}`: off the caller's list; profile and safe locations deleted if no caregiver is left |
 | GET / POST | `/api/travellers/{travellerId}/safe-locations` | `{"name": "Home", "lat": ..., "lng": ...}` | safe locations / `201` the new one |
 | GET | `/api/travellers/{travellerId}/caregivers` | — | list of caregiver IDs linked to the traveller, sorted; the caller must be one of them |
@@ -122,18 +123,24 @@ can't tell the traveller exists. A link is made when a caregiver adds a travelle
 linked to them (`POST /api/links`), so nobody can attach themselves to a stranger. A traveller can read their
 own safe locations.
 
-**Login:** as for the Journey Service (`AUTH_MODE`): `X-Dev-User: G-003` locally, Cognito later. A browser's
+**Login:** as for the Journey Service (`AUTH_MODE`): `X-Dev-User: G-003` locally, Cognito ID tokens on AWS (issue 1.5, README "Logins (Cognito)"). A browser's
 `EventSource` can't send headers, so `/api/stream` also takes `?devUser=G-003` or `?token=<JWT>`.
 
 ## Journey Service (Member 6)
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
-| POST | `/api/routes/plan` | `{"from": {lat,lng}, "to": {lat,lng}}` | route options from OneMap; during a breakdown each says where it rides with no trains (`affected`) and LTA's free bus past it (`bridges`, shown, never saved), and those go last |
-| POST | `/api/routes` | route without `routeId` | `route.json` |
-| GET / PUT | `/api/routes/{routeId}` | `route.json` | `route.json` (version +1 on every change) |
+| POST | `/api/routes/plan` | `{"from": {lat,lng}, "to": {lat,lng}, "departAt"?: "<ISO time, Singapore if no zone>", "mode"?: "any"\|"bus"\|"train"}` | `{"options": [...], "sortedBy"}`: route options from OneMap; during a breakdown each says where it rides with no trains (`affected`) and LTA's free bus past it (`bridges`, shown, never saved), and those go last |
+| POST | `/api/routes/check-disruptions` | `{"steps": [...]}` (a plan option's or saved route's) | `{"warnings": [...], "checkedAt"}`: the disruption warnings for those steps as LTA reports things now |
+| GET | `/api/places/search?q=` | — | `{"places": [{name, address, postalCode, lat, lng}]}`: a place name, address or postal code (2-100 characters) |
+| POST | `/api/routes` | route without `routeId` | `201` `route.json` |
+| GET | `/api/routes?travellerId=U-042` | — | `{"routes": [route.json, ...]}`: the traveller's saved routes the caller may see, newest first |
+| GET / PUT | `/api/routes/{routeId}` | `route.json` (PUT: with the `version` you last saw; `409` if it has changed) | `route.json` (version +1 on every change; an edit clears `approved`) |
+| DELETE | `/api/routes/{routeId}?version=3` | — | `204`. With `version`, only that version (`409` if it has changed); `409` while one of its trips is under way |
 | POST | `/api/routes/{routeId}/approve` | — | `route.json` with `approved: true` |
-| POST | `/api/trips` | `{"routeId": "R-007", "date": "2026-10-12"}` | `trip.json` |
+| POST | `/api/trips` | `{"routeId": "R-007", "date": "2026-10-12"}` | `201` `trip.json` (`409` if the route isn't approved) |
+| GET | `/api/trips?travellerId=U-042&date=2026-10-12` | — | `{"trips": [trip.json, ...]}`: the traveller's trips the caller may see, newest first (`date` optional) |
+| GET | `/api/trips/{tripId}` | — | `trip.json` |
 | POST | `/api/trips/{tripId}/start` | — | `trip.json` (`status: active`) |
 | POST | `/api/trips/{tripId}/end` | — | `trip.json` (`status: completed`) |
 | POST | `/api/trips/{tripId}/bridge/send` | — | `trip.json`: the proposed free bridging bus sent to the traveller now |
@@ -142,14 +149,20 @@ own safe locations.
 | POST | `/api/trips/{tripId}/bridge/use` | — | `trip.json`: the free bus past a breakdown, worked out and used now (also for a trip not started yet) |
 | POST | `/api/trips/{tripId}/replan` | — | `{"from": {lat, lng, source: "checkin"\|"step", at, label}, "options": [...], "sortedBy"}`: new routes from where the traveller is |
 | POST | `/api/trips/{tripId}/replan/apply` | `{"routeId": "R-…"}` (a saved, approved route made for the trip: `forTripId`) or `{"steps": [...], "stepPaths"?: [...]}` (one option's) | `trip.json`: sent, replacing the steps from the current one on (`override.fromRoute`: the route) |
-| GET | `/api/trips/{tripId}/location` | — | `{lat, lng, at, source: "checkin"\|"step", trail: [[lat, lng], ...] (oldest first), stepIndex, stepCount, step}`: where the traveller of a trip under way is (409 if it isn't under way) |
-| GET | `/api/trips/{tripId}/plan` | — | `{planVersion, steps, stepPaths, affected: [{stepIndex, line, from, to, path, message}]}`: the steps the traveller follows now, their lines on the map, and where trains aren't running on them (409 if it isn't under way) |
+| GET | `/api/trips/{tripId}/location` | — | `{tripId, lat, lng, at, source: "checkin"\|"step", trail: [[lat, lng], ...] (oldest first), replanFrom, stepIndex, stepCount, step}`: where the traveller of a trip under way is, and where a new route would start (`replanFrom`, as in `/replan`'s `from`) (409 if it isn't under way) |
+| GET | `/api/trips/{tripId}/plan` | — | `{tripId, planVersion, steps, stepPaths, affected: [{stepIndex, line, from, to, path, message}]}`: the steps the traveller follows now, their lines on the map, and where trains aren't running on them (409 if it isn't under way) |
 | GET | `/api/trips/{tripId}/pack` | — | `{"packUrl": "<temporary S3 link>", "packVersion": "R-007-v3"}` (`R-007-v3-b2` once the trip's plan changed) |
+| POST | `/api/routes/{routeId}/easy-read`, `/api/routes/{routeId}/photos` | — / multipart `photo` | AI wording to review; `201` an uploaded step photo (both below) |
+| GET | `/api/easy-read/limits` | — | `{"maxChars": 300}`: the longest wording a step may have, for the editor |
+| GET | `/internal/lta/bus-arrival/{busStopCode}?service_no=190` | — | LTA's bus arrivals at that stop (`service_no` optional), cached briefly; for other services in the cluster |
+| GET | `/internal/lta/train-alerts` | — | LTA's train service alerts (MRT/LRT breakdowns and their free buses), cached briefly |
+| GET | `/internal/lta/traffic-incidents` | — | `{"incidents": [...]}`: LTA's traffic incidents, cached briefly |
 
 A trip under way can be changed without changing its route: `planVersion` goes up by one and the pack follows the new
 plan. `override` is the latest change or proposal: `{"kind": "bridge"|"replan", "status": "pending"|"sent"|
-"dismissed"|"withdrawn", "replacesFrom", "replacesTo", "steps", "leaveAt", "target", "sendAt", "sentAt", "sentBy":
-"caregiver"|"auto"}`. A bridging bus is `pending` until `sendAt` (3 minutes), then sent by itself. The caregiver is
+"dismissed"|"withdrawn", "replacesFrom", "replacesTo", "steps", "line", "leaveAt", "target", "createdAt", "sendAt",
+"sentAt", "sentBy": "caregiver"|"auto"}`; a bridge also has `bridgeKind`, `busNo` and `disruptionKey`, a re-route
+`fromRoute` (the saved route it came from, or `null`). A bridging bus is `pending` until `sendAt` (3 minutes), then sent by itself. The caregiver is
 also told on the `careroute-disruptions` queue (disruption.json, `source: "journey-service"`, the message saying what
 was proposed or sent).
 
@@ -173,7 +186,7 @@ Only route steps are sent. Never names, addresses or labels like "Home": a place
   sides and distances only, never coordinates, and none within 200 m of a place without a stop code. The answer's
   `landmarks` lists the ids of those its wording mentions (`[]` otherwise); every name is checked like the rest.
 - `easyRead` (here and on route steps) stays one string, written as one short action per sentence ("Wait for bus
-  number 45. Tap your card. Count 5 stops."). Apps may show each sentence as a bullet point.
+  number 45. Tap your card. Count 5 stops."). Apps may show each sentence as a bullet point, split as in `examples/easy-read-points.json` (both apps test against it).
 
 The caregiver app reaches it through the Journey Service: `POST /api/routes/{routeId}/easy-read` (route owner only)
 returns `{"steps": [{"stepIndex", "easyRead", "fallback", "landmarks": [{name, kind, lat, lng, seenFrom, photoKey, sameView, photoUrl}]}], "provider"}` and saves nothing; the caregiver checks
@@ -187,9 +200,13 @@ Route steps may carry `landmarks: [{name, kind, lat, lng, seenFrom, photoKey, sa
 the traveller to look out for, each with a Street View photo of it taken from `seenFrom`, the traveller's spot on the
 route (`sameView`: no photo of its own, as it would repeat the step's photo, `"step"`, or that landmark's). The
 service keeps only those the step's `easyRead` names; answers add `photoUrl` to each, and the route pack
-has `landmarks: [{name, photoUrl}]` per step.
+has `landmarks: [{name, photoUrl, sameView}]` per step (`sameView` null unless it has no photo of its own).
 
 Step photos (Journey Service): saving a route adds a Google Street View photo of where each walk/bus step ends
 (`photoKey`, an S3 key under `media/`; a recent panorama, Google's own first, else a recent upload close by, else an older one under `media/streetview/v2/rough/` for the caregiver to check; a walk to a station shows its nearest exit). `POST /api/routes/{routeId}/photos` (multipart field `photo`, JPEG/PNG/WebP
 up to 5 MB) stores the caregiver's own photo and returns `{"photoKey", "photoUrl"}` for the editor to save in a step.
 Route answers and packs carry `photoUrl`, a temporary link.
+
+Spoken instructions (Journey Service): each pack step's `audioUrl` is a temporary link to an MP3 of its `easyRead`
+read aloud (Amazon Polly, `TTS_MODE=polly`), or the step's own `audioKey` when it has one. `null` when speech is off
+or couldn't be made: the phone then reads `easyRead` with its own voice.

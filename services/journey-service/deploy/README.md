@@ -1,12 +1,13 @@
 # Deploying the Journey Service to the platform's AWS stack
 
-These files add our service to the stack the platform owner's scripts build (`scripts/windows/deploy.ps1` or
-`scripts/macos/deploy.sh`, stack
-`careroute-stack-1`, namespace `careroute`). They only add things; they never edit the platform's template, manifests or
-scripts, and they only need what the stack already outputs.
+These files add our service to the platform stack (`careroute-stack-1`, namespace `careroute`), built by the platform
+owner's scripts (`scripts/windows/deploy.ps1` or `scripts/macos/deploy.sh`) or the repo README's "Deploy the
+infrastructure" steps. They only add things; they never edit the platform's template, manifests or scripts, and they
+only need what the stack already outputs.
 
-> **Status: checked offline, never run against real AWS.** Deploying costs money and uses your AWS credentials, so
-> nobody has done it yet. See "What has and hasn't been checked" before the first real run.
+> **Status:** the service's manifest has run on real AWS, deployed with the platform's `deploy.ps1 -AllServices`.
+> These `deploy-eks` and Lambda scripts haven't: they're checked offline only. See "What has and hasn't been
+> checked" before their first real run.
 
 ## Order
 
@@ -28,18 +29,22 @@ The options have the same meaning in both sets: PowerShell `-Region`, `-StackNam
 are bash `--region`, `--stack-name`, `--resource-prefix`, `--bucket`, ... (`--help` lists them). Every script
 defaults to region `ap-southeast-1`.
 
-Your `.env` at the repo root needs `LTA_API_KEY` (and `ONEMAP_API_KEY` for planning). The scripts read them without
-printing them.
+Your `.env` at the repo root needs `LTA_API_KEY`, and for planning either the OneMap account (`ONEMAP_API_EMAIL` and
+`ONEMAP_API_PASSWORD`; the service renews its own token) or a token (`ONEMAP_API_KEY`). `GOOGLE_MAPS_API_KEY` adds
+step photos. The scripts read them without printing them.
+
+Logins: the service runs with `AUTH_MODE=cognito`, so the `careroute-cognito` stack must exist first (repo README,
+"Logins (Cognito)"). `deploy-eks` stops with that message if it doesn't.
 
 ## What each part does
 
 | File | What it does |
 |---|---|
-| `eks/journey-service.yaml` | Deployment (2 replicas) and a ClusterIP Service in namespace `careroute`. Runs as the service account `cloud-fastapi`, the only one the platform's IAM role trusts. No AWS keys, no `AWS_ENDPOINT_URL`, no `CREATE_RESOURCES`. **No Ingress** (decided to leave exposure for later; use `kubectl port-forward svc/journey-service 8006:8000 -n careroute`). |
+| `k8s/eks/services/journey-service.yaml` (the team's, not in this folder) | The one manifest every deploy path uses: these `deploy-eks` scripts, `scripts/*/deploy --service journey-service` and GitHub Actions. Deployment (2 replicas) and a ClusterIP Service in namespace `careroute`. Runs as the service account `cloud-fastapi`, the only one the platform's IAM role trusts. No AWS keys, no `AWS_ENDPOINT_URL`, no `CREATE_RESOURCES`. An Ingress on the team's load balancer for `/api/trips`, `/api/routes`, `/api/places` and `/api/easy-read` (HTTP only; `/internal` and `/api/dev` stay private). `kubectl port-forward svc/journey-service 8006:8000 -n careroute` still works too. |
 | `lambda/disruption-lambda.yaml` | Our own CloudFormation stack (`careroute-journey-lambda`): the function, its role (SQS send + VPC/logs), a 14-day log group, an EventBridge rule `rate(1 minute)`. |
 | `lambda/make_zip.py` | Lists our 8 app files and writes the zip (run inside the build container). The zip goes to `lambda/dist/` (gitignored). |
 | `windows/` and `macos/`, one script each (`.ps1` / `.sh`): | |
-| `deploy-eks` | Reads the stack outputs, sets the pack bucket's CORS rule, creates the Secret `journey-api-keys` from `.env` (LTA, OneMap and, for step photos, `GOOGLE_MAPS_API_KEY`), builds and pushes our image to the stack's ECR repository as tag `journey-<tag>`, fills in the manifest's four placeholders (image, Redis, bucket, prefix) in a temporary copy, applies it, waits for the rollout and checks `/ready` through a port-forward. `-RenderOnly` / `--render-only` just renders the manifest (no AWS). |
+| `deploy-eks` | Reads the stack outputs, sets the pack bucket's CORS rule, creates the Secret `journey-api-keys` from `.env` (LTA, OneMap and, for step photos, `GOOGLE_MAPS_API_KEY`), builds and pushes our image to the stack's ECR repository as tag `journey-<tag>`, fills in the manifest's placeholders (image, Redis, bucket, prefix, and the Cognito pool and client IDs from the `careroute-cognito` stack) in a temporary copy, applies it, waits for the rollout and checks `/ready` through a port-forward. `-RenderOnly` / `--render-only` just renders the manifest (no AWS). |
 | (AI easy-read) | Not deployed by these scripts: the Easy-read Service and Ollama go out with the platform script, `deploy.ps1 -Service easyread-service` / `deploy.sh --service easyread-service` (see `services/easyread-service/README.md`). Until then the Journey Service's `EASYREAD_URL` can't be reached and **Simplify with AI** gives the standard wording. |
 | `teardown-eks` | Deletes our Deployment, Service and Secret, our `journey-*` ECR tags and the `packs/` objects. Nothing of the platform's. |
 | `build-lambda` | Builds `lambda/dist/disruption-lambda.zip` in a `python:3.12` Linux container: our 8 files plus httpx and redis (about 1 MB). `-Verify` / `--verify` imports it in a clean container and fails if FastAPI or PyJWT came along. |
@@ -97,9 +102,14 @@ against LocalStack, fails with the right messages for a wrong table or bucket, a
 (The automated tests were trimmed to the essentials and no longer cover the DynamoDB and S3 stores or `/ready`; those
 were checked against LocalStack by hand, so re-check them after changing `route_store.py`, `trip_store.py`, `pack_store.py` or `/ready`.)
 
-**Not checked**: any real AWS behaviour. A first real deploy should watch:
-1. the pods use the service account `cloud-fastapi` and get AWS access (otherwise `/ready` says `AccessDeniedException`);
-2. `/ready` returns 200 and the rollout finishes;
+**Checked on AWS** (deployed with the platform's `deploy.ps1 -AllServices`, not these scripts): both pods became ready,
+so `/ready` returned 200 (the readiness probe calls it), and the service account `cloud-fastapi` gives the pods access
+to the tables and bucket.
+
+**Not checked**: these scripts against real AWS, and the rest of the service's AWS behaviour. A first real run should
+watch:
+1. `deploy-eks` renders the manifest with every placeholder filled, and the rollout finishes;
+2. a signed-in caregiver's request reaches the service (`AUTH_MODE=cognito`);
 3. the Lambda's network interfaces reach Redis and LTA (private subnets through the NAT gateway) and a run returns
    `{"activeTrips": 0, ...}` on a normal day;
 4. a message arrives on `careroute-disruptions` when a trip is active and LTA reports a disruption
@@ -112,6 +122,6 @@ were checked against LocalStack by hand, so re-check them after changing `route_
 
 ## Not covered here (needs the team)
 
-Cognito logins (user pool and the token claim names; the service runs with `AUTH_MODE=off` until then), how our API is
-exposed on the load balancer (no Ingress yet), whether M2's "pack builder" or our pack endpoint owns the route pack,
-and folding these steps into the platform's own script.
+HTTPS on the load balancer: our Ingress (in `k8s/eks/services/journey-service.yaml`) listens on HTTP only, and the
+Amplify-hosted apps can only call an `https://` API (`apps/traveller/README.md`, "Hosting on Amplify"). Also folding
+these steps into the platform's own setup.

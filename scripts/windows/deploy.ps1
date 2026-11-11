@@ -19,6 +19,7 @@
                                   __REDIS_ENDPOINT__ __CHECKINS_QUEUE_URL__
                                   __DISRUPTIONS_QUEUE_URL__ __FILES_BUCKET__
                                   __ALB_SG_ID__ __ROLE_ARN__
+                                  __COGNITO_USER_POOL_ID__ __COGNITO_CLIENT_ID__
   The image goes to ECR repository careroute-NAME (created if missing).
   __ROLE_ARN__ is read from the stack output <Name>RoleArn (e.g. checkin-service ->
   CheckinServiceRoleArn), in the platform stack or any other stack in the region.
@@ -131,6 +132,18 @@ function Publish-Service([string]$Name, [hashtable]$Outputs) {
     Write-Info "Role: $roleArn"
   }
 
+  # Logins (issue 1.5): the user pool lives in its own stack, kept between teardowns.
+  $cognitoPool = ''; $cognitoClient = ''
+  if ($text.Contains('__COGNITO_')) {
+    $cognitoStack = 'careroute-cognito'
+    $cognitoPool = Invoke-Quiet { aws cloudformation describe-stacks --stack-name $cognitoStack --region $Region --query "Stacks[0].Outputs[?OutputKey=='UserPoolId'].OutputValue" --output text }
+    $cognitoClient = Invoke-Quiet { aws cloudformation describe-stacks --stack-name $cognitoStack --region $Region --query "Stacks[0].Outputs[?OutputKey=='UserPoolClientId'].OutputValue" --output text }
+    if ($LASTEXITCODE -ne 0 -or -not $cognitoPool -or -not $cognitoClient) {
+      throw "$Name needs the Cognito stack $cognitoStack (logins). Deploy it once: README, 'Logins (Cognito)'"
+    }
+    Write-Info "User pool: $cognitoPool"
+  }
+
   # Created outside the stack, like the S3 bucket; teardown.ps1 removes careroute-* repos.
   Write-Step "[$Name] Ensuring ECR repository $repoName exists"
   Invoke-Quiet { aws ecr describe-repositories --repository-names $repoName --region $Region } | Out-Null
@@ -158,6 +171,8 @@ function Publish-Service([string]$Name, [hashtable]$Outputs) {
     '__FILES_BUCKET__'          = "careroute-files-$AccountId"
     '__ALB_SG_ID__'             = $Outputs['AlbSecurityGroupId']
     '__ROLE_ARN__'              = $roleArn
+    '__COGNITO_USER_POOL_ID__'  = $cognitoPool
+    '__COGNITO_CLIENT_ID__'     = $cognitoClient
   }
   foreach ($key in $placeholders.Keys) { $text = $text.Replace($key, [string]$placeholders[$key]) }
   # A misspelled or unsupported placeholder would otherwise reach the cluster as
@@ -167,14 +182,21 @@ function Publish-Service([string]$Name, [hashtable]$Outputs) {
   if ($left.Count -gt 0) { throw "k8s/eks/services/$Name.yaml has unknown placeholders: $($left -join ' ')" }
   [IO.File]::WriteAllText($rendered, $text, $Utf8NoBom)
 
+  # The Deployment named after the service, or (one image run as several Deployments, e.g. detectors) every
+  # Deployment labelled app.kubernetes.io/part-of: <name>. Read before applying, to know which already existed.
+  $before = @(Split-Words (Invoke-Quiet { kubectl get deployment -n $AppNamespace -l "app.kubernetes.io/part-of=$Name" -o name }))
   Invoke-Quiet { kubectl get deployment $Name -n $AppNamespace } | Out-Null
-  $existed = ($LASTEXITCODE -eq 0)
+  if ($LASTEXITCODE -eq 0) { $before += "deployment.apps/$Name" }
   Invoke-Checked { kubectl apply -f $rendered }
-  # Re-pushing the same tag does not change the spec, so force new pods to pull it.
-  if ($existed) {
-    Invoke-Checked { kubectl rollout restart "deployment/$Name" -n $AppNamespace }
+  Invoke-Quiet { kubectl get deployment $Name -n $AppNamespace } | Out-Null
+  $targets = if ($LASTEXITCODE -eq 0) { @("deployment.apps/$Name") }
+             else { @(Split-Words (Invoke-Checked { kubectl get deployment -n $AppNamespace -l "app.kubernetes.io/part-of=$Name" -o name })) }
+  if ($targets.Count -eq 0) { throw "k8s/eks/services/$Name.yaml has no Deployment named $Name or labelled app.kubernetes.io/part-of: $Name" }
+  foreach ($target in $targets) {
+    # Re-pushing the same tag does not change the spec, so force new pods to pull it.
+    if ($before -contains $target) { Invoke-Checked { kubectl rollout restart $target -n $AppNamespace } }
+    Invoke-Checked { kubectl rollout status $target -n $AppNamespace --timeout=10m }
   }
-  Invoke-Checked { kubectl rollout status "deployment/$Name" -n $AppNamespace --timeout=10m }
 }
 
 try {

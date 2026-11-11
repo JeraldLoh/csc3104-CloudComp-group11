@@ -1,0 +1,173 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  CareRoute logins (issue 1.5): a Cognito user pool with caregiver and traveller groups,
+  and the app client both web apps sign in with. Separate from the platform stack, so a
+  teardown keeps everyone's accounts; it costs nothing at this size (free tier).
+  Deploy once per AWS account with CAPABILITY_IAM acknowledged.
+
+  Who gets which account:
+    caregiver  signs up in the caregiver app with an email address. After the email is
+               confirmed, the PostConfirmation Lambda gives them a G- ID and the
+               caregiver group.
+    traveller  can't sign up. The Alert Service creates the account when a caregiver
+               adds the traveller (username = their U- ID, traveller group) and shows the
+               caregiver a setup code (the password) to sign the phone in with.
+
+  Tokens: the services read the ID token's custom:userId (G-/U- ID) and cognito:groups
+  (role), see services/alert-service/app/auth.py. Users can't change custom:userId: the
+  app client may not write it.
+
+Parameters:
+  PoolName:
+    Type: String
+    Default: careroute-users
+
+Resources:
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Ref PoolName
+      # Caregivers sign in with their email; travellers with their U- ID as the username.
+      AliasAttributes: [email]
+      AutoVerifiedAttributes: [email]
+      UsernameConfiguration:
+        CaseSensitive: false
+      Schema:
+        - Name: email
+          AttributeDataType: String
+          Mutable: true
+          Required: false   # travellers have none
+        - Name: userId      # custom:userId, the contract ID (G-003, U-042)
+          AttributeDataType: String
+          Mutable: true     # set after the account exists (by the Lambda or the Alert Service)
+          StringAttributeConstraints: { MinLength: "3", MaxLength: "42" }
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireUppercase: false
+          RequireSymbols: false
+          TemporaryPasswordValidityDays: 7
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - { Name: verified_email, Priority: 1 }
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: false   # caregivers sign up themselves
+      VerificationMessageTemplate:
+        DefaultEmailOption: CONFIRM_WITH_CODE
+        EmailSubject: Your CareRoute code
+        EmailMessage: "Your CareRoute confirmation code is {####}"
+      LambdaConfig:
+        PostConfirmation: !GetAtt NewCaregiverFunction.Arn
+      DeletionProtection: ACTIVE   # a stack delete must not wipe every account by accident
+
+  CaregiverGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      UserPoolId: !Ref UserPool
+      GroupName: caregiver
+      Description: Caregivers (G- IDs). Sign up themselves.
+
+  TravellerGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      UserPoolId: !Ref UserPool
+      GroupName: traveller
+      Description: Travellers (U- IDs). Created by the Alert Service when a caregiver adds them.
+
+  # Public client for the two browser apps: no secret (a browser can't keep one).
+  WebClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref UserPool
+      ClientName: careroute-web
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_PASSWORD_AUTH   # the apps' own login forms (over HTTPS to Cognito)
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+      PreventUserExistenceErrors: ENABLED   # a wrong email and a wrong password look the same
+      EnableTokenRevocation: true
+      ReadAttributes: [email, email_verified, custom:userId]
+      WriteAttributes: [email]               # never custom:userId
+      IdTokenValidity: 60
+      AccessTokenValidity: 60
+      RefreshTokenValidity: 30
+      TokenValidityUnits:
+        IdToken: minutes
+        AccessToken: minutes
+        RefreshToken: days
+
+  # Gives a newly confirmed caregiver their G- ID and the caregiver group.
+  NewCaregiverFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: python3.12
+      Handler: index.handler
+      Timeout: 10
+      Role: !GetAtt NewCaregiverRole.Arn
+      Code:
+        ZipFile: |
+          """PostConfirmation trigger: a caregiver who just confirmed their email gets a G- ID and the
+          caregiver group. Travellers never get here: the Alert Service creates them already confirmed."""
+          import secrets
+
+          import boto3
+
+          cognito = boto3.client("cognito-idp")
+
+
+          def handler(event, context):
+              attrs = event["request"]["userAttributes"]
+              if event["triggerSource"] != "PostConfirmation_ConfirmSignUp" or attrs.get("custom:userId"):
+                  return event
+              pool, user = event["userPoolId"], event["userName"]
+              user_id = "G-" + secrets.token_hex(4).upper()   # same shape as the Alert Service's U- IDs
+              cognito.admin_update_user_attributes(UserPoolId=pool, Username=user, UserAttributes=[
+                  {"Name": "custom:userId", "Value": user_id}])
+              cognito.admin_add_user_to_group(UserPoolId=pool, Username=user, GroupName="caregiver")
+              print(f"new caregiver {user_id}")
+              return event
+
+  NewCaregiverRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: set-caregiver-id
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [cognito-idp:AdminUpdateUserAttributes, cognito-idp:AdminAddUserToGroup]
+                # Not !GetAtt UserPool.Arn: the pool refers to this function, so that would be a cycle
+                Resource: !Sub arn:${AWS::Partition}:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/*
+
+  NewCaregiverPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref NewCaregiverFunction
+      Principal: cognito-idp.amazonaws.com
+      SourceArn: !GetAtt UserPool.Arn
+
+Outputs:
+  UserPoolId:
+    Value: !Ref UserPool
+    Description: COGNITO_USER_POOL_ID for the services; VITE_COGNITO_USER_POOL_ID for the apps.
+  UserPoolClientId:
+    Value: !Ref WebClient
+    Description: COGNITO_CLIENT_ID for the services; VITE_COGNITO_CLIENT_ID for the apps.
+  UserPoolArn:
+    Value: !GetAtt UserPool.Arn
+  Region:
+    Value: !Ref AWS::Region
+    Description: COGNITO_REGION / VITE_COGNITO_REGION.

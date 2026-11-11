@@ -34,3 +34,13 @@ spec:
   type: NodePort
   selector: { app: journey-service }
   ports: [{ port: 8000, targetPort: 8000, nodePort: 30006 }]
+---
+# The browser opens route pack and step photo links (presigned S3 links) at localhost:4566.
+apiVersion: v1
+kind: Service
+metadata:
+  name: localstack-host
+spec:
+  type: NodePort
+  selector: { app: cloud-localstack }
+  ports: [{ port: 4566, targetPort: 4566, nodePort: 30566 }]
