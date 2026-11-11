@@ -1,8 +1,12 @@
 # local stack on kind plus the caregiver and traveller apps and optionally one simulated trip
 #   .\scripts\windows\local-sim.ps1 -Setup                          first time and after code changes
 #   .\scripts\windows\local-sim.ps1 -Scenario off_route -Caregiver G-777
+#   .\scripts\windows\local-sim.ps1 -Cognito                        with real logins (the careroute-cognito stack)
 param(
   [switch]$Setup,
+  # Logins (issue 1.5): the Alert, Check-in and Journey Services check Cognito tokens and both apps show their login
+  # pages. Without it they use the local stand-ins ("Act as", trip links), whatever an earlier run left.
+  [switch]$Cognito,
   [ValidateSet("normal", "off_route", "wrong_direction", "long_dwell", "normal_bus_wait", "poor_gps")]
   [string]$Scenario,
   [string]$Caregiver = "G-003",
@@ -31,11 +35,11 @@ $Images = [ordered]@{
   "cloud-detectors"  = "services/detectors"
   "coordinator"      = "services/coordinator"
   "aggregator"       = "services/aggregator"
-  "heartbeat-monitor" = "services/heartbeat-monitor"   # k8s/local/heartbeat-monitor.yaml runs heartbeat-monitor:local
+  "heartbeat-monitor" = "services/heartbeat-monitor"
 }
 # deployments running the images built here
 $Built = @("cloud-fastapi", "checkin-service", "alert-service", "journey-service", "easyread-service",
-  "coordinator", "aggregator", "detector-route", "detector-heading", "detector-dwell", "detector-progress")
+  "coordinator", "aggregator", "heartbeat-monitor", "detector-route", "detector-heading", "detector-dwell", "detector-progress")
 # what must be ready before a trip, ollama left out as it is optional and large
 $Deployments = @("cloud-redis", "cloud-localstack") + $Built
 # local port and the service behind it
@@ -54,6 +58,11 @@ function Run([string]$Exe, [string[]]$ArgList) {
 
 foreach ($tool in "kind", "kubectl", "npm", "node") {
   if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) { Fail "$tool is not installed" }
+}
+if ($Cognito) {
+  # a simulated trip's check-ins carry no login token, so the Check-in Service would refuse every one
+  if ($Scenario) { Fail "-Scenario sends check-ins without a login token; run it without -Cognito" }
+  if (-not (Get-Command aws -ErrorAction SilentlyContinue)) { Fail "-Cognito needs the AWS CLI, to read the user pool's IDs" }
 }
 $Python = @("py", "python", "python3") | Where-Object { Get-Command $_ -ErrorAction SilentlyContinue } | Select-Object -First 1
 if (-not $Python) { Fail "python is not installed" }
@@ -150,10 +159,42 @@ function Initialize-Secret {
   }
 }
 
+# the user pool's IDs, from the careroute-cognito stack (repo README, "Logins (Cognito)")
+$CognitoStack = "careroute-cognito"
+$CognitoRegion = "ap-southeast-1"
+function Get-CognitoIds {
+  $json = aws cloudformation describe-stacks --stack-name $CognitoStack --region $CognitoRegion --query "Stacks[0].Outputs" --output json 2>$null
+  if ($LASTEXITCODE -ne 0) { Fail "no $CognitoStack stack in $CognitoRegion (or no AWS login), see the repo README, Logins (Cognito)" }
+  $ids = @{}
+  foreach ($o in ($json | Out-String | ConvertFrom-Json)) { $ids[$o.OutputKey] = $o.OutputValue }
+  if (-not ($ids["UserPoolId"] -and $ids["UserPoolClientId"])) { Fail "$CognitoStack has no UserPoolId or UserPoolClientId output" }
+  return $ids
+}
+
+# Applying k8s/local puts the Alert Service back on AUTH_MODE=dev; this sets the services to the mode of this run.
+$AuthServices = @("alert-service", "checkin-service", "journey-service")
+$CognitoVars = @("COGNITO_REGION", "COGNITO_USER_POOL_ID", "COGNITO_CLIENT_ID")
+function Set-AuthMode {
+  if ($Cognito) {
+    $vars = @("AUTH_MODE=cognito", "COGNITO_REGION=$CognitoRegion", "COGNITO_USER_POOL_ID=$($CognitoIds['UserPoolId'])",
+              "COGNITO_CLIENT_ID=$($CognitoIds['UserPoolClientId'])")
+    Run kubectl (@("set", "env") + ($AuthServices | ForEach-Object { "deployment/$_" }) + @("-n", $Ns) + $vars) | Out-Null
+    return
+  }
+  foreach ($d in $AuthServices) {
+    # only the settings an earlier -Cognito run added; the Alert Service's own AUTH_MODE=dev stays
+    $names = (kubectl get "deployment/$d" -n $Ns -o "jsonpath={.spec.template.spec.containers[0].env[*].name}") -split " "
+    $remove = @($CognitoVars | Where-Object { $names -contains $_ } | ForEach-Object { "$_-" })
+    if ($d -eq "alert-service") { $remove += "AUTH_MODE=dev" } elseif ($names -contains "AUTH_MODE") { $remove += "AUTH_MODE-" }
+    if ($remove.Count) { Run kubectl (@("set", "env", "deployment/$d", "-n", $Ns) + $remove) | Out-Null }
+  }
+}
+
 function Start-Stack {
   foreach ($k in "k8s/local", "k8s/local/detectors", "k8s/local/analysis", "k8s/local/expose") {
     Run kubectl @("apply", "-k", $k)
   }
+  Set-AuthMode
   # same image tags so pods only pick up new builds when restarted, never localstack as it would lose every table
   if ($Setup) { Run kubectl (@("rollout", "restart", "deployment") + $Built + @("-n", $Ns)) }
   Write-Host "waiting for the services"
@@ -181,9 +222,23 @@ function Wait-Url([string]$Url, [string]$What) {
   Fail "$What is not answering at $Url"
 }
 
+# Vite reads VITE_COGNITO_* when it starts: from this environment with -Cognito, or from an app's .env.local
+function Set-AppLogins {
+  if ($Cognito) {
+    $env:VITE_COGNITO_REGION = $CognitoRegion
+    $env:VITE_COGNITO_CLIENT_ID = $CognitoIds["UserPoolClientId"]
+    return
+  }
+  foreach ($a in "caregiver", "traveller") {
+    if ((Test-Path "apps/$a/.env.local") -and (Select-String -Path "apps/$a/.env.local" -Pattern '^VITE_COGNITO_CLIENT_ID=.+' -Quiet)) {
+      Write-Host "warning: apps/$a/.env.local turns its login pages on, but the services aren't checking Cognito tokens. Delete it, or run with -Cognito" -ForegroundColor Yellow
+    }
+  }
+}
+
 function Start-App {
   if (Test-Url $AppUrl) {
-    Write-Host "caregiver app already running"
+    Write-Host "caregiver app already running (restart it if it should switch logins on or off)"
     return $null
   }
   if (-not (Test-Path apps/caregiver/node_modules)) {
@@ -203,7 +258,7 @@ function Start-App {
 # the traveller app, where the caregiver app's trip links lead
 function Start-TravellerApp {
   if (Test-Url $TravellerUrl) {
-    Write-Host "traveller app already running"
+    Write-Host "traveller app already running (restart it if it should switch logins on or off)"
     return $null
   }
   if (-not (Test-Path apps/traveller/node_modules)) {
@@ -219,14 +274,16 @@ function Start-TravellerApp {
   return $traveller
 }
 
+$CognitoIds = if ($Cognito) { Get-CognitoIds } else { @{} }
 Initialize-Cluster
 Run kubectl @("config", "use-context", "kind-$Cluster")
 if ($Setup) { Build-Images }
 Initialize-Secret
 Start-Stack
 # 127.0.0.1, not localhost: Windows PowerShell tries ::1 first, kind only listens on IPv4, and every check
-# would time out (2 s each, 60 tries per service) before falling back
+# would time out before falling back
 foreach ($port in $Health.Keys) { Wait-Url "http://127.0.0.1:$port/health" $Health[$port] }
+Set-AppLogins
 $app = Start-App
 $traveller = Start-TravellerApp
 
@@ -235,10 +292,16 @@ try {
     & $Python -m tools.simulator live --scenario $Scenario --caregiver $Caregiver --interval $Interval
   }
   Write-Host ""
-  Write-Host "caregiver app: $AppUrl  act as $Caregiver"
-  Write-Host "traveller app: $TravellerUrl  open a trip's link from the caregiver app's Trips tab"
+  if ($Cognito) {
+    Write-Host "logins on: user pool $($CognitoIds['UserPoolId'])"
+    Write-Host "caregiver app: $AppUrl  create an account or sign in"
+    Write-Host "traveller app: $TravellerUrl  set up with a traveller's ID and setup code (repo README, Logins (Cognito))"
+  } else {
+    Write-Host "caregiver app: $AppUrl  act as $Caregiver"
+    Write-Host "traveller app: $TravellerUrl  open a trip's link from the caregiver app's Trips tab"
+  }
   Write-Host "aggregator dashboard: http://localhost:8002/dashboard"
-  Write-Host "another trip: $Python -m tools.simulator live --scenario off_route --caregiver $Caregiver"
+  if (-not $Cognito) { Write-Host "another trip: $Python -m tools.simulator live --scenario off_route --caregiver $Caregiver" }
   # keep running while either app started here runs, so stopping the script stops both
   # only real processes: anything else a function printed would give Wait-Process a null id. @() + @() flattens,
   # so a process inside such an array is still found

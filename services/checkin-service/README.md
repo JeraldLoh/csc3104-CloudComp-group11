@@ -18,7 +18,7 @@ The batch answer also says how many check-ins it handled, oldest first:
 Errors use the contract format `{"error": {"code": ..., "message": ...}}`:
 `422 invalid_request` (bad body, fix it, don't retry), `503 unavailable` (keep it in the outbox and retry),
 `503 overloaded` with a `Retry-After` header (this replica is at capacity; retry after that many
-seconds), `401 unauthorized` (only when `AUTH_REQUIRED=true`).
+seconds), `401 unauthorized` and `403 forbidden` (only with `AUTH_MODE=cognito` or `dev`: a missing or bad token, or someone else's check-ins).
 
 ## Run it
 
@@ -170,7 +170,8 @@ so they'd distort the gap distribution. When a buffered batch arrives, `lastseen
 | `MAX_BATCH` | `500` | |
 | `MAX_FUTURE_SKEW_S` | `300` | reject timestamps further in the future than this |
 | `CREATE_RESOURCES` | `false` | create the table and queues on startup (local only) |
-| `AUTH_REQUIRED` | `false` | require a Bearer token |
+| `AUTH_MODE` | `off` | `off`: nobody is checked. `dev`: trust `X-Dev-User: U-042` (local only). `cognito`: verify the traveller's Cognito ID token; only that traveller may send their check-ins |
+| `COGNITO_REGION`, `COGNITO_USER_POOL_ID`, `COGNITO_CLIENT_ID` | | the user pool (the `careroute-cognito` stack's outputs), for `AUTH_MODE=cognito` |
 | `MAX_IN_FLIGHT` | `32` | requests handled at once per replica before shedding with 503 |
 | `RETRY_AFTER_S` | `2` | `Retry-After` sent when shedding |
 | `BATCH_BUDGET_MS` | `1000` | time limit for one batch request |
@@ -212,7 +213,8 @@ next to the platform stack: both create `careroute-checkins`.
 
 ## Not done yet
 
-- **Login (waits for issue 1.5).** Tokens aren't verified yet, and there's no check that the
-  traveller owns the trip. `AUTH_REQUIRED=true` only checks that a Bearer token is present.
+- **Login (issue 1.5).** With `AUTH_MODE=cognito` the token is verified (`app/auth.py`, the same rules as the
+  Alert and Journey Services) and its traveller must be the check-in's `travellerId`. That the trip belongs
+  to the traveller isn't checked separately: the trip's context in Redis comes from these same check-ins.
 - **Throughput on AWS.** The evaluation runs against a local AWS emulator (about 45 check-ins/s),
   so it measures correctness and behaviour under failure, not AWS throughput. Measure that on EKS.

@@ -27,7 +27,8 @@ Open **http://localhost:5173/?demo=1&debug=1**.
   - **Change route** (during a trip): pretends the caregiver changed the route (bus 190 → bus 83).
   - **Reset demo**: forgets the demo trip on this device and goes back to "Hi Alex". Only works
     with `?demo=1`, so a real trip (which may hold unsent check-ins) can never be wiped.
-- A real trip link looks like `/?trip=T-001&traveller=U-042` (until login, issue 1.5).
+- A real trip link looks like `/?trip=T-001&traveller=U-042`. With logins on (`VITE_COGNITO_*`, README "Logins (Cognito)"),
+  the phone is first set up with the traveller ID and setup code from the caregiver app.
 
 The dev server forwards `/api/checkins` to the Check-in Service on `localhost:8001`,
 `/api/help` and `/api/arrived` to the Alert Service on 8005, and `/api/trips` to the Journey
@@ -228,14 +229,10 @@ and nothing else, and the Help button never moves. Status messages are calm and 
 
 ## Not done yet
 
-- Names in the pack. Profiles (M5) now exists in the Alert Service, but the Journey Service's pack still sends
-  `travellerName` and the caregiver's name and phone as `null` (it doesn't read Profiles yet, and Profiles has
-  no caregiver phone). The app accepts that: it greets with "Hi there", and the Help sheet has no Call button
-  (it tells the traveller to ask someone nearby if help can't get through).
-- On AWS, the Check-in, Journey and Alert Services are all on the load balancer (the Ingresses in
-  `k8s/eks/services/`), but it only listens on HTTP. The app on Amplify is served over HTTPS, and a browser blocks
-  an HTTPS page from calling an HTTP address, so it needs an HTTPS address in front of the load balancer
-  (CloudFront) before it can fetch packs, start or end a trip, ask for help or say it has arrived there.
-  Locally everything works (above).
-- Login: issue 1.5. `HttpTransport` already takes a `getToken` function for it.
+- The pack is built by the Journey Service (M6) at `GET /api/trips/{tripId}/pack` (stored in S3, temporary link).
+  Until Profiles (M5) exists it sends `travellerName` and the caregiver's name and phone as `null`; the app
+  accepts that, greets with "Hi there", and the Help sheet has no Call button (it tells the traveller to ask
+  someone nearby if help can't get through).
+- Login (issue 1.5, `src/auth`): every request carries the signed-in traveller's token, refreshed when the phone
+  comes back online. A token refused anyway (401/403) stops sending until the phone is set up again.
 - Actually deploying to Amplify needs the team's AWS account (steps above).

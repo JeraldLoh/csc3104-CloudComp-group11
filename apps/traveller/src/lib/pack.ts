@@ -10,6 +10,7 @@ import { getMeta, metaKeys, setMeta, type DB } from "./db";
 import { validatePack } from "./offline";
 import type { RoutePack } from "../types";
 import { API_BASE } from "../config";
+import { authHeaders } from "../auth/current";
 
 export interface LoadedPack {
   pack: RoutePack;
@@ -25,7 +26,9 @@ interface PackLink {
 
 async function fetchLink(tripId: string, f: typeof fetch): Promise<PackLink> {
   // Journey Service returns a short-lived S3 link to the pack (contracts/api.md).
-  const res = await f(`${API_BASE}/api/trips/${encodeURIComponent(tripId)}/pack`);
+  const headers = await authHeaders();   // with logins on (issue 1.5)
+  const url = `${API_BASE}/api/trips/${encodeURIComponent(tripId)}/pack`;
+  const res = await (Object.keys(headers).length ? f(url, { headers }) : f(url));
   if (!res.ok) throw new Error(`pack link: HTTP ${res.status}`);
   const link = (await res.json()) as PackLink;
   if (!link?.packUrl) throw new Error("pack link: no packUrl");

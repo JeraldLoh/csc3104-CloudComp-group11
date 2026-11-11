@@ -23,7 +23,7 @@ that problem already has an incident. **Retrying is safe**: send again if a requ
 | GET | `/health` | Process is alive |
 | GET | `/ready` | Redis and DynamoDB reachable |
 | POST | `/internal/problems` | See above |
-| POST | `/api/help` | The traveller pressed Help: an urgent incident. No login until Cognito, because a refused request for help is worse than a false alarm |
+| POST | `/api/help` | The traveller pressed Help: an urgent incident. Only Cognito checks who is asking (not `dev`), because a refused request for help is worse than a false alarm |
 | POST | `/api/arrived` | The traveller pressed "I've arrived": tells their caregivers once. Not an incident |
 | POST / GET | `/api/travellers/{travellerId}/where-are-you` | A caregiver asks "Where are you?" / the latest question and answer (`app/where.py`) |
 | GET / POST | `/api/where-are-you`, `/api/where-are-you/reply` | From the traveller's phone: the waiting question / their answer |
@@ -32,7 +32,8 @@ that problem already has an incident. **Retrying is safe**: send again if a requ
 | POST | `/api/incidents/{incidentId}/ack` | URL-encode the ID: `U-042%23T-001%23off_route%232` |
 | POST | `/api/incidents/{incidentId}/resolve` | |
 | GET | `/api/stream` | Live alerts (SSE) for the caller's travellers |
-| GET / POST | `/api/travellers` | The caller's travellers / add one (you're linked to them) |
+| GET / POST | `/api/travellers` | The caller's travellers / add one (you're linked to them). With Cognito, adding one also makes their phone login (`app/logins.py`) |
+| POST | `/api/travellers/{travellerId}/login` | A new setup code for the traveller's phone (Cognito only) |
 | GET | `/api/travellers/live` | Their current step and location, from the Check-in Service's Redis keys (`app/live.py`) |
 | GET | `/api/travellers/{travellerId}/caregivers` | Who looks after them (you must be linked already) |
 | POST | `/api/links` | `{"travellerId", "caregiverId"}`: add another caregiver (you must be linked already) |
@@ -45,9 +46,9 @@ Same login as the Journey Service, chosen with `AUTH_MODE`:
 
 | `AUTH_MODE` | Caller is | Use |
 |---|---|---|
-| `off` (default) | nobody; nothing is checked (profiles still need a caregiver) | AWS until Cognito exists |
+| `off` (default) | nobody; nothing is checked (profiles still need a caregiver) | quick local runs |
 | `dev` | whoever the `X-Dev-User: G-003` header says (`?devUser=` on `/api/stream`) | local only (`dev.ps1`, kind) |
-| `cognito` | verified from `Authorization: Bearer <JWT>` (`?token=` on `/api/stream`) | after issue 1.5 |
+| `cognito` | verified from `Authorization: Bearer <JWT>` (`?token=` on `/api/stream`) | AWS (`k8s/eks/services/alert-service.yaml`; README, "Logins (Cognito)") |
 
 With a login, a caregiver only reaches travellers linked to them in `caregiver-links`: their profiles,
 safe locations, incidents and live alerts. Anyone else gets `404 not_found`.

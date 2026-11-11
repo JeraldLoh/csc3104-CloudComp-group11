@@ -2,6 +2,7 @@
 // reach the phone until push notifications exist, so the app asks every few seconds while a trip is open.
 // The answer goes through the request queue like Help, so it keeps trying with no signal.
 import { API_BASE } from "../config";
+import { authHeaders } from "../auth/current";
 import { isOnline } from "./netsim";
 
 /** A question waiting for the traveller (the Alert Service's where-are-you request). */
@@ -22,7 +23,7 @@ export async function fetchQuestion(travellerId: string, fetchImpl: typeof fetch
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetchImpl(`${API_BASE}/api/where-are-you?travellerId=${encodeURIComponent(travellerId)}`,
-      { signal: controller.signal });
+      { signal: controller.signal, headers: await authHeaders() });   // headers: with logins on (issue 1.5)
     if (!res.ok) return null;
     const body = (await res.json()) as WhereQuestion | null;
     return body?.requestId ? body : null;
