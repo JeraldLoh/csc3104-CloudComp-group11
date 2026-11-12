@@ -5,6 +5,7 @@
   "stepIndex": 2,
   "problemType": "off_route",
   "severity": "normal",
+  "level": "important",
   "state": "open",
   "escalationLevel": 0,
   "detectionCount": 3,
