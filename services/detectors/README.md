@@ -181,6 +181,7 @@ Each env var is the field name in upper case. Defaults are in `detectors/config.
 |---|---|---|
 | `DETECTOR_ID` | none | all |
 | `REDIS_URL` | `redis://localhost:6379/0` | all |
+| `REDIS_TIMEOUT_S` | 0.2 | all (Redis connect and read timeout, so an outage still gets an abstain within the 500 ms budget) |
 | `GPS_MAX_ACCURACY_M` | 50 | all (abstain above this) |
 | `CORRIDOR_M`, `CORRIDOR_CONSECUTIVE` | 100, 3 | route-corridor, route-progress |
 | `MIN_MOVING_SPEED_MPS`, `WRONG_DIR_DEG` | 0.5, 120 | heading-speed |

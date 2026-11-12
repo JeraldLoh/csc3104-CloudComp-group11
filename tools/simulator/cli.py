@@ -10,6 +10,7 @@ from typing import List, Optional
 
 from tools.simulator import live as live_mod
 from tools.simulator import load as load_mod
+from tools.simulator import probe as probe_mod
 from tools.simulator import replay as replay_mod
 from tools.simulator.route import build_route
 from tools.simulator.scenarios import SCENARIOS, generate
@@ -140,6 +141,16 @@ def live_command(args) -> None:
         print(f"  {i['incidentId']}  {i.get('severity', '')}")
 
 
+# call every detector steadily and print counts per second, for the availability experiment
+def probe_command(args) -> None:
+    import redis  # only needed here
+
+    r = redis.Redis.from_url(args.redis, socket_connect_timeout=1, socket_timeout=1)
+    urls = [u.strip() for u in args.detectors.split(",") if u.strip()]
+    probe_mod.print_line({"start": time.time(), "rate": args.rate, "detectors": urls})
+    probe_mod.Probe(r, urls, args.rate).run(args.duration, probe_mod.print_line)
+
+
 # parse arguments and run a command
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m tools.simulator")
@@ -190,6 +201,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     live.add_argument("--seed", type=int, help="default: a new one each run")
     live.add_argument("--browser", action=argparse.BooleanOptionalAction, default=True)
 
+    probe = sub.add_parser("probe", help="call every detector steadily, one line of counts per second")
+    probe.add_argument("--detectors", default=LOCAL_DETECTORS)
+    probe.add_argument("--redis", default="redis://localhost:6379/0")
+    probe.add_argument("--rate", type=float, default=20, help="calls per second to each detector")
+    probe.add_argument("--duration", type=float, default=300, help="seconds to run")
+
     args = parser.parse_args(argv)
     if args.command == "live":
         if args.seed is None:
@@ -197,6 +214,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         if args.interval <= 0 or args.interval > 10:
             parser.error("--interval must be more than 0 and at most 10")
         live_command(args)
+        return 0
+    if args.command == "probe":
+        if args.rate <= 0 or args.duration <= 0:
+            parser.error("--rate and --duration must be more than 0")
+        probe_command(args)
         return 0
     if args.command == "load":
         load_command(args)
