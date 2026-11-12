@@ -10,7 +10,10 @@
 # looked up from the live stack and emptied before deletion, so resources added
 # to the CloudFormation template later are torn down too.
 #
-# Usage: ./scripts/macos/teardown.sh [--yes] [--stack-name NAME] [--region REGION]
+# The HTTPS stack (careroute-api-https, CloudFront in front of the ALB) is kept, like the Cognito one: no cost
+# while idle, and the next deploy reuses its https address. --delete-https removes it too.
+#
+# Usage: ./scripts/macos/teardown.sh [--yes] [--stack-name NAME] [--region REGION] [--delete-https]
 
 set -uo pipefail
 
@@ -19,6 +22,8 @@ REGION="${REGION:-ap-southeast-1}"
 CLUSTER_NAME="${CLUSTER_NAME:-careroute-cluster-1}"
 APP_NAMESPACE="${APP_NAMESPACE:-careroute}"
 LBC_POLICY_NAME="AWSLoadBalancerControllerIAMPolicy"
+HTTPS_STACK_NAME="${HTTPS_STACK_NAME:-careroute-api-https}"
+DELETE_HTTPS=false
 ASSUME_YES=false
 
 while [ $# -gt 0 ]; do
@@ -26,7 +31,8 @@ while [ $# -gt 0 ]; do
     -y|--yes)     ASSUME_YES=true; shift ;;
     --stack-name) STACK_NAME="$2"; shift 2 ;;
     --region)     REGION="$2"; shift 2 ;;
-    -h|--help)    sed -n '2,13p' "$0"; exit 0 ;;
+    --delete-https) DELETE_HTTPS=true; shift ;;
+    -h|--help)    sed -n '2,16p' "$0"; exit 0 ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
 done
@@ -263,6 +269,23 @@ done
 
 kubectl config delete-context "arn:aws:eks:$REGION:$ACCOUNT_ID:cluster/$CLUSTER_NAME" >/dev/null 2>&1 \
   && info "Removed kubeconfig context for $CLUSTER_NAME"
+
+# ---------------------------------------------------------------------------
+# CloudFront in front of the ALB (deploy.sh): kept unless --delete-https. CloudFormation switches the distribution
+# off before deleting it, which takes 5-15 minutes.
+if aws cloudformation describe-stacks --stack-name "$HTTPS_STACK_NAME" --region "$REGION" >/dev/null 2>&1; then
+  if [ "$DELETE_HTTPS" = true ]; then
+    step "Deleting the HTTPS stack $HTTPS_STACK_NAME (CloudFront, 5-15 minutes)"
+    if aws cloudformation delete-stack --stack-name "$HTTPS_STACK_NAME" --region "$REGION" \
+       && aws cloudformation wait stack-delete-complete --stack-name "$HTTPS_STACK_NAME" --region "$REGION"; then
+      info "Deleted $HTTPS_STACK_NAME"
+    else
+      warn "Could not delete $HTTPS_STACK_NAME: see its events in the CloudFormation console"
+    fi
+  else
+    info "Kept $HTTPS_STACK_NAME (CloudFront: no cost while idle, same https address next deploy). --delete-https removes it."
+  fi
+fi
 
 # ---------------------------------------------------------------------------
 step "Checking for anything still billing in $REGION"
