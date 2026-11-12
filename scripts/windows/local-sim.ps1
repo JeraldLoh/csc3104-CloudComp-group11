@@ -34,12 +34,11 @@ $Images = [ordered]@{
   "easyread-service" = "services/easyread-service"
   "cloud-detectors"  = "services/detectors"
   "coordinator"      = "services/coordinator"
-  "aggregator"       = "services/aggregator"
   "heartbeat-monitor" = "services/heartbeat-monitor"
 }
 # deployments running the images built here
 $Built = @("cloud-fastapi", "checkin-service", "alert-service", "journey-service", "easyread-service",
-  "coordinator", "aggregator", "heartbeat-monitor", "detector-route", "detector-heading", "detector-dwell", "detector-progress")
+  "coordinator", "heartbeat-monitor", "detector-route", "detector-heading", "detector-dwell", "detector-progress")
 # what must be ready before a trip, ollama left out as it is optional and large
 $Deployments = @("cloud-redis", "cloud-localstack") + $Built
 # local port and the service behind it
@@ -300,7 +299,7 @@ try {
     Write-Host "caregiver app: $AppUrl  act as $Caregiver"
     Write-Host "traveller app: $TravellerUrl  open a trip's link from the caregiver app's Trips tab"
   }
-  Write-Host "aggregator dashboard: http://localhost:8002/dashboard"
+  Write-Host "dashboard (Coordinator): http://localhost:8002/dashboard"
   if (-not $Cognito) { Write-Host "another trip: $Python -m tools.simulator live --scenario off_route --caregiver $Caregiver" }
   # keep running while either app started here runs, so stopping the script stops both
   # only real processes: anything else a function printed would give Wait-Process a null id. @() + @() flattens,

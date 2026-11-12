@@ -1,12 +1,8 @@
-"""Calls detectors: POST http://detector-<name>:8000/internal/detect (contracts/api.md).
+"""The detectors: which exist, where they are, and calling them:
+POST http://detector-<name>:8000/internal/detect (contracts/api.md).
 
-All chosen detectors are called at the same time, so a decision waits for the slowest
-one, not the sum. Each call has an overall deadline (500 ms by contract): httpx's own
-timeout applies per phase (connect, read, ...), so a detector that trickles its answer
-could otherwise take much longer.
-
-A detector that is slow, down, errors or answers garbage becomes an "abstain" vote.
-Nothing here raises: one bad detector can never block or crash the pipeline.
+All chosen detectors are called at the same time, each with a 500 ms deadline. A detector
+that is slow, down, errors or answers garbage becomes an "abstain" vote; nothing here raises.
 """
 import asyncio
 import logging
@@ -18,11 +14,38 @@ log = logging.getLogger("coordinator.detectors")
 
 VERDICTS = {"problem", "normal", "abstain"}
 
+# detectorId (contracts/examples/detector-vote.json) -> service name (contracts/api.md)
+DETECTOR_SERVICES = {
+    "route-corridor": "detector-route",
+    "heading-speed": "detector-heading",
+    "dwell-time": "detector-dwell",
+    "route-progress": "detector-progress",
+}
+ALL_DETECTORS = tuple(DETECTOR_SERVICES)
+
+
+def parse_urls(spec: str) -> dict[str, str]:
+    """DETECTOR_URLS="route-corridor=http://a:8000,dwell-time=http://b:8000" -> dict.
+    Detectors not listed use their in-cluster service name."""
+    urls = {d: f"http://{svc}:8000" for d, svc in DETECTOR_SERVICES.items()}
+    for part in filter(None, (p.strip() for p in spec.split(","))):
+        name, _, url = part.partition("=")
+        if name.strip() not in DETECTOR_SERVICES or not url.strip():
+            raise ValueError(f"bad DETECTOR_URLS entry {part!r}")
+        urls[name.strip()] = url.strip().rstrip("/")
+    return urls
+
 
 def abstain(request_id: str, detector_id: str, reason: str, latency_ms: int) -> dict:
     """detector-vote.json for a detector that didn't give a usable answer."""
     return {"requestId": request_id, "detectorId": detector_id, "verdict": "abstain",
             "problemType": None, "confidence": 0.0, "reason": reason, "latencyMs": latency_ms}
+
+
+def _ignore_late(task: asyncio.Task) -> None:
+    """A request answered or failed after its vote was already an abstain: nothing to do."""
+    if not task.cancelled():
+        task.exception()   # retrieved, so asyncio doesn't log "exception was never retrieved"
 
 
 def _reason(e: Exception) -> str:
@@ -51,9 +74,15 @@ class DetectorClient:
     async def call(self, detector_id: str, request: dict) -> dict:
         request_id = request["requestId"]
         start = time.perf_counter()
+        task = asyncio.ensure_future(self._post(detector_id, request))
+        task.add_done_callback(_ignore_late)
         try:
-            vote = await asyncio.wait_for(self._post(detector_id, request), self.timeout_s)
-        except Exception as e:  # noqa: BLE001 - any failure is an abstain, by design
+            # Not wait_for: cancelling an httpx request leaks its pooled connection.
+            done, _ = await asyncio.wait({task}, timeout=self.timeout_s)
+            if not done:
+                raise asyncio.TimeoutError
+            vote = task.result()
+        except Exception as e:  # any failure is an abstain
             ms = int((time.perf_counter() - start) * 1000)
             reason = _reason(e)
             log.warning("detector %s abstained for %s (%s, %d ms)", detector_id, request_id, reason, ms)

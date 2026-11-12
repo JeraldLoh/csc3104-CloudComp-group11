@@ -79,6 +79,7 @@ const PROBLEM_TITLES: Record<string, string> = {
   no_response: "Phone has stopped responding",
   help_requested: "Asked for help",
   disruption: "Journey affected by a disruption",
+  tracking_lost: "Can't fully check on them",
   unknown: "Something may be wrong",
 };
 

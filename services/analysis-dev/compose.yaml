@@ -3,8 +3,8 @@
 #   docker compose -f services/analysis-dev/compose.yaml up --build -d
 #   docker compose -f services/analysis-dev/compose.yaml run --rm send --seq 1
 #
-# Fault demos with fake detectors instead (see compose.fakes.yaml):
-#   docker compose -f services/analysis-dev/compose.yaml -f services/analysis-dev/compose.fakes.yaml up --build -d
+# Detectors that misbehave on demand (a fault switch in front of each, services/fault-switch):
+#   docker compose -f services/analysis-dev/compose.yaml -f evaluation/coordinator/compose.c2.yaml up --build -d
 #
 # See README.md in this folder.
 name: careroute-analysis
@@ -44,27 +44,16 @@ services:
       REDIS_URL: redis://redis:6379/0
       CHECKINS_QUEUE: careroute-checkins
       REDUNDANCY_MODE: ${REDUNDANCY_MODE:-fixed4}   # adaptive | fixed2 for the experiment
-      # Detector and Aggregator URLs: the defaults match the service names below.
-    ports: ["127.0.0.1:8000:8000"]
+      ALERT_SERVICE_URL: http://alert-service:8000
+      # Detector URLs: the defaults match the service names below.
+    ports: ["127.0.0.1:8000:8000"]   # also the dashboard: http://localhost:8000/dashboard
     depends_on:
       redis: { condition: service_healthy }
       elasticmq: { condition: service_started }
-      aggregator: { condition: service_started }
-
-  aggregator:
-    build: ../aggregator
-    image: careroute-aggregator:dev
-    environment:
-      REDIS_URL: redis://redis:6379/0
-      ALERT_SERVICE_URL: http://alert-service:8000
-    ports: ["127.0.0.1:8001:8000"]
-    depends_on:
-      redis: { condition: service_healthy }
 
   # --- The detectors (Member 4): one image, DETECTOR_ID picks the detector ---------------
   # Service names match contracts/api.md, so the Coordinator finds them without extra config.
-  # For fault demos (slow / wrong / failing detectors on demand), swap in the fakes:
-  #   docker compose -f compose.yaml -f compose.fakes.yaml up -d
+  # For slow / wrong / failing detectors on demand, add the fault switches (evaluation/coordinator/compose.c2.yaml).
 
   detector-route:
     <<: *detector

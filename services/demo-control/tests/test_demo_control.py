@@ -27,16 +27,17 @@ class FakeSqs:
 
 
 class Controls:
-    """The fakes' /control endpoints: records calls; `real` hosts answer 404 like real detectors."""
+    """The fault switches' /control endpoints and the Alert Service: records calls; `missing` hosts
+    aren't running (the stack was started without the switches)."""
 
-    def __init__(self, real=()):
+    def __init__(self, missing=()):
         self.calls = []
-        self.real = set(real)
+        self.missing = set(missing)
 
     def handler(self, req: httpx.Request) -> httpx.Response:
+        if req.url.host in self.missing:
+            raise httpx.ConnectError("name not known")
         self.calls.append((req.url.host, req.url.path, json.loads(req.content) if req.content else None))
-        if req.url.host in self.real:
-            return httpx.Response(404, json={"detail": "Not Found"})
         return httpx.Response(200, json={"ok": True})
 
 
@@ -194,25 +195,25 @@ def test_duplicate_resends_the_same_seq():
     assert len(sent) == 2 and sent[0] == sent[1]
 
 
-def test_fault_reaches_the_fakes_control():
+def test_fault_goes_to_the_switch_in_front_of_the_detector():
     controls = Controls()
     async def go():
         control, *_rest, http = await make(controls)
-        result = await control.fault("alert-service", {"mode": "error"})
+        result = await control.fault("detector-dwell", {"mode": "error"})
         await http.aclose()
         return result
     assert asyncio.run(go())[0] == 200
-    assert controls.calls == [("alert-service", "/control", {"mode": "error"})]
+    assert controls.calls == [("switch-dwell", "/control", {"mode": "error"})]   # not the real detector
 
 
-def test_fault_on_a_real_detector_says_start_the_fakes():
+def test_fault_without_the_switches_says_how_to_start_them():
     async def go():
-        control, *_rest, http = await make(Controls(real={"detector-route"}))
+        control, *_rest, http = await make(Controls(missing={"switch-route"}))
         result = await control.fault("detector-route", {"delayMs": 2000})
         await http.aclose()
         return result
     code, body = asyncio.run(go())
-    assert code == 409 and body["error"]["code"] == "not_a_fake"
+    assert code == 409 and body["error"]["code"] == "no_switch" and "compose.c2.yaml" in body["error"]["message"]
 
 
 def test_reset_clears_everything_and_reseeds_the_trip():
@@ -229,7 +230,6 @@ def test_reset_clears_everything_and_reseeds_the_trip():
     keys, context = asyncio.run(go())
     assert keys == ["trip:T-001:context", "trip:T-001:route"]
     assert context["stepIndex"] == "0" and context["routeVersion"] == "3"
-    assert ("alert-service", "/control/reset", None) in controls.calls
 
 
 def test_reset_clears_the_real_alert_services_incidents():
@@ -313,7 +313,8 @@ def test_run_endpoint():
     ("POST", "/api/demo/run", {"scenario": "teleport"}, 404),
     ("POST", "/api/demo/duplicate", None, 409),
     ("POST", "/api/demo/fault", {"target": "coordinator", "mode": "error"}, 404),
-    ("POST", "/api/demo/fault", {"target": "alert-service"}, 422),
+    ("POST", "/api/demo/fault", {"target": "alert-service", "mode": "error"}, 404),   # stop it instead
+    ("POST", "/api/demo/fault", {"target": "detector-route"}, 422),
     ("POST", "/api/demo/service", {"target": "redis", "action": "stop"}, 404),
     ("POST", "/api/demo/service", {"target": "alert-service", "action": "explode"}, 422),
 ])

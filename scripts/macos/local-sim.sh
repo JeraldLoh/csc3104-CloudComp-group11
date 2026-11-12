@@ -19,11 +19,10 @@ IMAGES=(
   "easyread-service:services/easyread-service"
   "cloud-detectors:services/detectors"
   "coordinator:services/coordinator"
-  "aggregator:services/aggregator"
   "heartbeat-monitor:services/heartbeat-monitor"
 )
 # deployments running the images built here
-BUILT=(cloud-fastapi checkin-service alert-service journey-service easyread-service coordinator aggregator heartbeat-monitor
+BUILT=(cloud-fastapi checkin-service alert-service journey-service easyread-service coordinator heartbeat-monitor
   detector-route detector-heading detector-dwell detector-progress)
 # what must be ready before a trip, ollama left out as it is optional and large
 DEPLOYMENTS=(cloud-redis cloud-localstack "${BUILT[@]}")
@@ -283,7 +282,7 @@ else
   echo "caregiver app: $APP_URL  act as $CAREGIVER"
   echo "traveller app: $TRAVELLER_URL  open a trip's link from the caregiver app's Trips tab"
 fi
-echo "aggregator dashboard: http://localhost:8002/dashboard"
+echo "dashboard (Coordinator): http://localhost:8002/dashboard"
 [ "$COGNITO" = 1 ] || echo "another trip: $PYTHON -m tools.simulator live --scenario off_route --caregiver $CAREGIVER"
 # keep running while either app started here runs, so the exit trap doesn't stop the other one
 if [ -n "$APP_PID$TRAVELLER_PID" ]; then

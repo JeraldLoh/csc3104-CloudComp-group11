@@ -29,14 +29,20 @@ busy server stops a batch after about 1 s; the sender removes those and sends th
 `503` with `{"error": {"code": "overloaded"}}` and a `Retry-After` header (seconds): the replica is at
 capacity and did nothing; retry after that long (plus random extra).
 
-## Coordinator and Aggregator (Member 3)
+## Coordinator (Member 3)
 
-The Coordinator has no public endpoint; it reads from the `careroute-checkins` queue.
+The Coordinator reads check-ins from the `careroute-checkins` queue, asks the detectors, decides
+(rules in `problem-definitions.md`) and sends confirmed problems to the Alert Service
+(`POST /internal/problems`). It used to hand the votes to a separate Aggregator
+(`POST /internal/votes`); that service is gone and the decision happens inside the Coordinator.
 
-| Service | Method | Path | Body | Returns |
-|---|---|---|---|---|
-| Aggregator | POST | `/internal/votes` | `{"requestId": "...", "checkin": {...}, "votes": [detector-vote, ...]}` | `{"decision": "problem" \| "normal", "problemType": "...", "confidence": 0.81}` |
-| Coordinator | GET | `/api/status/travellers` | — | `[{"travellerId": "U-042", "tripId": "T-001", "riskLevel": "elevated", "detectorsUsed": 4}]` |
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| GET | `/api/status/travellers` | — | `[{"travellerId": "U-042", "tripId": "T-001", "riskLevel": "elevated", "detectorsUsed": 4}]` |
+| GET | `/api/decisions?travellerId=U-042&limit=50` | — | Newest decisions first (both parameters optional; `limit` 1–200, default 50): each has `tripId`, `seq`, `k`, `votes`, `decision` (`problem` \| `normal` \| `inconclusive`), `problemType`, `confidence`, `riskBefore`, `riskAfter`, `incidentId` |
+| GET | `/dashboard` | — | The detection dashboard (HTML), built on the two endpoints above |
+
+The dashboard isn't exposed through the load balancer; open it with `kubectl port-forward`.
 
 ## Detectors (Member 4)
 
@@ -49,15 +55,34 @@ Each detector is its own service: `detector-route`, `detector-heading`, `detecto
 
 Must answer within **500 ms**. If a detector can't decide, it returns `"verdict": "abstain"`.
 
+An abstain's `reason` tells "can't judge" from "broken": a detector that failed (caught its own
+exception) starts the reason with `internal error`. The Coordinator records a call that timed out
+as `timeout` and one that errored as `error: ...`. Those three prefixes count as a failure
+(`tracking_lost` when every detector for a type fails, see `problem-definitions.md`); any other
+reason is a normal "can't judge", so don't start one with them.
+
 ## Simulator (Member 4)
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
 | POST | `/api/sim/start` | `{"scenario": "wrong_direction", "travellers": 50}` | `{"runId": "..."}` |
 | POST | `/api/sim/stop` | — | `200` |
-| POST | `/api/sim/faults` | `{"detectorId": "detector-dwell", "mode": "wrong"}` | `200` |
 
 Scenarios: `normal`, `missed_stop`, `wrong_direction`, `long_dwell`, `silence`, `tunnel`, `out_of_order`.
+
+Faulty detectors aren't made by the simulator: see the fault switch below.
+
+## Fault switch (Member 3, evaluation only)
+
+`services/fault-switch`: one in front of each real detector (`evaluation/coordinator/compose.c2.yaml`),
+with the detector's own `/internal/detect`. Never deployed; the demo calls the detectors directly.
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| POST | `/control` | `{"mode": "wrong"}`, `{"mode": "error"}`, `{"mode": "pass", "delayMs": 2000}` | the switch's settings |
+| GET | `/control` | — | the switch's settings |
+
+Modes: `pass` (the real vote), `wrong` (the real vote inverted), `error` (HTTP 500); `delayMs` delays every answer.
 
 
 ## Alert Service (Member 5)

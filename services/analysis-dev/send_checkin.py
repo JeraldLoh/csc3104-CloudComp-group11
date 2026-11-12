@@ -3,7 +3,7 @@
 Starts from contracts/examples/checkin.json, which sits on the example route (contracts/examples/route.json).
 
     send --seq 1                      on route
-    send --seq 2 --off-route          off route (about 7 km away; also outside the fake detectors' area)
+    send --seq 2 --off-route          off route (about 7 km away)
     send --seq 3 --lat 1.45 --lng 103.95
     send --seq 4 --step 1 --speed 9     on the bus step, moving (riding); slow = waiting at the stop
 """
