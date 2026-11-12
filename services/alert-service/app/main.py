@@ -26,7 +26,7 @@ from app.errors import ApiError
 from app.escalation import Escalator
 from app.events import EVENT_FOR_OUTCOME, AlertPublisher
 from app.incidents import IncidentStore, now_iso
-from app.live import ARRIVED_TTL_S, LiveTrips, arrived_key
+from app.live import ARRIVED_TTL_S, LiveTrips, arrived_key, still_near
 from app.logins import LoginUnavailable, TravellerLogins
 from app.models import (PHONE_TRAVELLER_ID, ArrivalRequest, HelpRequest, Location, NewDevice, NewLink, NewSafeLocation,
                         NewTraveller, ProblemReport, TravellerDevice, WhereReply)
@@ -49,8 +49,23 @@ where = WhereRequests(r)
 publisher = AlertPublisher(r, dynamodb, settings.travellers_table)
 devices = DeviceStore(dynamodb, settings.device_tokens_table)
 notifier = Notifier(devices, profiles.caregivers_of, make_sender(settings.firebase_credentials), publisher.traveller_name)
+
+
+def _still_where_they_stopped(incident: dict, now) -> bool | None:
+    """For a long_dwell alert: is the traveller still within DWELL_RADIUS_M of where it was raised? None = can't tell."""
+    where = incident.get("lastLocation")
+    if not where:
+        return None
+    try:
+        return still_near(r, incident["tripId"], where["lat"], where["lng"], settings.dwell_radius_m,
+                          settings.escalate_still_detected_s, now)
+    except redis.RedisError:
+        return None
+
+
 escalator = Escalator(incidents, publisher, notifier, settings.escalate_after_s, settings.escalate_max,
-                      settings.escalation_check_s, settings.escalate_within_s)
+                      settings.escalation_check_s, settings.escalate_within_s, settings.escalate_still_detected_s,
+                      _still_where_they_stopped)
 authenticator = Authenticator(settings)  # a bad AUTH_MODE / Cognito setting fails here, at startup
 # Travellers' logins (issue 1.5) only exist with Cognito; otherwise the phone is told its traveller by a link.
 logins = (TravellerLogins(boto3.client("cognito-idp", region_name=settings.cognito_region), settings.cognito_user_pool_id,

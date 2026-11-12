@@ -8,6 +8,7 @@ older than the window, which keeps a phone that has gone quiet on the map. A tra
 has `arrivedAt` set (trip:{tripId}:arrived); a trip the caregiver ended without that has no marker.
 """
 import json
+import math
 from datetime import datetime, timedelta, timezone
 
 ARRIVED_TTL_S = 24 * 3600  # as long as the Check-in Service keeps a trip's keys
@@ -76,3 +77,27 @@ class LiveTrips:
             "batteryPct": latest.get("batteryPct"),
             "trail": [[c["lat"], c["lng"]] for c in reversed(checkins)],  # oldest first, as a line is drawn
         }
+
+
+def _metres(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    """Distance on the Earth's surface (haversine)."""
+    a = (math.sin(math.radians(lat2 - lat1) / 2) ** 2
+         + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(math.radians(lng2 - lng1) / 2) ** 2)
+    return 2 * 6_371_000 * math.asin(math.sqrt(a))
+
+
+def still_near(redis_client, trip_id: str, lat: float, lng: float, radius_m: float, fresh_s: float,
+               now: datetime) -> bool | None:
+    """Is the trip's latest check-in within `radius_m` of (lat, lng)? None if there's no recent check-in to tell:
+    a phone that has gone quiet is the Heartbeat Monitor's no_response, not a long dwell."""
+    pipe = redis_client.pipeline(transaction=False)
+    pipe.get(f"hb:{trip_id}:lastseen")
+    pipe.lindex(f"trip:{trip_id}:recent", 0)
+    seen, newest = pipe.execute()
+    last_seen = _parse_time(seen)
+    if not last_seen or not newest or now - last_seen > timedelta(seconds=fresh_s):
+        return None
+    checkin = json.loads(newest)
+    if checkin.get("lat") is None or checkin.get("lng") is None:
+        return None
+    return _metres(lat, lng, checkin["lat"], checkin["lng"]) <= radius_m

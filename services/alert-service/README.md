@@ -73,10 +73,23 @@ The apps get the public web config from `firebase-web-config.json` in the repo r
 
 ## Escalation (issue 5.4)
 
-An **urgent** alert still **open** (nobody acknowledged it) 2 minutes after it opened, or after it was last sent again,
-is sent again: a push to the traveller's caregivers ("Still not answered: ...") and an `incident.escalated` event, so
-the dashboard highlights it and says how often it's been sent. Up to 3 times; acknowledging or resolving stops it, and
-a reopened alert starts again (`app/escalation.py`).
+Every new or reopened alert is pushed **once**. Whether it's sent again depends on its **level** (`app/levels.py`):
+
+| Level | Problem types | Push title | Sent again (if nobody acknowledges) |
+|---|---|---|---|
+| urgent | `help_requested`, `no_response`, `unknown` | "Urgent: Alex" | every 2 min, up to 3 times ("Still not answered: Alex") |
+| important | `off_route`, `wrong_direction`, `missed_stop`, `long_dwell` | "Check on Alex" | the same, but only while it's still happening ("Still happening: Alex") |
+| notice | `tracking_lost`, `disruption` | "About Alex" | never |
+
+"Still happening" means the detectors reported it again in the last 60 s (`ESCALATE_STILL_DETECTED_S`), so a traveller
+who has rejoined the route isn't reported again; if it starts again, so do the reminders. `long_dwell` is the
+exception: the dwell detector stops answering during a long stop, so it's still happening while the phone's latest
+check-in is within 30 m (`DWELL_RADIUS_M`) of where they stopped. A phone that has gone quiet is `no_response`, which
+is urgent. Only urgent alerts have severity `urgent`; every alert also has its `level`.
+
+A reminder is a push to the traveller's caregivers and an `incident.escalated` event, so the dashboard highlights it
+and says how often it's been sent. Acknowledging or resolving stops it, and a reopened alert starts again
+(`app/escalation.py`).
 
 Every replica checks every 15 s. Each level is claimed with a conditional write on `escalationLevel`, so with several
 replicas it's still sent once, and the incidents table is the only state, so a restart loses nothing. The timings are

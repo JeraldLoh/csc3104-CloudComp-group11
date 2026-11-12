@@ -17,6 +17,7 @@ from typing import Callable, Iterable
 
 from app.events import alert_message
 from app.incidents import _from_dynamo, _to_dynamo, now_iso
+from app.levels import IMPORTANT, URGENT, level_of
 
 log = logging.getLogger("alert.push")
 
@@ -112,22 +113,25 @@ class Notifier:
         return self.sender is not None
 
     def incident(self, incident: dict, outcome: str) -> None:
-        """A new or reopened urgent alert. Repeat detections ("updated") don't push again; escalation does."""
-        if not self.enabled or incident["severity"] != "urgent" or outcome not in ("created", "reopened"):
+        """A new or reopened alert, whatever its level (levels.py). Repeat detections ("updated") don't push again;
+        escalation does, for the levels that escalate."""
+        if not self.enabled or outcome not in ("created", "reopened"):
             return
-        self._alert(incident, "Urgent")
+        level = level_of(incident["problemType"])
+        self._alert(incident, {URGENT: "Urgent: {name}", IMPORTANT: "Check on {name}"}.get(level, "About {name}"))
 
     def escalated(self, incident: dict) -> None:
-        """An urgent alert nobody has acknowledged (escalation.py). Same tag, so it replaces the earlier one."""
+        """An alert nobody has acknowledged (escalation.py). Same tag, so it replaces the earlier one."""
         if self.enabled:
-            self._alert(incident, "Still not answered")
+            urgent = level_of(incident["problemType"]) == URGENT
+            self._alert(incident, "Still not answered: {name}" if urgent else "Still happening: {name}")
 
-    def _alert(self, incident: dict, prefix: str) -> None:
+    def _alert(self, incident: dict, title: str) -> None:
         traveller_id = incident["travellerId"]
         self.run(self._send, lambda: self.caregivers_of(traveller_id), lambda: {
             "kind": "alert", "travellerId": traveller_id, "incidentId": incident["incidentId"],
-            "url": f"/#dashboard/{traveller_id}",
-            "title": f"{prefix}: {self.name_of(traveller_id)}",
+            "level": level_of(incident["problemType"]), "url": f"/#dashboard/{traveller_id}",
+            "title": title.format(name=self.name_of(traveller_id)),
             "body": alert_message(incident, self.name_of(traveller_id)),
         })
 

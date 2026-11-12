@@ -17,11 +17,9 @@ from botocore.exceptions import ClientError
 
 from app.config import settings
 from app.errors import ApiError
+from app.levels import level_of, severity_of
 from app.models import ProblemReport
 
-# "unknown": detectors agree something is wrong but not what, so the caregiver should check.
-URGENT_PROBLEMS = {"off_route", "wrong_direction", "missed_stop", "long_dwell", "no_response",
-                   "help_requested", "disruption", "tracking_lost", "unknown"}
 RESOLVED_TTL_S = 30 * 24 * 3600  # contracts: incidents are deleted 30 days after being resolved
 TRAVELLER_INDEX = "travellerId-createdAt-index"
 UNKNOWN_STEP = "unknown"  # incident ID's last part when a report's stepIndex is null
@@ -112,7 +110,8 @@ class IncidentStore:
             "tripId": report.tripId,
             "stepIndex": report.stepIndex,
             "problemType": report.problemType,
-            "severity": "urgent" if report.problemType in URGENT_PROBLEMS else "normal",
+            "severity": severity_of(report.problemType),
+            "level": level_of(report.problemType),  # urgent / important / notice (levels.py)
             "state": "open",
             "escalationLevel": 0,
             "detectionCount": 1,
@@ -217,17 +216,18 @@ class IncidentStore:
         )
         return [_from_dynamo(item) for item in resp["Items"]]
 
-    def open_urgent(self, below_level: int) -> list[dict]:
-        """Urgent incidents nobody has acknowledged, escalated fewer than `below_level` times (escalation.py).
+    def open_of_types(self, problem_types: list[str], below_level: int) -> list[dict]:
+        """Incidents of these types nobody has acknowledged, escalated fewer than `below_level` times
+        (escalation.py). By problem type rather than a stored level, so incidents from before levels count too.
 
         A filtered Scan reads the whole table. That's fine at this project's size and survives any restart; a large
-        deployment would keep a sparse index of open urgent incidents instead."""
+        deployment would keep a sparse index of open escalating incidents instead."""
+        types = {f":t{i}": {"S": t} for i, t in enumerate(problem_types)}
         found, kwargs = [], {
             "TableName": self.table,
-            "FilterExpression": "#state = :open AND severity = :urgent AND escalationLevel < :below",
+            "FilterExpression": f"#state = :open AND problemType IN ({', '.join(types)}) AND escalationLevel < :below",
             "ExpressionAttributeNames": {"#state": "state"},
-            "ExpressionAttributeValues": {":open": {"S": "open"}, ":urgent": {"S": "urgent"},
-                                          ":below": {"N": str(below_level)}},
+            "ExpressionAttributeValues": {":open": {"S": "open"}, ":below": {"N": str(below_level)}, **types},
         }
         while True:
             resp = self.db.scan(**kwargs)
