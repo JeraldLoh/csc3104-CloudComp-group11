@@ -64,6 +64,11 @@ fix it found (`results/e9-availability-before.*` and `results/e9-availability.*`
 - **Liveness doesn't touch Redis,** so no healthy pod was restarted for a fault that wasn't its own (no false
   positives).
 - Before the Redis outage, including both pod crashes, 99.0% of calls were answered in budget in both runs.
+- 35 to 55 s after both dwell-time pods were killed (about 30 to 50 s after their replacements were ready), 7 of 40
+  calls to dwell-time failed in four separate seconds while both pods counted as ready. The probe doesn't record the
+  kind of failure and the pods' logs are gone, so the cause is unknown. One possibility, not verified, is calls still
+  routed to the force-deleted pods' old addresses. Recording the failure kind and the Service's endpoints in the
+  probe would show the cause.
 
 **Readiness timing trade-off.** Each readiness setting was run against a 3 s Redis pause (`CLIENT PAUSE`, which
 should not pull pods) and then a 30 s outage (which should):
