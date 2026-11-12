@@ -1,6 +1,7 @@
 # E9 availability, real faults in the local kind cluster while the probe calls every detector
 #   python evaluation/detectors/availability.py        from the repo root, needs kubectl on the kind cluster
 # it crashes one route-corridor pod, then both dwell-time pods, then stops redis for 30 s
+# with --readiness it compares readiness probe settings on a 3 s redis pause and a 30 s outage
 # redis keeps nothing on disk locally so its live trip data is lost, never run this during a demo
 
 import argparse
@@ -22,6 +23,15 @@ FAULTS = [
     (210, "redis starts again", ["scale", "deployment/cloud-redis", "--replicas=1"])
 ]
 DURATION_S = 300
+# a 3 s pause should not pull pods and a 30 s outage should, for each readiness setting
+READINESS_FAULTS = [
+    (20, "redis pauses for 3 s", ["exec", "deploy/cloud-redis", "--", "redis-cli", "CLIENT", "PAUSE", "3000", "ALL"]),
+    (50, "redis stops", ["scale", "deployment/cloud-redis", "--replicas=0"]),
+    (80, "redis starts again", ["scale", "deployment/cloud-redis", "--replicas=1"])
+]
+READINESS_DURATION_S = 120
+# name, periodSeconds, failureThreshold
+READINESS_SETTINGS = [("default", 5, 3), ("fast", 2, 2)]
 JOB_YAML = """
 apiVersion: batch/v1
 kind: Job
@@ -52,10 +62,10 @@ def ready():
 
 
 # start the probe job and return its start time from its first log line
-def start_probe():
+def start_probe(duration=DURATION_S):
     kubectl("delete", "job", JOB, "--ignore-not-found", "--wait=true")
     urls = ",".join(f"http://{d}:8000" for d in DETECTORS)
-    manifest = JOB_YAML.format(job=JOB, ns=NS, duration=DURATION_S, urls=urls)
+    manifest = JOB_YAML.format(job=JOB, ns=NS, duration=duration, urls=urls)
     subprocess.run(["kubectl", "apply", "-f", "-"], input=manifest, text=True, check=True, capture_output=True)
     for _ in range(120):
         out = kubectl("logs", f"job/{JOB}", check=False)
@@ -66,9 +76,9 @@ def start_probe():
 
 
 # inject the faults on time and sample ready replicas every second until the probe ends
-def run_faults(start):
-    samples, events, pending = [], [], list(FAULTS)
-    while time.time() < start + DURATION_S + 5:
+def run_faults(start, faults=FAULTS, duration=DURATION_S):
+    samples, events, pending = [], [], list(faults)
+    while time.time() < start + duration + 5:
         t = time.time() - start
         while pending and t >= pending[0][0]:
             _, name, args = pending.pop(0)
@@ -125,6 +135,63 @@ def summarise(lines, samples, events):
     }
 
 
+# wait until every detector has 2 ready replicas and redis 1
+def wait_healthy():
+    while True:
+        now = ready()
+        if all(now.get(d, 0) >= 2 for d in DETECTORS) and now.get("cloud-redis", 0) >= 1:
+            return
+        time.sleep(2)
+
+
+# set every detector readiness probe and wait for the new pods
+def set_readiness(probes):
+    for d, probe in probes.items():
+        patch = [{"op": "replace", "path": "/spec/template/spec/containers/0/readinessProbe", "value": probe}]
+        kubectl("patch", "deployment", d, "--type=json", "-p", json.dumps(patch))
+    for d in probes:
+        kubectl("rollout", "status", f"deployment/{d}", "--timeout=180s")
+    wait_healthy()
+
+
+# probe calls and ready replicas through a pause and an outage with one readiness setting
+def readiness_run(name, period, threshold, original):
+    set_readiness({d: {**original[d], "periodSeconds": period, "failureThreshold": threshold} for d in DETECTORS})
+    start = start_probe(READINESS_DURATION_S)
+    print(f"{name}: period {period} s, threshold {threshold}", flush=True)
+    samples, events = run_faults(start, READINESS_FAULTS, READINESS_DURATION_S)
+    kubectl("wait", "--for=condition=complete", f"job/{JOB}", "--timeout=120s", check=False)
+    lines = [json.loads(ln) for ln in kubectl("logs", f"job/{JOB}").splitlines() if ln.startswith('{"t"')]
+    at = {e["fault"]: e["t"] for e in events}
+    pause, down, up = at["redis pauses for 3 s"], at["redis stops"], at["redis starts again"]
+    any_pulled = lambda s: any(s.get(d, 0) < 2 for d in DETECTORS)  # noqa: E731
+    return {
+        "setting": name, "periodSeconds": period, "failureThreshold": threshold,
+        # a pod pulled for the 3 s pause is a false positive
+        "pauseLeftServiceS": recovered_after([s for s in samples if s["t"] < down], pause, any_pulled),
+        "outageFirstPodLeftS": recovered_after(samples, down, any_pulled),
+        "outageAllPodsLeftS": recovered_after(samples, down, lambda s: all(s.get(d, 0) == 0 for d in DETECTORS)),
+        "readyAfterRedisBackS": recovered_after(samples, up, lambda s: all(s.get(d, 0) >= 2 for d in DETECTORS)),
+        "outageCalls": window(lines, down, up),
+        "events": events, "samples": samples
+    }
+
+
+# both readiness settings then the original probes back
+def readiness_experiment(out):
+    original = {d: json.loads(kubectl("get", "deployment", d, "-o",
+                                      "jsonpath={.spec.template.spec.containers[0].readinessProbe}")) for d in DETECTORS}
+    wait_healthy()
+    try:
+        runs = [readiness_run(name, period, threshold, original) for name, period, threshold in READINESS_SETTINGS]
+    finally:
+        set_readiness(original)
+        print("readiness probes restored", flush=True)
+    (out / "e9-readiness.json").write_text(json.dumps(runs, indent=1) + "\n")
+    for r in runs:
+        print(json.dumps({k: v for k, v in r.items() if k not in ("events", "samples")}))
+
+
 # sent and real votes per second and detector, late answers can arrive as a second line for the same second
 def per_second(lines, url):
     totals = {}
@@ -169,8 +236,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", type=Path, default=HERE / "results")
     ap.add_argument("--chart-only", action="store_true", help="redraw from results/e9-availability.json")
+    ap.add_argument("--readiness", action="store_true", help="compare readiness probe settings on a pause and an outage")
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
+    if args.readiness:
+        readiness_experiment(args.out)
+        return
     saved = args.out / "e9-availability.json"
     if args.chart_only:
         data = json.loads(saved.read_text())
