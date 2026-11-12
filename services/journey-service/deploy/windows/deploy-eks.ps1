@@ -179,8 +179,16 @@ try {
   Invoke-Quiet { kubectl get namespace $AppNamespace } | Out-Null
   if ($LASTEXITCODE -ne 0) { throw "Namespace $AppNamespace does not exist in the cluster. The platform's deploy script creates it." }
   $SecretFile = Join-Path $WorkDir 'secret.env'
-  [IO.File]::WriteAllLines($SecretFile, [string[]]($Keys.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }), $Utf8NoBom)
-  $SecretYaml = Invoke-Checked { kubectl create secret generic journey-api-keys --from-env-file=$SecretFile -n $AppNamespace --dry-run=client -o yaml }
+  if ($Keys.Count -eq 0) {
+    # No keys at all: an empty Secret, so the service still starts (the manifest reads every key as optional) and a
+    # re-run after removing the keys from .env clears them from the cluster too.
+    Write-Info "WARNING: no API keys found in $EnvFile. Creating an empty Secret so the Journey Service still starts,"
+    Write-Info '         but live LTA data, OneMap route planning and Google step photos need the keys: add them and re-run this script.'
+    $SecretYaml = Invoke-Checked { kubectl create secret generic journey-api-keys -n $AppNamespace --dry-run=client -o yaml }
+  } else {
+    [IO.File]::WriteAllLines($SecretFile, [string[]]@($Keys.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }), $Utf8NoBom)
+    $SecretYaml = Invoke-Checked { kubectl create secret generic journey-api-keys --from-env-file=$SecretFile -n $AppNamespace --dry-run=client -o yaml }
+  }
   $SecretYaml | kubectl apply -f -
   if ($LASTEXITCODE -ne 0) { throw 'Could not create the Secret' }
 
