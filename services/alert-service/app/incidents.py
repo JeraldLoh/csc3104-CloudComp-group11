@@ -20,7 +20,8 @@ from app.errors import ApiError
 from app.models import ProblemReport
 
 # "unknown": detectors agree something is wrong but not what, so the caregiver should check.
-URGENT_PROBLEMS = {"no_response", "help_requested", "unknown"}
+URGENT_PROBLEMS = {"off_route", "wrong_direction", "missed_stop", "long_dwell", "no_response",
+                   "help_requested", "disruption", "tracking_lost", "unknown"}
 RESOLVED_TTL_S = 30 * 24 * 3600  # contracts: incidents are deleted 30 days after being resolved
 TRAVELLER_INDEX = "travellerId-createdAt-index"
 UNKNOWN_STEP = "unknown"  # incident ID's last part when a report's stepIndex is null
