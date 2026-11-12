@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import type { CareRoute } from "../app/useCareRoute";
+import type { Guide } from "../app/useGuide";
 
 const ago = (t: number | null) => (t ? `${Math.max(0, Math.round((Date.now() - t) / 1000))} s ago` : "never");
 const inS = (t: number | null) => (t ? `in ${Math.max(0, Math.round((t - Date.now()) / 1000))} s` : "-");
 
 /** For the team and the demo video (?debug=1). Not shown to travellers. */
-export function DebugPanel({ app }: { app: CareRoute }) {
+export function DebugPanel({ app, guide }: { app: CareRoute; guide?: Guide }) {
   const [, tick] = useState(0);
   useEffect(() => {
     const t = setInterval(() => tick((n) => n + 1), 1000); // keep "x s ago" current
@@ -25,6 +26,9 @@ export function DebugPanel({ app }: { app: CareRoute }) {
     ["Other requests waiting", app.requests?.pending.map((r) => `${r.label} (${r.attempts})`).join(", ") || "none"],
     ["Position", app.fix ? `${app.fix.lat}, ${app.fix.lng} ±${app.fix.accuracyM ?? "?"} m` : "none yet"],
     ["Step index", app.stepIndex],
+    ["Step by step", !guide?.on ? "off (whole step shown)" : guide.started ? "on: riding" : "on: waiting to get on"],
+    ["Stops left", guide?.stopsLeft ?? "-"],
+    ["Along the ride", guide?.progressM != null ? `${guide.progressM} m` : "-"],
     ["App stored offline", app.offline.appShell ? "yes" : "no (dev server or first visit)"],
     ["Trip media stored", app.offline.media ? `${app.offline.media.done}/${app.offline.media.total}${app.offline.media.failed.length ? `, ${app.offline.media.failed.length} failed` : ""}` : "-"],
     ["Route version", app.loaded ? `${app.loaded.pack.packVersion} (${app.loaded.source})` : "-"],

@@ -6,7 +6,8 @@ app's tests check the pack the phone actually receives, not a hand-written copy 
 
 Run it again whenever the Journey Service changes what goes in a pack. The route is the journey-service tests'
 sample route (Punggol, walk + bus 190) with AI-style wording and landmarks: one with its own photo per step, and
-one that has no photo because it would look the same as the step photo (sameView "step").
+one that has no photo because it would look the same as the step photo (sameView "step"); the bus ride's stops and
+the landmarks with their positions, for the step-by-step guide (src/lib/guide.ts).
 """
 import json
 import sys
@@ -36,9 +37,15 @@ class Bucket:
         return f"https://careroute-files.s3.ap-southeast-1.amazonaws.com/{key}?X-Amz-Signature=test"
 
 
-def landmark(name, lat, lng, photo_key=None, same_view=None):
-    return {"name": name, "kind": "mall", "lat": lat, "lng": lng, "seenFrom": None,
+def landmark(name, lat, lng, photo_key=None, same_view=None, seen_from=None):
+    return {"name": name, "kind": "mall", "lat": lat, "lng": lng, "seenFrom": seen_from,
             "photoKey": photo_key, "sameView": same_view}
+
+
+# The bus ride's 7 stops (6 to ride) from Punggol Int to Opp Block 221, with positions, as planning.py keeps them
+STOP_NAMES = ["Punggol Int", "Blk 268", "Blk 261", "Waterway Pt", "Blk 230", "Opp Blk 222", "Opp Block 221"]
+STOPS = [{"code": f"65{i:03d}", "name": name, "lat": round(1.4052 + (1.3935 - 1.4052) * i / 6, 5),
+          "lng": round(103.9024 + (103.8962 - 103.9024) * i / 6, 5)} for i, name in enumerate(STOP_NAMES)]
 
 
 def main() -> None:
@@ -46,12 +53,15 @@ def main() -> None:
     steps[0] = {**steps[0], "photoKey": "media/streetview/v2/1.40520_103.90240.jpg",
                 "easyRead": "Walk to the bus stop at Punggol Interchange. Look for Waterway Point on your left.",
                 "landmarks": [landmark("Waterway Point", 1.4064, 103.9022,
-                                       "media/streetview/v2/1.40640_103.90220_from_1.40450_103.90180.jpg")]}
+                                       "media/streetview/v2/1.40640_103.90220_from_1.40450_103.90180.jpg",
+                                       seen_from=[1.4045, 103.9018])]}
     steps[1] = {**steps[1], "photoKey": "media/streetview/v2/1.39350_103.89620.jpg",
                 "easyRead": "Wait for bus number 190. Tap your card. Count 6 stops. "
                             "Look out for Oasis Terraces on your right. Press the bell. Get off at Block 221.",
+                "stops": STOPS,
                 "landmarks": [landmark("Oasis Terraces", 1.4026, 103.9128,
-                                       "media/streetview/v2/1.40260_103.91280_from_1.40100_103.91000.jpg"),
+                                       "media/streetview/v2/1.40260_103.91280_from_1.40100_103.91000.jpg",
+                                       seen_from=[1.401, 103.91]),
                               landmark("Block 221", 1.3936, 103.8963, same_view="step")]}
 
     client = JourneyClient(SETTINGS, redis_client=fakeredis.FakeRedis(), pack_store=Bucket(),

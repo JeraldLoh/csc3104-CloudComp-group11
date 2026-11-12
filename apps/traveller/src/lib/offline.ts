@@ -17,7 +17,7 @@
 //
 // Downloads happen in the background and never block "Start my trip": instructions are
 // text, so a missing photo only means the pictogram is shown instead.
-import type { Landmark, RoutePack } from "../types";
+import type { Landmark, PackStop, RoutePack } from "../types";
 
 export const mediaCacheName = (tripId: string) => `careroute-media-${tripId}`;
 
@@ -58,6 +58,7 @@ export function validatePack(x: unknown): RoutePack {
     if (typeof st.easyRead !== "string" || !st.easyRead.trim()) fail(`step ${i}: no easyRead text`);
     if (typeof st.lat !== "number" || typeof st.lng !== "number") fail(`step ${i}: no location`);
     st.landmarks = cleanLandmarks(st.landmarks);
+    if ("stops" in st) st.stops = cleanStops(st.stops);
   });
   if (!Array.isArray(p.path) || p.path.length < 2) fail("path needs at least 2 points");
   const c = p.caregiver as Record<string, unknown> | undefined;
@@ -79,9 +80,31 @@ function cleanLandmarks(x: unknown): Landmark[] {
     if (!m || typeof m !== "object" || typeof m.name !== "string" || !m.name.trim()) continue;
     const photoUrl = typeof m.photoUrl === "string" && m.photoUrl ? m.photoUrl : null;
     const sameView = typeof m.sameView === "string" && m.sameView ? m.sameView : null;
-    out.push({ name: m.name.trim(), photoUrl, ...(sameView ? { sameView } : {}) });
+    // Positions (newer packs) let the phone show the landmark when the traveller gets near it (guide.ts)
+    const place = isLatLng(m.lat, m.lng) ? { lat: m.lat as number, lng: m.lng as number } : {};
+    const seen = m.seenFrom as unknown[] | null | undefined;
+    const seenFrom: [number, number] | null = Array.isArray(seen) && isLatLng(seen[0], seen[1])
+      ? [seen[0] as number, seen[1] as number] : null;
+    out.push({ name: m.name.trim(), photoUrl, ...(sameView ? { sameView } : {}), ...place, ...(seenFrom ? { seenFrom } : {}) });
   }
   return out;
+}
+
+const isLatLng = (lat: unknown, lng: unknown) =>
+  typeof lat === "number" && typeof lng === "number" && Number.isFinite(lat) && Number.isFinite(lng)
+  && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
+
+/**
+ * A ride's stops, for counting the stops left (guide.ts): extra help like landmarks, so a bad list never fails the
+ * trip. A stop without a usable position keeps null there (the guide then doesn't count that ride).
+ */
+function cleanStops(x: unknown): PackStop[] {
+  if (!Array.isArray(x)) return [];
+  return (x as Record<string, unknown>[]).filter((s) => s && typeof s === "object").map((s) => ({
+    name: typeof s.name === "string" && s.name.trim() ? s.name.trim() : null,
+    lat: isLatLng(s.lat, s.lng) ? (s.lat as number) : null,
+    lng: isLatLng(s.lat, s.lng) ? (s.lng as number) : null,
+  }));
 }
 
 /** Every photo and audio file the pack refers to, landmark photos included, as absolute URLs. */

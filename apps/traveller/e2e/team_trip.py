@@ -5,6 +5,7 @@ except the phone's GPS.
   -> saves and approves a route with their own photos and landmarks, makes a trip (Journey Service)
   -> the traveller opens the trip link (traveller app): pack and photos from S3, Start my trip
   -> check-ins every 10 s (Check-in Service) -> the caregiver's live view (Alert Service)
+  -> on the bus, one thing at a time: getting on, a countdown of the stops, the landmark as it nears, the bell
   -> off the route: Check-in Service -> SQS -> Coordinator -> detectors -> Aggregator -> an off_route incident
   -> Help -> a help_requested incident -> I've arrived -> arrival recorded, trip ended (Journey Service)
 
@@ -73,6 +74,17 @@ def png(rgb: tuple[int, int, int], w: int = 64, h: int = 48) -> bytes:
         chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b"")
 
 
+# The bus ride runs straight from Punggol Int to Opp Block 221; on_ride(m) is the point m metres along it.
+RIDE_FROM, RIDE_TO = (1.4052, 103.9024), (1.3935, 103.8962)
+RIDE_M = 1466
+OASIS_M = RIDE_M / 2
+
+
+def on_ride(m: float) -> tuple[float, float]:
+    f = max(0.0, min(1.0, m / RIDE_M))
+    return (round(RIDE_FROM[0] + (RIDE_TO[0] - RIDE_FROM[0]) * f, 6), round(RIDE_FROM[1] + (RIDE_TO[1] - RIDE_FROM[1]) * f, 6))
+
+
 def make_trip(h: httpx.Client) -> tuple[str, str, str]:
     if args.traveller:
         traveller = args.traveller
@@ -84,6 +96,9 @@ def make_trip(h: httpx.Client) -> tuple[str, str, str]:
     stop = lambda name, code, lat, lng: {"name": name, "code": code, "lat": lat, "lng": lng}
     home, interchange, blk = (stop("Home", None, 1.404, 103.901), stop("Punggol Int", "65009", 1.4052, 103.9024),
                               stop("Opp Block 221", "65221", 1.3935, 103.8962))
+    # The ride's 7 stops (6 to ride) with their positions, as the Journey Service plans them: the app counts them down
+    ride_stops = [stop(name, f"65{i:03d}", *on_ride(i * RIDE_M / 6)) for i, name in
+                  enumerate(["Punggol Int", "Blk 268", "Blk 261", "Waterway Pt", "Blk 230", "Opp Blk 222", "Opp Block 221"])]
     route = {
         "travellerId": traveller, "caregiverId": args.caregiver, "name": "Home to Clinic (e2e)",
         "origin": {"name": "Home", "lat": 1.404, "lng": 103.901},
@@ -93,7 +108,7 @@ def make_trip(h: httpx.Client) -> tuple[str, str, str]:
              "easyRead": "Walk to the bus stop at Punggol Interchange. Look for Waterway Point on your left.",
              "underground": False},
             {"stepIndex": 1, "mode": "bus", "instruction": "Take bus 190 to Opp Block 221", "from": interchange, "to": blk,
-             "line": "190", "underground": False,
+             "line": "190", "underground": False, "stops": ride_stops,
              "easyRead": "Wait for bus number 190. Tap your card. Count 6 stops. Look out for Oasis Terraces on your "
                          "right. Press the bell. Get off at Block 221.",
              "backup": {"instruction": "If bus 190 does not come in 20 minutes, take bus 83.", "line": "83"}},
@@ -114,7 +129,9 @@ def make_trip(h: httpx.Client) -> tuple[str, str, str]:
     saved["steps"][0].update(photoKey=keys["step0"], landmarks=[
         {"name": "Waterway Point", "kind": "mall", "lat": 1.4064, "lng": 103.9022, "photoKey": keys["waterway"]}])
     saved["steps"][1].update(photoKey=keys["step1"], landmarks=[
-        {"name": "Oasis Terraces", "kind": "mall", "lat": 1.4026, "lng": 103.9128, "photoKey": keys["oasis"]},
+        # seen from halfway along the ride: the app shows it as the bus gets near there
+        {"name": "Oasis Terraces", "kind": "mall", "lat": 1.4026, "lng": 103.9128, "photoKey": keys["oasis"],
+         "seenFrom": list(on_ride(OASIS_M))},
         {"name": "Block 221", "lat": 1.3936, "lng": 103.8963, "sameView": "step"}])
     body = {k: v for k, v in saved.items() if k not in ("routeId", "approved", "createdAt", "updatedAt")}
     h.put(f"{args.journey}/api/routes/{rid}", json=body, headers=G).raise_for_status()
@@ -171,6 +188,22 @@ async def main() -> int:
             clean_up(h, traveller, rid, trip)
 
 
+async def lines(page) -> list[str]:
+    """The step's lines on screen now."""
+    text = page.locator("#step-text")
+    return [t.strip() for t in (await text.inner_text()).split("\n") if t.strip()] if await text.count() else []
+
+
+async def ride(ctx, start: float, end: float) -> None:
+    """The phone's GPS moves along the bus ride, 150 m every 2 s (about bus speed, so none of it looks like a jump)."""
+    m = start
+    while m < end:
+        m = min(end, m + 150)
+        lat, lng = on_ride(m)
+        await ctx.set_geolocation({"latitude": lat, "longitude": lng})
+        await asyncio.sleep(2)
+
+
 async def run_trip(h: httpx.Client, traveller: str, trip: str) -> int:
     link = f"{args.app}/?trip={trip}&traveller={traveller}&debug=1"
     print(f"trip link: {link}")
@@ -208,13 +241,30 @@ async def run_trip(h: httpx.Client, traveller: str, trip: str) -> int:
             check(live.get("tripId") == trip and live.get("stepIndex") == 1,
                   "caregiver's live view: trip, step 2, location",
                   {k: live.get(k) for k in ("tripId", "stepIndex", "lat", "lng")})
+        # One thing at a time (src/lib/guide.ts): at the stop, only how to get on, with the step photo
         imgs = await page.eval_on_selector_all("img", "els => els.map(e => [e.className, e.naturalWidth > 0])")
-        check(["sign__landmark-photo", True] in imgs and ["sign__photo", True] in imgs,
-              "step 2 shows the step photo and the landmark photo", imgs)
+        waiting = await lines(page)
+        check(waiting == ["Wait for bus number 190", "Tap your card"] and ["sign__photo", True] in imgs,
+              "step by step: waiting at the stop, only the lines for getting on", [waiting, imgs])
+        await shot(page, "2-bus-stop")
+
+        # The bus sets off: past the first stop, a countdown; near Oasis Terraces, its line and photo
+        await ride(ctx, 0, 300)
+        first = await page.locator("#step-now").inner_text()
+        await ride(ctx, 300, OASIS_M - 150)
+        imgs = await page.eval_on_selector_all("img", "els => els.map(e => [e.className, e.naturalWidth > 0])")
+        now_lines = await lines(page)
         captions = await page.locator("figcaption, .sign__landmark-note").all_inner_texts()
-        check(captions[:1] == ["Look for Oasis Terraces"] and any("Block 221" in c for c in captions),
-              "landmark lines", captions)
-        await shot(page, "2-bus")
+        check(["sign__landmark-photo", True] in imgs and "Look out for Oasis Terraces on your right" in now_lines
+              and captions == ["Look for Oasis Terraces"],
+              "step 2: near Oasis Terraces, its line and photo come up", [now_lines, captions, imgs])
+        await shot(page, "2-bus-landmark")
+        await ride(ctx, OASIS_M - 150, RIDE_M - 200)
+        bell = await page.locator("#step-now").inner_text()
+        bell_lines = await lines(page)
+        check(first == "5 more stops" and bell == "Press the bell now" and bell_lines[-2:] == ["Press the bell", "Get off at Block 221"],
+              "step by step: counts the stops down to 'Press the bell now'", [first, bell, bell_lines])
+        await shot(page, "2-bus-bell")
 
         # Off the route, on purpose: only real check-ins from this phone, through the detection chain.
         for lat, lng in [(1.3990, 103.9150), (1.3985, 103.9165), (1.3980, 103.9180), (1.3975, 103.9195), (1.3970, 103.9210)]:

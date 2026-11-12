@@ -96,7 +96,7 @@ export function useCareRoute(session: Session, opts: { demo: boolean }): CareRou
     e.tracker.start();
     void e.wake.enable();
     if (opts.demo) {
-      const walker = new DemoWalker(pack.pack.path);
+      const walker = new DemoWalker(() => ({ pack: pack.pack, stepIndex: stepRef.current }));
       e.tracker.acceptFix(walker.next(Date.now()));
       demoTimer.current = setInterval(() => e.tracker.acceptFix(walker.next(Date.now())), DEMO_TICK_MS);
     }
