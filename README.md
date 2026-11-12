@@ -118,6 +118,38 @@ in one command" below). It reads the pool's IDs from this stack, switches the Al
 switches them back. Locally, adding a traveller can't make their setup code (the pods only have LocalStack's keys,
 not the AWS role), so the caregiver app says so; on EKS it works.
 
+## HTTPS for the apps (CloudFront)
+
+Amplify serves the apps over HTTPS, but the ALB only has plain HTTP (HTTPS on it needs a certificate, which needs a
+domain). A browser blocks an HTTPS page's calls to an HTTP address (mixed content), so the apps can't call the ALB
+directly. `cloudformation/careroute-api-https.yaml` puts CloudFront in front of the ALB: an
+`https://dxxxx.cloudfront.net` address with its own certificate that only passes requests on. Nothing is cached,
+every header goes through (the login's `Authorization` included), and `/api/stream` stays open (the Alert Service
+pings every 15 s, inside the 60 s timeout).
+
+The full `deploy` (not `--service`) creates or updates it at the end, pointed at the current ALB, and prints its
+address. It is its own stack, and `teardown` keeps it like the Cognito one, so the address stays the same from one
+deploy to the next and an idle distribution costs nothing. `teardown -DeleteHttps` (`--delete-https`) removes it,
+`deploy -NoHttps` (`--no-https`) skips it. When the ALB has changed, the update takes 5-15 minutes.
+
+The apps then call the API through their own address, so no CORS is needed. Once per Amplify app, add this rewrite
+(App settings > Rewrites and redirects), above any other rule:
+
+| Source address | Target address | Type |
+|---|---|---|
+| `/api/<*>` | `https://<ApiDomain>/api/<*>` | 200 (Rewrite) |
+
+`<ApiDomain>` is the address `deploy` prints, or:
+
+```bash
+aws cloudformation describe-stacks --stack-name careroute-api-https --region ap-southeast-1 \
+  --query "Stacks[0].Outputs[?OutputKey=='ApiDomain'].OutputValue" --output text
+```
+
+The same setup, made by hand on 10 Nov, carried a whole trip from the traveller app on Amplify (`team_trip.py`, login
+off). Not yet run with logins on: the first run should check a signed-in request, such as the traveller app loading
+its trip.
+
 ## Deploy the infrastructure
 
 ### 1. Deploy the CloudFormation stack

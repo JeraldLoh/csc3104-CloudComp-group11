@@ -12,17 +12,24 @@
   looked up from the live stack and emptied before deletion, so resources added
   to the CloudFormation template later are torn down too.
 
+  The HTTPS stack (careroute-api-https, CloudFront in front of the ALB) is kept, like the Cognito one: no cost
+  while idle, and the next deploy reuses its https address. -DeleteHttps removes it too.
+
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File scripts\windows\teardown.ps1
 .EXAMPLE
   .\scripts\windows\teardown.ps1 -Yes
+.EXAMPLE
+  .\scripts\windows\teardown.ps1 -DeleteHttps
 #>
 param(
   [switch]$Yes,
   [string]$StackName = 'careroute-stack-1',
   [string]$Region = 'ap-southeast-1',
   [string]$ClusterName = 'careroute-cluster-1',
-  [string]$AppNamespace = 'careroute'
+  [string]$AppNamespace = 'careroute',
+  [string]$HttpsStackName = 'careroute-api-https',
+  [switch]$DeleteHttps
 )
 
 $ErrorActionPreference = 'Stop'
@@ -265,6 +272,21 @@ try {
 
   Invoke-Quiet { kubectl config delete-context "arn:aws:eks:${Region}:${AccountId}:cluster/$ClusterName" } | Out-Null
   if ($LASTEXITCODE -eq 0) { Write-Info "Removed kubeconfig context for $ClusterName" }
+
+  # ---------------------------------------------------------------------------
+  # CloudFront in front of the ALB (deploy.ps1): kept unless -DeleteHttps. CloudFormation switches the distribution
+  # off before deleting it, which takes 5-15 minutes.
+  $HttpsStatus = Invoke-Quiet { aws cloudformation describe-stacks --stack-name $HttpsStackName --region $Region --query 'Stacks[0].StackStatus' --output text }
+  if ($LASTEXITCODE -eq 0 -and $HttpsStatus) {
+    if ($DeleteHttps) {
+      Write-Step "Deleting the HTTPS stack $HttpsStackName (CloudFront, 5-15 minutes)"
+      Invoke-Checked { aws cloudformation delete-stack --stack-name $HttpsStackName --region $Region }
+      Invoke-Checked { aws cloudformation wait stack-delete-complete --stack-name $HttpsStackName --region $Region }
+      Write-Info "Deleted $HttpsStackName"
+    } else {
+      Write-Info "Kept $HttpsStackName (CloudFront: no cost while idle, same https address next deploy). -DeleteHttps removes it."
+    }
+  }
 
   # ---------------------------------------------------------------------------
   Write-Step "Checking for anything still billing in $Region"

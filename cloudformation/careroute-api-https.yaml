@@ -1,0 +1,49 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  CareRoute API over HTTPS: a CloudFront distribution in front of the platform's ALB. The apps are served over HTTPS
+  (Amplify), and a browser blocks an HTTPS page from calling the ALB's plain-HTTP address (mixed content). HTTPS on
+  the ALB itself needs a certificate, which needs a domain. CloudFront gives an https://dxxxx.cloudfront.net address
+  with its own certificate and only passes requests on: nothing is cached and every header (the login's Authorization
+  included) goes through. Amplify then rewrites /api/<*> to it, so the apps call their own address (no CORS).
+
+  Its own stack, kept between teardowns like the Cognito one: the https address stays the same, so the Amplify rule is
+  set once, and an idle distribution costs nothing. Each deploy (scripts/*/deploy) points it at the new ALB.
+
+Parameters:
+  AlbDnsName:
+    Type: String
+    Description: The ALB's DNS name (kubectl get ingress cloud-fastapi -n careroute), e.g. k8s-careroute-....elb.amazonaws.com
+    AllowedPattern: '^[A-Za-z0-9.-]+$'
+
+Resources:
+  ApiDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Comment: CareRoute API over HTTPS (in front of the ALB)
+        Enabled: true
+        HttpVersion: http2
+        PriceClass: PriceClass_200            # includes Asia
+        Origins:
+          - Id: alb
+            DomainName: !Ref AlbDnsName
+            CustomOriginConfig:
+              OriginProtocolPolicy: http-only  # the ALB listens on HTTP 80 only
+              HTTPPort: 80
+              OriginReadTimeout: 60            # /api/stream sends a ping every 15 s; 60 s is the ALB's idle timeout
+              OriginKeepaliveTimeout: 5
+        DefaultCacheBehavior:
+          TargetOriginId: alb
+          ViewerProtocolPolicy: https-only
+          AllowedMethods: [GET, HEAD, OPTIONS, PUT, PATCH, POST, DELETE]
+          CachedMethods: [GET, HEAD]
+          Compress: false                      # don't hold back the live view's event stream
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad          # Managed-CachingDisabled
+          OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac  # Managed-AllViewerExceptHostHeader
+
+Outputs:
+  ApiDomain:
+    Description: The https address of the API (use https://<ApiDomain>/api/... or set Amplify's /api/<*> rewrite to it)
+    Value: !GetAtt ApiDistribution.DomainName
+  DistributionId:
+    Value: !Ref ApiDistribution

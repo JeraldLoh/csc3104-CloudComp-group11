@@ -25,9 +25,13 @@
 # With --all-services, the full deploy runs first and then every service in
 # k8s/eks/services/ is deployed the same way (use it after a teardown).
 #
+# The full deploy ends by putting CloudFront in front of the ALB (stack careroute-api-https, kept between
+# teardowns), so the apps can reach the API over HTTPS; it prints the https address and the Amplify rewrite to set
+# once. --no-https skips it.
+#
 # Usage: ./scripts/macos/deploy.sh [--email you@example.com] [--tag v2]
 #                                  [--service NAME | --all-services]
-#                                  [--stack-name NAME] [--region REGION]
+#                                  [--stack-name NAME] [--region REGION] [--no-https]
 # Every option can also be set through the matching environment variable below.
 
 set -euo pipefail
@@ -42,6 +46,8 @@ BUDGET_EMAIL="${BUDGET_EMAIL:-}"
 IMAGE_TAG="${IMAGE_TAG:-v1}"
 SERVICE="${SERVICE:-}"
 ALL_SERVICES="${ALL_SERVICES:-false}"
+HTTPS_STACK_NAME="${HTTPS_STACK_NAME:-careroute-api-https}"
+NO_HTTPS="${NO_HTTPS:-false}"
 LBC_POLICY_NAME="AWSLoadBalancerControllerIAMPolicy"
 
 while [ $# -gt 0 ]; do
@@ -52,7 +58,8 @@ while [ $# -gt 0 ]; do
     --all-services) ALL_SERVICES=true; shift ;;
     --stack-name)   STACK_NAME="$2"; shift 2 ;;
     --region)       REGION="$2"; shift 2 ;;
-    -h|--help)      sed -n '2,28p' "$0"; exit 0 ;;
+    --no-https)     NO_HTTPS=true; shift ;;
+    -h|--help)      sed -n '2,35p' "$0"; exit 0 ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
 done
@@ -397,12 +404,35 @@ for _ in $(seq 1 60); do
   sleep 10
 done
 
+# ---------------------------------------------------------------------------
+# HTTPS for the apps (cloudformation/careroute-api-https.yaml): CloudFront in front of the ALB. The apps are served
+# over HTTPS, and a browser blocks their calls to the ALB's plain-HTTP address. Its own stack, kept between
+# teardowns, so the https address (and Amplify's rewrite to it) stays the same; this points it at the current ALB.
+API_DOMAIN=""
+if [ "$NO_HTTPS" != true ]; then
+  step "HTTPS for the apps: CloudFront in front of the ALB (stack $HTTPS_STACK_NAME; 5-15 minutes when the ALB changed)"
+  aws cloudformation deploy \
+    --stack-name "$HTTPS_STACK_NAME" \
+    --template-file "$REPO_ROOT/cloudformation/careroute-api-https.yaml" \
+    --parameter-overrides "AlbDnsName=$ALB_HOST" \
+    --region "$REGION" \
+    --no-fail-on-empty-changeset
+  API_DOMAIN="$(aws cloudformation describe-stacks --stack-name "$HTTPS_STACK_NAME" --region "$REGION" \
+    --query "Stacks[0].Outputs[?OutputKey=='ApiDomain'].OutputValue" --output text)"
+  info "API over HTTPS: https://$API_DOMAIN"
+fi
+
 echo
 if [ "$HEALTHY" = true ]; then
   printf '\033[1;32mDeployment complete.\033[0m API: http://%s\n' "$ALB_HOST"
 else
   printf '\033[1;33mDeployed, but /health did not respond within 10 minutes.\033[0m\n'
   echo "Check: kubectl get pods -n $APP_NAMESPACE ; kubectl describe ingress cloud-fastapi -n $APP_NAMESPACE"
+fi
+if [ -n "$API_DOMAIN" ]; then
+  echo "API over HTTPS, for the apps: https://$API_DOMAIN"
+  echo "  Amplify, once per app (the address stays the same): App settings > Rewrites and redirects >"
+  echo "  source /api/<*>  target https://$API_DOMAIN/api/<*>  type 200 (Rewrite), above any other rule."
 fi
 [ -n "$BUDGET_EMAIL" ] && echo "Remember to confirm the AWS budget/SNS subscription emails sent to $BUDGET_EMAIL."
 
