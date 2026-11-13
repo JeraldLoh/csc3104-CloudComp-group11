@@ -20,13 +20,13 @@ Post = Callable[[str, dict], dict]
 
 
 # post a detector request and return the vote
-def post_json(url: str, body: dict) -> dict:
+def post_json(url: str, body: dict, timeout: float = 5) -> dict:
     req = urllib.request.Request(
         url.rstrip("/") + "/internal/detect",
         data=json.dumps(body).encode(),
         headers={"content-type": "application/json"}
     )
-    with urllib.request.urlopen(req, timeout=5) as resp:
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.load(resp)
 
 

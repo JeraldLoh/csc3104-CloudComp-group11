@@ -14,6 +14,8 @@ class Settings(BaseModel):
     # detector this container runs
     detector_id: Optional[DetectorId] = None
     redis_url: str = "redis://localhost:6379/0"
+    # connect and read timeout so a redis outage still gets an abstain inside the 500 ms budget
+    redis_timeout_s: float = Field(default=0.2, gt=0)
 
     # abstain when gps is worse than this
     gps_max_accuracy_m: float = Field(default=50, gt=0)

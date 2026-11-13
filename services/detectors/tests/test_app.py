@@ -92,7 +92,7 @@ def test_redis_down_abstains_on_detect_and_503_on_ready():
         resp = client.post("/internal/detect", json=body(checkin(1, 1.405)))
         assert resp.status_code == 200
         data = resp.json()
-        assert data["verdict"] == "abstain" and data["reason"] == "internal error: ConnectionError"
+        assert data["verdict"] == "abstain" and data["reason"] == "internal error: Redis unavailable (ConnectionError)"
         assert data["detectorId"] == "route-corridor"
         assert client.get("/ready").status_code == 503
         assert client.get("/health").json() == {"status": "ok"}  # liveness ignores Redis

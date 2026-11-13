@@ -44,7 +44,7 @@ def create_app(settings: Optional[Settings] = None, redis_client=None) -> FastAP
         app.state.detect = REGISTRY[cfg.detector_id]
         # short timeouts since the coordinator treats a slow detector as abstain
         app.state.redis = redis_client or redis_lib.Redis.from_url(
-            cfg.redis_url, socket_connect_timeout=1, socket_timeout=1
+            cfg.redis_url, socket_connect_timeout=cfg.redis_timeout_s, socket_timeout=cfg.redis_timeout_s
         )
         yield
 
@@ -58,6 +58,9 @@ def create_app(settings: Optional[Settings] = None, redis_client=None) -> FastAP
         try:
             ctx = load_context(request.app.state.redis, body)
             vote = request.app.state.detect(body, ctx, cfg)
+        except redis_lib.RedisError as exc:  # keeps the internal error prefix the coordinator counts as a failure
+            log.warning("redis unavailable: %s", exc)
+            vote = DetectorVote.abstain(body.request_id, cfg.detector_id, f"internal error: Redis unavailable ({type(exc).__name__})")
         except Exception as exc:  # any failure becomes abstain never a 500
             log.exception("detection failed")
             vote = DetectorVote.abstain(body.request_id, cfg.detector_id, f"internal error: {type(exc).__name__}")
