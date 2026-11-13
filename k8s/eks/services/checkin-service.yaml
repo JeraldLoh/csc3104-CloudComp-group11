@@ -39,6 +39,12 @@ spec:
             - { name: REDIS_URL, value: "redis://__REDIS_ENDPOINT__:6379/0" }
             - { name: AWS_DEFAULT_REGION, value: "__REGION__" }
             - { name: CHECKINS_TABLE, value: "careroute-checkins" }
+            # Logins (issue 1.5): Cognito tokens from the careroute-cognito stack, whose IDs the deploy fills in.
+            # Never "dev" here: it would let anyone claim to be anyone.
+            - { name: AUTH_MODE, value: "cognito" }
+            - { name: COGNITO_REGION, value: "__REGION__" }
+            - { name: COGNITO_USER_POOL_ID, value: "__COGNITO_USER_POOL_ID__" }
+            - { name: COGNITO_CLIENT_ID, value: "__COGNITO_CLIENT_ID__" }
             - { name: CHECKINS_QUEUE, value: "careroute-checkins" }
             - { name: CREATE_RESOURCES, value: "false" }   # the platform stack creates them
             # No AWS_ENDPOINT_URL and no access keys: boto3 uses real AWS + the IRSA role.

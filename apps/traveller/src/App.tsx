@@ -1,6 +1,9 @@
 import { useEffect, useMemo } from "react";
 import { useCareRoute } from "./app/useCareRoute";
+import { useGuide } from "./app/useGuide";
 import { readFlags, readSession } from "./app/session";
+import { login, useLogin } from "./auth/current";
+import { SignIn } from "./auth/SignIn";
 import { ConnectionStatus } from "./components/ConnectionStatus";
 import { StepCard } from "./components/StepCard";
 import { HelpSheet } from "./components/HelpSheet";
@@ -12,6 +15,23 @@ import type { Session } from "./types";
 export default function App() {
   const flags = useMemo(() => readFlags(), []);
   const session = useMemo(() => readSession(), []);
+  const signedIn = useLogin();
+  // With logins on (issue 1.5) the phone is signed in once, with the setup code from the caregiver. The trip still
+  // comes from the trip link; the traveller is whoever signed in.
+  if (login.enabled && !flags.demo) {
+    if (!signedIn) return <SignIn login={login} travellerId={session?.travellerId} />;
+    if (session && session.travellerId !== signedIn.userId) {
+      return (
+        <Screen>
+          <div className="message">
+            <h1>This trip is for someone else</h1>
+            <p>This phone is set up for {signedIn.userId}. Ask your caregiver to check the trip link.</p>
+            <button className="btn btn--primary" onClick={() => login.signOut()}>Set up for someone else</button>
+          </div>
+        </Screen>
+      );
+    }
+  }
   if (!session) {
     return (
       <Screen>
@@ -42,9 +62,12 @@ function Journey({ session, demo, debug }: { session: Session; demo: boolean; de
     if (app.routeChangedAt !== null) document.querySelector(".app__main")?.scrollTo({ top: 0, behavior: "smooth" });
   }, [app.routeChangedAt]);
   const pack = app.loaded?.pack;
+  const step = pack ? pack.steps[app.stepIndex] ?? pack.steps[0] : undefined;
+  // One thing at a time on the step card, from GPS, while travelling (src/lib/guide.ts)
+  const guide = useGuide(step, pack?.packVersion, app.fix, app.phase === "travelling");
   const caregiver = pack?.caregiver.name ?? "your caregiver";
   const Caregiver = sentenceStart(caregiver);
-  const debugPanel = debug ? <DebugPanel app={app} /> : null;
+  const debugPanel = debug ? <DebugPanel app={app} guide={guide} /> : null;
 
   if (app.phase === "loading") {
     return <Screen><div className="message"><p className="lead">Getting your trip ready…</p></div></Screen>;
@@ -100,7 +123,7 @@ function Journey({ session, demo, debug }: { session: Session; demo: boolean; de
     );
   }
 
-  const step = pack.steps[app.stepIndex] ?? pack.steps[0];
+  if (!step) return null;
   const isLast = app.stepIndex >= pack.steps.length - 1;
 
   return (
@@ -126,7 +149,7 @@ function Journey({ session, demo, debug }: { session: Session; demo: boolean; de
           <button className="btn btn--quiet" onClick={app.dismissRouteChange}>OK</button>
         </div>
       )}
-      <StepCard step={step} loaded={app.loaded} index={app.stepIndex} total={pack.steps.length} tripId={session.tripId} />
+      <StepCard step={step} loaded={app.loaded} index={app.stepIndex} total={pack.steps.length} tripId={session.tripId} guide={guide} />
       <div className="actions">
         <button className="btn btn--primary" onClick={() => void (isLast ? app.finish() : app.next())}>
           {isLast ? "I've arrived" : "I've done this step"}

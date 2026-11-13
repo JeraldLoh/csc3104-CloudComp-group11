@@ -20,18 +20,19 @@ npm run dev
 Open **http://localhost:5173/?demo=1&debug=1**.
 
 - `?demo=1` uses a sample route and a pretend GPS that walks along it, so it works on
-  a laptop and before the Journey Service (6.1) exists.
+  a laptop with no services running.
 - `?debug=1` shows the debug panel: outbox size, sent, duplicates, retries, last error,
   route version, offline storage, plus three demo controls:
   - **Pretend no signal**: check-ins pile up in the outbox, then go as one batch when switched off.
   - **Change route** (during a trip): pretends the caregiver changed the route (bus 190 → bus 83).
   - **Reset demo**: forgets the demo trip on this device and goes back to "Hi Alex". Only works
     with `?demo=1`, so a real trip (which may hold unsent check-ins) can never be wiped.
-- A real trip link looks like `/?trip=T-001&traveller=U-042` (until login, issue 1.5).
+- A real trip link looks like `/?trip=T-001&traveller=U-042`. With logins on (`VITE_COGNITO_*`, README "Logins (Cognito)"),
+  the phone is first set up with the traveller ID and setup code from the caregiver app.
 
 The dev server forwards `/api/checkins` to the Check-in Service on `localhost:8001`,
-`/api/help` and `/api/arrived` to the Alert Service on 8005, and `/api/trips` to the Journey
-Service on 8006: the ports the team's local stack opens. Until a service is running, its
+`/api/help`, `/api/arrived`, `/api/where-are-you` and `/api/devices` to the Alert Service on 8005, and
+`/api/trips` to the Journey Service on 8006: the ports the team's local stack opens. Until a service is running, its
 requests wait in the queue and retry. Change the ports with `CHECKIN_URL`, `ALERT_URL` and
 `JOURNEY_URL` environment variables.
 
@@ -46,7 +47,19 @@ The team's one-command local stack runs every service on kind and starts both ap
 
 (`bash scripts/macos/local-sim.sh --setup` on a Mac.) Then, in the caregiver app
 (http://localhost:5174, **Act as** `G-003`): add a traveller, plan and approve a route, make a
-trip, press **Pack**, and open the trip's link. It opens this app on a real trip:
+trip, press **Pack**, and open the trip's link. It opens this app on a real trip.
+
+To try it with real logins, run `local-sim.ps1 -Cognito` (`--cognito` on a Mac) instead: the caregiver app asks
+you to sign in, and this app asks for the traveller's ID and setup code before the trip (repo README, "Logins
+(Cognito)"). Locally the caregiver app can't make the setup code (the local pods have no AWS role), so make one by
+hand for the traveller you added, then set up the phone with their `U-` ID and `test-2345-code`:
+
+```powershell
+$pool = "<UserPoolId>"; $id = "U-XXXXXX"   # the careroute-cognito stack's output, and the traveller's ID
+aws cognito-idp admin-create-user --user-pool-id $pool --username $id --message-action SUPPRESS --user-attributes Name=custom:userId,Value=$id --region ap-southeast-1
+aws cognito-idp admin-set-user-password --user-pool-id $pool --username $id --password "test-2345-code" --permanent --region ap-southeast-1
+aws cognito-idp admin-add-user-to-group --user-pool-id $pool --username $id --group-name traveller --region ap-southeast-1
+```
 
 | What the traveller does | Where it goes |
 |---|---|
@@ -60,7 +73,13 @@ trip, press **Pack**, and open the trip's link. It opens this app on a real trip
 **Check it all in one go:** with the stack running, `python apps/traveller/e2e/team_trip.py`
 does that trip in a headless browser (a caregiver's API calls, then the real app) and checks
 each row above (`--headed` to watch; `pip install httpx playwright` and
-`python -m playwright install chromium` first). Its last run passed 9 of 9 checks.
+`python -m playwright install chromium` first; on Windows with Python in Program Files, `pip install --user`).
+It also rides the bus step with the phone's GPS and checks it is shown one thing at a time (below). Its last run
+passed 10 of 10 checks (before the step-by-step view: 9 of 9, also on Windows with Python 3.8). It doesn't sign in,
+so run it against a stack with logins off (`local-sim` without `-Cognito`). Its AWS mode (`--traveller U-AWSTEST1`,
+with `--app`, `--checkin`, `--alerts` and `--journey` pointing at the https addresses; see the script's docstring)
+was written for `AUTH_MODE=off`. AWS now runs with `AUTH_MODE=cognito`, so the services refuse its requests until it
+signs in. `--link-only` makes a trip and prints its link for a phone.
 
 A cluster made before the LocalStack port (4566) was added is recreated by `-Setup`. Stop the
 service's own compose stacks first: they use the same ports.
@@ -72,7 +91,7 @@ to Amplify (which gives https).
 ## Tests
 
 ```powershell
-npm test          # 103 tests: outbox, sender, tracker, request queue, HTTP, offline, route updates, wake lock, backoff, partial batches, shutdown, Help sheet
+npm test          # 143 tests: outbox, sender, tracker, request queue, HTTP, offline, route updates, wake lock, backoff, partial batches, shutdown, Help sheet, landmarks, where-are-you, login
 npm run typecheck
 ```
 
@@ -93,7 +112,7 @@ GPS (watchPosition) ──► latest position
        202 ──► delete from outbox (or, for a batch, only the "processed" oldest ones;
                the rest go in the next request)
        422 ──► drop it (a bad check-in must not block the rest), count as rejected
-       401 ──► stop until login
+       401 / 403 ──► stop until the phone is set up again
    5xx / timeout / no network ──► keep it, mark it bufferedOffline,
                                    retry after exponential backoff with full jitter
                                    (never sooner than the server's Retry-After)
@@ -122,6 +141,36 @@ Each step is one sign: the step photo, then the wording, then the landmarks it n
 - **Landmarks.** The Journey Service sends `landmarks: [{name, photoUrl, sameView}]` per step (`contracts/examples/route-pack.json`): the buildings the wording tells them to look out for. Each one with a photo is shown under the wording as "Look for Oasis Terraces", side by side when there are two or more. One without a photo (it would look the same as the step photo or another landmark's) gets a line saying where to look: "Look for Block 221: it is in the step photo above.", or with `sameView` another landmark's name, "it is in the photo of Oasis Terraces".
 - **A bad landmark never breaks a trip.** `validatePack()` drops an entry with no name and treats a missing or broken list as none; the steps still work.
 - `tests/fixtures/journey-pack.json` is a pack made by the Journey Service's own `build_pack` (regenerate it with `python apps/traveller/tests/fixtures/journey_pack.py`), so the tests check the pack the phone really receives.
+
+### One thing at a time on the bus (`src/lib/guide.ts`)
+
+A bus step's wording is up to nine short lines. Shown together, a traveller who finds reading hard has to hold all
+of them in mind for the whole ride. So while travelling, the card uses the phone's GPS to show each line when it is
+needed:
+
+| Where the traveller is | What the card shows |
+|---|---|
+| At the stop | only the lines for getting on ("Find bus stop 65009 ...", "Raise your hand for bus 190", "Tap your card to get on"), and the backup plan |
+| On the bus (120 m past the stop) | a big **"6 more stops"**, counting down as the bus passes each stop, and the ride's other lines |
+| Near a landmark (300 m; 80 m on foot) | its line and photo ("Look out for Oasis Terraces on your right"), the photo in the step photo's place |
+| 2 stops left | the bell line ("After Block 222, press the bell") |
+| 1 stop left | **"Press the bell now"**, and how to get off |
+| At their stop | **"Get off here"** and how to get off, nothing else |
+
+- **Told, not just shown.** Each new prompt buzzes and is read aloud in the phone's voice, so it works with no
+  signal ("Stay on the bus. 5 more stops."). **Read aloud: on/off** on the card turns the voice off (remembered on
+  the phone); the buzz and the words stay. **Listen** reads what is on screen now, and **Show all instructions**
+  shows the whole step (the countdown stays).
+- **Why count by GPS.** The Journey Service's wording avoids asking the traveller to count stops, because a bus
+  skips a stop where nobody waits or rings. The app counts the stops the bus *passes*, whether or not it stops.
+- **Never only hidden.** The whole step comes back without a usable GPS fix for 45 s, for a train step (no GPS
+  underground), and for a step whose stops have no positions (routes planned before they were kept: then only the
+  landmark lines wait). A fix less sure than 75 m, or a jump faster than any bus, is ignored, and the count never
+  goes back.
+- **What it needs from the pack:** each bus step's `stops: [{name, lat, lng}]` and each landmark's `lat`, `lng` and
+  `seenFrom` (contracts/api.md, from the Journey Service).
+- **Try it:** `?demo=1&debug=1`. The demo's pretend GPS follows the step you are on, so step 3's bus ride counts
+  down in about 30 s. The Debug box shows "Step by step", "Stops left" and "Along the ride".
 
 ## Working with no signal (issue 2.4)
 
@@ -178,6 +227,10 @@ real Chrome.)
    - The single-page app rule from the Amplify docs, so `/?trip=…` links always load the app:
      source `</^[^.]+$|\.(?!(css|gif|ico|jpg|js|png|txt|svg|woff|woff2|ttf|map|json|webp|webmanifest)$)([^.]+$)/>`,
      target `/index.html`, type **200 (Rewrite)**.
+5. **Environment variables** (in the app's settings), for logins: `VITE_COGNITO_REGION` = `ap-southeast-1` and
+   `VITE_COGNITO_CLIENT_ID` = the `careroute-cognito` stack's `UserPoolClientId` output (repo README, "Logins
+   (Cognito)"). Redeploy after setting them: they're read at build time. The services on AWS require a login, so
+   without them every request is refused.
 
 **The API address must be https.** The Amplify page is https, and browsers block an https page
 from calling an `http://` address ("mixed content"); Amplify's rewrite also only forwards to https.
@@ -208,8 +261,12 @@ old version of the app) and lets the hashed files in `/assets` be cached for a y
 | `src/lib/pack.ts` | loads and saves the route pack |
 | `src/lib/offline.ts` | validates packs, downloads photos (landmarks too)/audio, serves stored copies |
 | `src/lib/easyRead.ts` | one action per line, landmark captions |
+| `src/lib/guide.ts` | one thing at a time: which lines to show now, stops left, landmarks near (pure, tested) |
+| `src/app/useGuide.ts` | runs the guide on each GPS fix; buzzes and reads new prompts aloud |
 | `src/lib/sw-register.ts` | registers the service worker |
 | `src/lib/wakelock.ts` | keeps the screen on during a trip |
+| `src/lib/where.ts`, `push.ts` | "Where are you?": checking for the question, and push notifications |
+| `src/auth/` | login: Cognito client, session and token refresh, the "Set up this phone" screen |
 | `src/config.ts` | API address (`VITE_API_BASE`) |
 | `src/lib/demo.ts`, `netsim.ts` | demo route, pretend GPS, pretend no signal |
 | `src/app/useCareRoute.ts` | wires it all together for the screens |
@@ -223,16 +280,16 @@ a Listen button (recorded audio from the pack, or the phone's voice). Red is use
 and nothing else, and the Help button never moves. Status messages are calm and plain:
 "No signal. That's OK, keep going."
 
+## Login
+
+With `VITE_COGNITO_REGION` and `VITE_COGNITO_CLIENT_ID` set, the phone is set up once with the traveller's ID and
+the setup code their caregiver got when adding them (`src/auth`). Every request then carries the traveller's token,
+refreshed every minute and as soon as the phone is back online or the app is opened again, so a token that ran out
+while offline doesn't hold up the waiting check-ins. A token refused anyway (401/403) stops sending until the phone
+is set up again. Without those settings the app needs no login and takes the traveller from the trip link.
+
 ## Not done yet
 
-- Names in the pack. Profiles (M5) now exists in the Alert Service, but the Journey Service's pack still sends
-  `travellerName` and the caregiver's name and phone as `null` (it doesn't read Profiles yet, and Profiles has
-  no caregiver phone). The app accepts that: it greets with "Hi there", and the Help sheet has no Call button
-  (it tells the traveller to ask someone nearby if help can't get through).
-- On AWS, only the Check-in Service is behind the load balancer. The Journey and Alert Services have no Ingress
-  yet, so the app on Amplify can't fetch packs, start or end a trip, ask for help or say it has arrived there.
-  Locally everything works (above).
-- Server push to the phone ("where are you?", `/api/travellers/{id}/where-are-you`): not built by the Alert
-  Service yet. Route changes reach the phone by polling the pack every 60 s.
-- Login: issue 1.5. `HttpTransport` already takes a `getToken` function for it.
-- Actually deploying to Amplify needs the team's AWS account (steps above).
+- The pack is built by the Journey Service (M6) at `GET /api/trips/{tripId}/pack` (stored in S3, temporary link).
+- It doesn't look names up in Profiles (which live in the Alert Service) yet, so it sends `travellerName` and the caregiver's name and phone as `null`; the app accepts that, greets with "Hi there", and the Help sheet has no Call button (it tells the traveller to ask someone nearby if help can't get through).
+- Actually deploying to Amplify needs the team's AWS account and HTTPS in front of the load balancer (steps above).

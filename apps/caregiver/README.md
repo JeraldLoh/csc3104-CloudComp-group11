@@ -26,6 +26,8 @@ The dev server forwards `/api` to the Journey Service on `localhost:8006` (chang
 `JOURNEY_URL`). Start the service with `AUTH_MODE=dev` (or `off`), and with
 `ONEMAP_MODE=recorded` if you have no OneMap token (`services/journey-service/DEMO.md`).
 With `AUTH_MODE=dev` the "Act as" box in the header sets the `X-Dev-User` header.
+With `VITE_COGNITO_REGION` and `VITE_COGNITO_CLIENT_ID` set (README, "Logins (Cognito)") the app shows sign-in and
+sign-up pages instead (`src/auth`), and every request carries the signed-in caregiver's token.
 A link like `/?from=1.4043,103.9021&to=1.3040,103.8318&mode=bus` plans straight away.
 
 ```powershell
@@ -160,7 +162,8 @@ stay mounted, so a half-finished edit is still there when you come back.
 | `src/planner/format.ts` | option / live-data wording |
 | `src/profiles/DashboardPage.tsx`, `overview.ts`, `useTravellerFacts.ts`, `useLiveTrips.ts`, `LiveMap.tsx` | the dashboard: the page, what it says about each traveller, fetching their numbers and live position, and the map |
 | `src/alerts/useLiveIncidents.ts`, `AlertList.tsx` | loading alerts and the live stream; a traveller's alerts with Acknowledge and Resolve |
-| `src/App.tsx` | stand-in host page (dev user, traveller id) until real login exists |
+| `src/App.tsx` | host page: the login, or the "Act as" box without one; the traveller id |
+| `src/auth/` | logins (issue 1.5): Cognito client, session (token refresh), sign-in/sign-up pages |
 
 `services/journey-service/app/demo_map.html` stays as the service's own dev page; this is the
 version meant to be built on.

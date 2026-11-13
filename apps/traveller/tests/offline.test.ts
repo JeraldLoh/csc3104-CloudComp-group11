@@ -77,8 +77,12 @@ describe("validatePack", () => {
 
   it("accepts a pack built by the Journey Service itself, landmarks included", () => {
     const p = validatePack(structuredClone(journeyPack));
-    expect(p.steps[0].landmarks).toEqual([{ name: "Waterway Point", photoUrl: expect.stringContaining("media/streetview/") }]);
+    expect(p.steps[0].landmarks).toEqual([{ name: "Waterway Point", photoUrl: expect.stringContaining("media/streetview/"),
+      lat: 1.4064, lng: 103.9022, seenFrom: [1.4045, 103.9018] }]);
     expect(p.steps[1].landmarks?.map((m) => [m.name, m.photoUrl === null])).toEqual([["Oasis Terraces", false], ["Block 221", true]]);
+    expect(p.steps[0].stops).toEqual([]);
+    expect(p.steps[1].stops?.map((s) => s.name)).toEqual(["Punggol Interchange", "Block 268", "Block 261", "Waterway Pt",
+      "Block 230", "Opposite Block 222", "Opposite Block 221"]);
   });
 
   it("landmarks are extra help: a bad entry is dropped, never the whole pack", () => {
@@ -94,6 +98,26 @@ describe("validatePack", () => {
     const { landmarks: _l, ...noField } = DEMO_PACK.steps[0];
     expect(validatePack({ ...structuredClone(DEMO_PACK), steps: [noField] }).steps[0].landmarks).toEqual([]);
     expect(validatePack({ ...structuredClone(DEMO_PACK), steps: [{ ...noField, landmarks: "Mall" }] }).steps[0].landmarks).toEqual([]);
+  });
+
+  it("keeps the positions the step-by-step guide uses (stops, landmarks), and never fails the pack over a bad one", () => {
+    const step = {
+      ...DEMO_PACK.steps[0],
+      stops: [{ name: "Punggol Interchange", lat: 1.4052, lng: 103.9024 }, { name: " ", lat: "x", lng: 103.9 }, null, { lat: 1.39, lng: 200 }],
+      landmarks: [{ name: "Waterway Point", photoUrl: null, lat: 1.4064, lng: 103.9022, seenFrom: [1.4045, 103.9018] },
+        { name: "Block 5", photoUrl: null, lat: "near", seenFrom: [1.4] }],
+    };
+    const p = validatePack({ ...structuredClone(DEMO_PACK), steps: [step] });
+    expect(p.steps[0].stops).toEqual([
+      { name: "Punggol Interchange", lat: 1.4052, lng: 103.9024 },
+      { name: null, lat: null, lng: null },
+      { name: null, lat: null, lng: null },
+    ]);
+    expect(p.steps[0].landmarks).toEqual([
+      { name: "Waterway Point", photoUrl: null, lat: 1.4064, lng: 103.9022, seenFrom: [1.4045, 103.9018] },
+      { name: "Block 5", photoUrl: null },
+    ]);
+    expect(validatePack({ ...structuredClone(DEMO_PACK), steps: [{ ...step, stops: "all of them" }] }).steps[0].stops).toEqual([]);
   });
 });
 

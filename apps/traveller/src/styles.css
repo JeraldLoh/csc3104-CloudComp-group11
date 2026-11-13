@@ -159,6 +159,33 @@ h1 { font-size: 1.75rem; line-height: 1.2; font-weight: 700; }
   color: var(--ink-soft);
 }
 .sign__body .btn--quiet { justify-content: flex-start; padding-left: 0; width: auto; }
+.sign__tools { display: flex; flex-wrap: wrap; column-gap: 24px; }
+.sign__tools:empty { display: none; }
+/* Guided, the card has a prompt on top: a smaller photo keeps "I've done this step" on screen. */
+.sign--guided .sign__photo { max-height: 20dvh; }
+.sign--guided .sign__landmark-photo { max-height: 20dvh; }
+.sign__body .sign__more { min-height: 40px; margin: -6px 0; }
+
+/* One thing at a time (guide.ts): the prompt that matters now, big, in the step's colour. */
+.sign__now {
+  margin: 0;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: var(--band);
+  color: #fff;
+  font-size: 2rem;
+  line-height: 1.15;
+  font-weight: 800;
+}
+.sign__now:empty { display: none; }
+.sign__now span, .sign__landmarks--guided li { display: block; animation: sign-new 0.5s ease-out; }
+@keyframes sign-new {
+  from { transform: scale(0.96); opacity: 0.4; }
+  to { transform: none; opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sign__now span, .sign__landmarks--guided li { animation: none; }
+}
 
 .actions { display: flex; flex-direction: column; gap: 4px; }
 
@@ -168,6 +195,23 @@ h1 { font-size: 1.75rem; line-height: 1.2; font-weight: 700; }
 .note { font-size: 1rem; color: var(--ink-soft); }
 .message .btn { margin-top: 8px; }
 .message--arrived { align-items: flex-start; }
+
+/* ---- Setting up the phone (issue 1.5) ---- */
+.signin { padding-top: 8vh; }
+.signin label { display: flex; flex-direction: column; gap: 6px; font-weight: 700; }
+.signin input {
+  min-height: 56px;
+  padding: 10px 14px;
+  border: 2px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+  font-size: 1.2rem;
+  letter-spacing: 0.04em;
+}
+.signin input:focus { outline: 3px solid var(--focus); outline-offset: 2px; border-color: var(--primary); }
+.signin__error { margin: 0; padding: 12px 14px; border-radius: 12px; background: #fde8e8; color: var(--help-press); font-weight: 700; }
 .tick { color: var(--ok); }
 
 /* ---- Help sheet ---- */

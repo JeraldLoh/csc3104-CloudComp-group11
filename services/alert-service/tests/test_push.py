@@ -91,14 +91,23 @@ def test_pressing_help_pushes(client, push):
     assert push.sent[0][1]["body"] == "Alex has asked for help."
 
 
-def test_a_normal_alert_does_not_push(client, push):
+@pytest.mark.parametrize("problem_type, level, title", [
+    ("no_response", "urgent", "Urgent: Alex"),
+    ("off_route", "important", "Check on Alex"),
+    ("long_dwell", "important", "Check on Alex"),
+    ("tracking_lost", "notice", "About Alex"),
+    ("disruption", "notice", "About Alex"),
+])
+def test_every_level_pushes_once_with_its_own_title(client, push, problem_type, level, title):
     me = new_caregiver()
     alex = traveller_with(client, me)
     register(client, me)
 
-    client.post("/internal/problems", json=problem(alex, "off_route"))
+    client.post("/internal/problems", json=problem(alex, problem_type))
 
-    assert push.sent == []
+    assert len(push.sent) == 1
+    assert push.sent[0][1]["title"] == title
+    assert push.sent[0][1]["level"] == level
 
 
 def test_a_repeat_detection_does_not_push_again(client, push):

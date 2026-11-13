@@ -1,5 +1,8 @@
-# Coordinator (Member 3): consumes careroute-checkins and analyses each check-in.
+# Coordinator (Member 3): consumes careroute-checkins, asks the detectors, decides and reports
+# problems to the Alert Service.
 # Deploy: bash scripts/macos/deploy.sh --service coordinator   (fills the __PLACEHOLDERS__)
+# Dashboard (not exposed to the internet):
+#   kubectl -n careroute port-forward svc/coordinator 8000:8000   then open http://localhost:8000/dashboard
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -7,7 +10,7 @@ metadata:
   namespace: __NAMESPACE__
   labels: { app: coordinator }
 spec:
-  replicas: 2                       # two, so killing one mid-analysis shows SQS redelivery
+  replicas: 2                       # the HPA takes over from here; two, so killing one shows SQS redelivery
   selector:
     matchLabels: { app: coordinator }
   template:
@@ -30,7 +33,8 @@ spec:
             - { name: CHECKINS_QUEUE_URL, value: "__CHECKINS_QUEUE_URL__" }
             - { name: AWS_DEFAULT_REGION, value: "__REGION__" }
             - { name: REDUNDANCY_MODE, value: "fixed4" }     # fixed4 | adaptive | fixed2
-            # Detector and Aggregator URLs default to the in-cluster service names.
+            - { name: ALERT_SERVICE_URL, value: "http://alert-service:8000" }
+            # Detector URLs default to the in-cluster service names.
           resources:                      # Fargate sizes the pod from these
             requests: { cpu: 250m, memory: 512Mi }
             limits: { cpu: 250m, memory: 512Mi }
@@ -51,3 +55,31 @@ metadata:
 spec:
   selector: { app: coordinator }
   ports: [{ port: 8000, targetPort: 8000 }]
+---
+# Needs metrics-server in the cluster, like the detectors' HPAs. CPU is a stand-in: queue depth
+# (careroute-checkins) would track the Coordinator's load better, via KEDA (future work).
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: coordinator
+  namespace: __NAMESPACE__
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: coordinator }
+  minReplicas: 2
+  maxReplicas: 4
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 60 }
+---
+# Keep at least one replica running during voluntary disruptions (e.g. Fargate patching).
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: coordinator
+  namespace: __NAMESPACE__
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app: coordinator }

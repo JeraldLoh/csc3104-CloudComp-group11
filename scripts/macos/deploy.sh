@@ -17,6 +17,7 @@
 #                                 __REDIS_ENDPOINT__ __CHECKINS_QUEUE_URL__
 #                                 __DISRUPTIONS_QUEUE_URL__ __FILES_BUCKET__
 #                                 __ALB_SG_ID__ __ROLE_ARN__
+#                                 __COGNITO_USER_POOL_ID__ __COGNITO_CLIENT_ID__
 # The image goes to ECR repository careroute-NAME (created if missing).
 # __ROLE_ARN__ is read from the stack output <Name>RoleArn (e.g. checkin-service ->
 # CheckinServiceRoleArn), in the platform stack or any other stack in the region.
@@ -24,9 +25,13 @@
 # With --all-services, the full deploy runs first and then every service in
 # k8s/eks/services/ is deployed the same way (use it after a teardown).
 #
+# The full deploy ends by putting CloudFront in front of the ALB (stack careroute-api-https, kept between
+# teardowns), so the apps can reach the API over HTTPS; it prints the https address and the Amplify rewrite to set
+# once. --no-https skips it.
+#
 # Usage: ./scripts/macos/deploy.sh [--email you@example.com] [--tag v2]
 #                                  [--service NAME | --all-services]
-#                                  [--stack-name NAME] [--region REGION]
+#                                  [--stack-name NAME] [--region REGION] [--no-https]
 # Every option can also be set through the matching environment variable below.
 
 set -euo pipefail
@@ -41,6 +46,8 @@ BUDGET_EMAIL="${BUDGET_EMAIL:-}"
 IMAGE_TAG="${IMAGE_TAG:-v1}"
 SERVICE="${SERVICE:-}"
 ALL_SERVICES="${ALL_SERVICES:-false}"
+HTTPS_STACK_NAME="${HTTPS_STACK_NAME:-careroute-api-https}"
+NO_HTTPS="${NO_HTTPS:-false}"
 LBC_POLICY_NAME="AWSLoadBalancerControllerIAMPolicy"
 
 while [ $# -gt 0 ]; do
@@ -51,7 +58,8 @@ while [ $# -gt 0 ]; do
     --all-services) ALL_SERVICES=true; shift ;;
     --stack-name)   STACK_NAME="$2"; shift 2 ;;
     --region)       REGION="$2"; shift 2 ;;
-    -h|--help)      sed -n '2,28p' "$0"; exit 0 ;;
+    --no-https)     NO_HTTPS=true; shift ;;
+    -h|--help)      sed -n '2,35p' "$0"; exit 0 ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
 done
@@ -98,7 +106,7 @@ service_role_arn() {
 # Builds services/NAME, pushes it to ECR repository careroute-NAME, and applies
 # k8s/eks/services/NAME.yaml with its placeholders filled in.
 deploy_service() {
-  local name="$1" dir manifest repo registry image rendered left role_arn existed=false
+  local name="$1" dir manifest repo registry image rendered left role_arn
   printf '%s' "$name" | grep -Eq '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$' \
     || die "Service name must be lowercase letters, digits and dashes: '$name'"
   dir="$REPO_ROOT/services/$name"
@@ -113,6 +121,16 @@ deploy_service() {
   if grep -q '__ROLE_ARN__' "$manifest"; then
     role_arn="$(service_role_arn "$name")"
     info "Role: $role_arn"
+  fi
+
+  # Logins (issue 1.5): the user pool lives in its own stack, kept between teardowns.
+  cognito_pool=""; cognito_client=""
+  if grep -q '__COGNITO_' "$manifest"; then
+    cognito_stack="careroute-cognito"
+    cognito_pool="$(aws cloudformation describe-stacks --stack-name "$cognito_stack" --region "$REGION"       --query "Stacks[0].Outputs[?OutputKey=='UserPoolId'].OutputValue" --output text 2>/dev/null || true)"
+    cognito_client="$(aws cloudformation describe-stacks --stack-name "$cognito_stack" --region "$REGION"       --query "Stacks[0].Outputs[?OutputKey=='UserPoolClientId'].OutputValue" --output text 2>/dev/null || true)"
+    [ -n "$cognito_pool" ] && [ -n "$cognito_client" ]       || die "$name needs the Cognito stack $cognito_stack (logins). Deploy it once: README, 'Logins (Cognito)'"
+    info "User pool: $cognito_pool"
   fi
 
   # Created outside the stack, like the S3 bucket; teardown.sh removes careroute-* repos.
@@ -139,7 +157,7 @@ deploy_service() {
       -e "s|__DISRUPTIONS_QUEUE_URL__|$(sed_value "$DISRUPTIONS_QUEUE_URL")|g" \
       -e "s|__FILES_BUCKET__|$(sed_value "$FILES_BUCKET")|g" \
       -e "s|__ALB_SG_ID__|$(sed_value "$ALB_SG_ID")|g" \
-      -e "s|__ROLE_ARN__|$(sed_value "$role_arn")|g" \
+      -e "s|__ROLE_ARN__|$(sed_value "$role_arn")|g"       -e "s|__COGNITO_USER_POOL_ID__|$(sed_value "$cognito_pool")|g"       -e "s|__COGNITO_CLIENT_ID__|$(sed_value "$cognito_client")|g" \
       "$manifest" > "$rendered"
   # A misspelled or unsupported placeholder would otherwise reach the cluster as
   # literal text. YAML comments are skipped, since they may mention placeholders.
@@ -147,13 +165,23 @@ deploy_service() {
     | grep -Eo '__[A-Z][A-Z0-9_]*__' | sort -u | tr '\n' ' ' || true)"
   [ -z "$left" ] || die "k8s/eks/services/$name.yaml has unknown placeholders: $left"
 
-  kubectl get deployment "$name" -n "$APP_NAMESPACE" >/dev/null 2>&1 && existed=true
+  # The Deployment named after the service, or (one image run as several Deployments, e.g. detectors) every
+  # Deployment labelled app.kubernetes.io/part-of: <name>. Read before applying, to know which already existed.
+  local before targets target
+  before=" $(kubectl get deployment -n "$APP_NAMESPACE" -l "app.kubernetes.io/part-of=$name" -o name 2>/dev/null | tr '\n' ' ')"
+  kubectl get deployment "$name" -n "$APP_NAMESPACE" >/dev/null 2>&1 && before="$before deployment.apps/$name "
   kubectl apply -f "$rendered"
-  # Re-pushing the same tag does not change the spec, so force new pods to pull it.
-  if [ "$existed" = true ]; then
-    kubectl rollout restart deployment/"$name" -n "$APP_NAMESPACE"
+  if kubectl get deployment "$name" -n "$APP_NAMESPACE" >/dev/null 2>&1; then
+    targets="deployment.apps/$name"
+  else
+    targets="$(kubectl get deployment -n "$APP_NAMESPACE" -l "app.kubernetes.io/part-of=$name" -o name)"
   fi
-  kubectl rollout status deployment/"$name" -n "$APP_NAMESPACE" --timeout=10m
+  [ -n "$targets" ] || die "k8s/eks/services/$name.yaml has no Deployment named $name or labelled app.kubernetes.io/part-of: $name"
+  for target in $targets; do
+    # Re-pushing the same tag does not change the spec, so force new pods to pull it.
+    case "$before" in *" $target "*) kubectl rollout restart "$target" -n "$APP_NAMESPACE" ;; esac
+    kubectl rollout status "$target" -n "$APP_NAMESPACE" --timeout=10m
+  done
 }
 
 # ---------------------------------------------------------------------------
@@ -376,12 +404,35 @@ for _ in $(seq 1 60); do
   sleep 10
 done
 
+# ---------------------------------------------------------------------------
+# HTTPS for the apps (cloudformation/careroute-api-https.yaml): CloudFront in front of the ALB. The apps are served
+# over HTTPS, and a browser blocks their calls to the ALB's plain-HTTP address. Its own stack, kept between
+# teardowns, so the https address (and Amplify's rewrite to it) stays the same; this points it at the current ALB.
+API_DOMAIN=""
+if [ "$NO_HTTPS" != true ]; then
+  step "HTTPS for the apps: CloudFront in front of the ALB (stack $HTTPS_STACK_NAME; 5-15 minutes when the ALB changed)"
+  aws cloudformation deploy \
+    --stack-name "$HTTPS_STACK_NAME" \
+    --template-file "$REPO_ROOT/cloudformation/careroute-api-https.yaml" \
+    --parameter-overrides "AlbDnsName=$ALB_HOST" \
+    --region "$REGION" \
+    --no-fail-on-empty-changeset
+  API_DOMAIN="$(aws cloudformation describe-stacks --stack-name "$HTTPS_STACK_NAME" --region "$REGION" \
+    --query "Stacks[0].Outputs[?OutputKey=='ApiDomain'].OutputValue" --output text)"
+  info "API over HTTPS: https://$API_DOMAIN"
+fi
+
 echo
 if [ "$HEALTHY" = true ]; then
   printf '\033[1;32mDeployment complete.\033[0m API: http://%s\n' "$ALB_HOST"
 else
   printf '\033[1;33mDeployed, but /health did not respond within 10 minutes.\033[0m\n'
   echo "Check: kubectl get pods -n $APP_NAMESPACE ; kubectl describe ingress cloud-fastapi -n $APP_NAMESPACE"
+fi
+if [ -n "$API_DOMAIN" ]; then
+  echo "API over HTTPS, for the apps: https://$API_DOMAIN"
+  echo "  Amplify, once per app (the address stays the same): App settings > Rewrites and redirects >"
+  echo "  source /api/<*>  target https://$API_DOMAIN/api/<*>  type 200 (Rewrite), above any other rule."
 fi
 [ -n "$BUDGET_EMAIL" ] && echo "Remember to confirm the AWS budget/SNS subscription emails sent to $BUDGET_EMAIL."
 

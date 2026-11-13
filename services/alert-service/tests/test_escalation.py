@@ -10,6 +10,8 @@ from fastapi.testclient import TestClient
 
 import app.main as service
 from app.escalation import Escalator
+from app.levels import ESCALATING_TYPES
+from app.live import still_near
 from app.events import CHANNEL
 from app.main import app
 from tests.conftest import new_caregiver
@@ -41,15 +43,17 @@ class OnlyThese:
     def __init__(self, travellers):
         self.travellers = set(travellers)
 
-    def open_urgent(self, below_level):
-        return [i for i in service.incidents.open_urgent(below_level) if i["travellerId"] in self.travellers]
+    def open_of_types(self, problem_types, below_level):
+        return [i for i in service.incidents.open_of_types(problem_types, below_level)
+                if i["travellerId"] in self.travellers]
 
     def claim_escalation(self, iid, seen_level, now=None):
         return service.incidents.claim_escalation(iid, seen_level, now)
 
 
-def escalator(traveller, recorder, max_level=3):
-    return Escalator(OnlyThese([traveller]), recorder, recorder, after_s=int(AFTER.total_seconds()), max_level=max_level)
+def escalator(traveller, recorder, max_level=3, still_there=None):
+    return Escalator(OnlyThese([traveller]), recorder, recorder, after_s=int(AFTER.total_seconds()), max_level=max_level,
+                     still_detected_s=60, still_there=still_there)
 
 
 def report(client, problem_type="no_response", traveller=None, detected=None):
@@ -132,13 +136,71 @@ def test_an_old_alert_is_left_alone(client):
     assert seen.pushes == []
 
 
-def test_a_normal_alert_is_never_escalated(client):
-    traveller, _ = report(client, problem_type="off_route")
+@pytest.mark.parametrize("problem_type", ["tracking_lost", "disruption"])
+def test_a_notice_is_never_escalated(client, problem_type):
+    traveller, _ = report(client, problem_type=problem_type)
     seen = Recorder()
 
     escalator(traveller, seen).run_once(later(10 * AFTER))
 
     assert seen.pushes == []
+
+
+# ---------------------------------------------------------------------------- important: only while still happening
+def test_an_important_alert_still_being_detected_is_escalated(client):
+    start = datetime.now(timezone.utc)
+    traveller, iid = report(client, problem_type="off_route", detected=start)
+    report(client, problem_type="off_route", traveller=traveller, detected=start + timedelta(seconds=110))  # still off
+    seen = Recorder()
+
+    escalator(traveller, seen).run_once(start + AFTER + timedelta(seconds=1))
+
+    assert seen.pushes == [(iid, 1)]
+
+
+def test_an_important_alert_no_longer_detected_is_not_escalated(client):
+    start = datetime.now(timezone.utc)
+    traveller, _ = report(client, problem_type="off_route", detected=start)  # back on route straight after
+    seen = Recorder()
+
+    escalator(traveller, seen).run_once(start + AFTER + timedelta(seconds=1))
+
+    assert seen.pushes == []
+
+
+def test_an_important_alert_is_escalated_again_if_it_starts_again(client):
+    start = datetime.now(timezone.utc)
+    traveller, iid = report(client, problem_type="wrong_direction", detected=start)
+    seen = Recorder()
+    e = escalator(traveller, seen)
+    e.run_once(start + AFTER + timedelta(seconds=1))  # stopped: nothing
+    report(client, problem_type="wrong_direction", traveller=traveller, detected=start + timedelta(seconds=200))
+
+    e.run_once(start + timedelta(seconds=230))
+
+    assert seen.pushes == [(iid, 1)]
+
+
+@pytest.mark.parametrize("still_there, expected", [(True, 1), (False, 0)])
+def test_a_long_dwell_is_escalated_while_they_are_still_there(client, still_there, expected):
+    # The dwell detector stops answering during a long stop, so it's the phone's position that says.
+    start = datetime.now(timezone.utc)
+    traveller, _ = report(client, problem_type="long_dwell", detected=start)
+    seen = Recorder()
+
+    escalator(traveller, seen, still_there=lambda incident, now: still_there).run_once(start + 2 * AFTER)
+
+    assert len(seen.pushes) == expected
+
+
+def test_a_long_dwell_falls_back_to_detections_when_the_position_is_unknown(client):
+    start = datetime.now(timezone.utc)
+    traveller, _ = report(client, problem_type="long_dwell", detected=start)
+    seen = Recorder()
+
+    escalator(traveller, seen, still_there=lambda incident, now: None).run_once(start + 2 * AFTER)
+
+    assert seen.pushes == []  # unknown, and not detected for a while: not sent again
 
 
 def test_a_reopened_alert_starts_again_from_level_0(client):
@@ -192,18 +254,19 @@ def test_a_replica_that_saw_it_due_but_lost_the_claim_sends_nothing(client):
     assert first.pushes == [(iid, 1)]
 
 
-def test_the_table_scan_finds_open_urgent_alerts_only(client):
+def test_the_table_scan_finds_open_escalating_alerts_only(client):
     me = new_caregiver()
     alex = client.post("/api/travellers", json={"name": "Alex"}, headers={"X-Dev-User": me}).json()["travellerId"]
     _, urgent = report(client, traveller=alex)
-    _, normal = report(client, problem_type="off_route", traveller=alex)
+    _, important = report(client, problem_type="off_route", traveller=alex)
+    _, notice = report(client, problem_type="tracking_lost", traveller=alex)
     _, acked = report(client, problem_type="help_requested", traveller=alex)
     client.post(f"/api/incidents/{quote(acked, safe='')}/ack", headers={"X-Dev-User": me})
 
-    found = {i["incidentId"] for i in service.incidents.open_urgent(3)}
+    found = {i["incidentId"] for i in service.incidents.open_of_types(ESCALATING_TYPES, 3)}
 
-    assert urgent in found
-    assert normal not in found and acked not in found
+    assert urgent in found and important in found
+    assert notice not in found and acked not in found
 
 
 def test_the_dashboard_and_caregivers_hear_of_it(client, redis_client, monkeypatch):
@@ -232,3 +295,52 @@ def test_the_dashboard_and_caregivers_hear_of_it(client, redis_client, monkeypat
     assert mine[0]["incident"]["escalationLevel"] == 1
     assert sent[0]["title"] == "Still not answered: Alex"
     assert sent[0]["body"] == "Alex's phone has stopped responding."
+
+
+def test_an_important_reminder_says_it_is_still_happening(client, monkeypatch):
+    sent = []
+    monkeypatch.setattr(service.notifier, "sender", type("S", (), {"send": lambda self, t, d: sent.append(d) or (len(t), [])})())
+    monkeypatch.setattr(service.notifier, "run", lambda fn, *args: fn(*args))
+    me = new_caregiver()
+    alex = client.post("/api/travellers", json={"name": "Alex"}, headers={"X-Dev-User": me}).json()["travellerId"]
+    client.post("/api/devices", json={"token": "tok-" + uuid.uuid4().hex * 2}, headers={"X-Dev-User": me})
+    start = datetime.now(timezone.utc)
+    report(client, problem_type="off_route", traveller=alex, detected=start)
+    report(client, problem_type="off_route", traveller=alex, detected=start + timedelta(seconds=110))
+    sent.clear()
+
+    Escalator(OnlyThese([alex]), service.publisher, service.notifier, after_s=120, max_level=3).run_once(
+        start + AFTER + timedelta(seconds=1))
+
+    assert sent[0]["title"] == "Still happening: Alex"
+    assert sent[0]["level"] == "important"
+
+
+# ---------------------------------------------------------------------------- is a long-dwell traveller still there?
+def stopped_at(redis_client, lat, lng, seen):
+    trip = f"T-{uuid.uuid4().hex[:8]}"
+    redis_client.set(f"hb:{trip}:lastseen", seen.isoformat(timespec="milliseconds").replace("+00:00", "Z"), ex=60)
+    redis_client.lpush(f"trip:{trip}:recent", json.dumps({"seq": 1, "lat": lat, "lng": lng}))
+    redis_client.expire(f"trip:{trip}:recent", 60)
+    return trip
+
+
+def test_still_near_where_they_stopped(redis_client):
+    now = datetime.now(timezone.utc)
+    trip = stopped_at(redis_client, 1.40010, 103.90000, now)  # about 11 m from (1.4, 103.9)
+
+    assert still_near(service.r, trip, 1.4, 103.9, radius_m=30, fresh_s=60, now=now) is True
+
+
+def test_moved_away_from_where_they_stopped(redis_client):
+    now = datetime.now(timezone.utc)
+    trip = stopped_at(redis_client, 1.40100, 103.90000, now)  # about 111 m away
+
+    assert still_near(service.r, trip, 1.4, 103.9, radius_m=30, fresh_s=60, now=now) is False
+
+
+def test_cannot_tell_with_no_recent_check_in(redis_client):
+    now = datetime.now(timezone.utc)
+    trip = stopped_at(redis_client, 1.4, 103.9, now - timedelta(minutes=5))  # the phone has gone quiet
+
+    assert still_near(service.r, trip, 1.4, 103.9, radius_m=30, fresh_s=60, now=now) is None

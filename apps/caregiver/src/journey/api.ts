@@ -90,8 +90,8 @@ export class ApiError extends Error {
 export interface JourneyApiOptions {
   /** Empty (default): same address as the page, which is what the dev proxy and an Amplify rewrite expect. */
   baseUrl?: string;
-  /** The login token (Cognito, issue 1.5). Sent as `Authorization: Bearer <token>`. */
-  getToken?: () => string | null;
+  /** The login token (Cognito, issue 1.5), or a promise of it (refreshed first). Sent as `Authorization: Bearer <token>`. */
+  getToken?: () => string | null | Promise<string | null>;
   /** Local testing only: the service believes this user when it runs with AUTH_MODE=dev. */
   getDevUser?: () => string | null;
   fetchImpl?: typeof fetch;
@@ -99,7 +99,7 @@ export interface JourneyApiOptions {
 
 export class JourneyApi implements PlannerApi, SavedRoutesApi, TripsApi, DisruptionsApi {
   private baseUrl: string;
-  private getToken: () => string | null;
+  private getToken: () => string | null | Promise<string | null>;
   private getDevUser: () => string | null;
   private fetchImpl: typeof fetch;
 
@@ -247,7 +247,7 @@ export class JourneyApi implements PlannerApi, SavedRoutesApi, TripsApi, Disrupt
     const headers: Record<string, string> = {};
     // A FormData body (a photo) sets its own multipart Content-Type, boundary included.
     if (init.body && !(init.body instanceof FormData)) headers["Content-Type"] = "application/json";
-    const token = this.getToken();
+    const token = await this.getToken();
     if (token) headers.Authorization = `Bearer ${token}`;
     const devUser = this.getDevUser()?.trim();
     if (devUser) headers["X-Dev-User"] = devUser;

@@ -1,9 +1,12 @@
-// Stand-in for the caregiver app: a page that hosts the planner and the caregiver pages until
-// login (issue 1.5) exists. Everything it does is what a host app will do:
-// make an API client, say who the traveller and caregiver are, and give the planner room.
+// The caregiver app: a page that hosts the planner and the caregiver pages. It makes an API client, says who the
+// traveller and caregiver are, and gives the planner room.
+//
+// Who the caregiver is: with logins on (VITE_COGNITO_* set, issue 1.5) whoever signed in, and every request carries
+// their token; without them, the "Act as" box (the services' AUTH_MODE=dev), for local demos.
 //
 // Shareable link: /?from=1.4043,103.9021&to=1.3040,103.8318&mode=bus plans straight away.
 import { useEffect, useMemo, useState } from "react";
+import { login, LoginPage, useLogin, type Session } from "./auth";
 import { DashboardPage, TravellersPage, useMyTravellers } from "./profiles";
 import { JourneyApi, RoutePlanner, SavedRoutes, TripMap, Trips, tripProblem, useDisruptions, useSavedRoutes, useTrips } from "./planner";
 import type { Point } from "./planner/usePlanner";
@@ -76,6 +79,13 @@ const pageFromHash = (): Page => {
 const travellerFromHash = (): string | null => location.hash.slice(1).split("/")[1] || null;
 
 export default function App() {
+  const session = useLogin();
+  if (login.enabled && !session) return <LoginPage login={login} />;
+  // A new caregiver signing in starts from a clean page
+  return <Shell key={session?.userId ?? "dev"} signedIn={session} />;
+}
+
+function Shell({ signedIn }: { signedIn: Session | null }) {
   const [page, setPage] = useState<Page>(pageFromHash);
   const [focusId, setFocusId] = useState<string | null>(travellerFromHash); // the traveller a link or button was about
   // A new object each time a link asks, so the dashboard opens the traveller again even if it's the same one.
@@ -107,10 +117,11 @@ export default function App() {
     setFocusId(travellerId);
     history.replaceState(null, "", next === "plan" ? location.pathname + location.search : `#${next}`);
   };
-  // Dev only: with AUTH_MODE=dev the service believes this header. Real login replaces it.
-  const [actAs, setActAs] = useState("G-DEMO");
+  // Without logins, "Act as" says who is calling: with AUTH_MODE=dev the services believe this header.
+  const [actAs, setActAs] = useState(signedIn?.userId ?? "G-DEMO");
   const [travellerId, setTravellerId] = useState("U-DEMO");
-  const api = useMemo(() => new JourneyApi({ getDevUser: () => actAs }), [actAs]);
+  const api = useMemo(() => signedIn ? new JourneyApi({ getToken: login.freshIdToken })
+    : new JourneyApi({ getDevUser: () => actAs }), [actAs, signedIn]);
   const initial = useMemo(readLink, []) ?? undefined;
   const caregiverId = actAs.startsWith("G-") ? actAs : "G-DEMO";
   const saved = useSavedRoutes(api, travellerId, actAs);
@@ -155,9 +166,16 @@ export default function App() {
           <button type="button" aria-pressed={page === "dashboard"} onClick={() => openPage("dashboard")}>Dashboard</button>
           <button type="button" aria-pressed={page === "travellers"} onClick={() => openPage("travellers")}>Travellers</button>
         </nav>
-        <label>
-          Act as <input value={actAs} onChange={(e) => setActAs(e.target.value)} placeholder="G-003" autoComplete="off" />
-        </label>
+        {signedIn ? (
+          <span className="shell__me" title={signedIn.userId}>
+            {signedIn.email ?? signedIn.userId}
+            <button type="button" onClick={() => login.signOut()}>Sign out</button>
+          </span>
+        ) : (
+          <label>
+            Act as <input value={actAs} onChange={(e) => setActAs(e.target.value)} placeholder="G-003" autoComplete="off" />
+          </label>
+        )}
         <label>
           Traveller <input value={travellerId} onChange={(e) => setTravellerId(e.target.value)} placeholder="U-042" autoComplete="off" />
         </label>

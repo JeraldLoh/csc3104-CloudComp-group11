@@ -1,6 +1,6 @@
 {
-  "packVersion": "R-2C1C66-v1",
-  "routeId": "R-2C1C66",
+  "packVersion": "R-741AB1-v1",
+  "routeId": "R-741AB1",
   "routeVersion": 1,
   "travellerName": null,
   "steps": [
@@ -18,9 +18,16 @@
         {
           "name": "Waterway Point",
           "photoUrl": "https://careroute-files.s3.ap-southeast-1.amazonaws.com/media/streetview/v2/1.40640_103.90220_from_1.40450_103.90180.jpg?X-Amz-Signature=test",
-          "sameView": null
+          "sameView": null,
+          "lat": 1.4064,
+          "lng": 103.9022,
+          "seenFrom": [
+            1.4045,
+            103.9018
+          ]
         }
-      ]
+      ],
+      "stops": []
     },
     {
       "stepIndex": 1,
@@ -36,12 +43,58 @@
         {
           "name": "Oasis Terraces",
           "photoUrl": "https://careroute-files.s3.ap-southeast-1.amazonaws.com/media/streetview/v2/1.40260_103.91280_from_1.40100_103.91000.jpg?X-Amz-Signature=test",
-          "sameView": null
+          "sameView": null,
+          "lat": 1.4026,
+          "lng": 103.9128,
+          "seenFrom": [
+            1.401,
+            103.91
+          ]
         },
         {
           "name": "Block 221",
           "photoUrl": null,
-          "sameView": "step"
+          "sameView": "step",
+          "lat": 1.3936,
+          "lng": 103.8963,
+          "seenFrom": null
+        }
+      ],
+      "stops": [
+        {
+          "name": "Punggol Interchange",
+          "lat": 1.4052,
+          "lng": 103.9024
+        },
+        {
+          "name": "Block 268",
+          "lat": 1.40325,
+          "lng": 103.90137
+        },
+        {
+          "name": "Block 261",
+          "lat": 1.4013,
+          "lng": 103.90033
+        },
+        {
+          "name": "Waterway Pt",
+          "lat": 1.39935,
+          "lng": 103.8993
+        },
+        {
+          "name": "Block 230",
+          "lat": 1.3974,
+          "lng": 103.89827
+        },
+        {
+          "name": "Opposite Block 222",
+          "lat": 1.39545,
+          "lng": 103.89723
+        },
+        {
+          "name": "Opposite Block 221",
+          "lat": 1.3935,
+          "lng": 103.8962
         }
       ]
     }

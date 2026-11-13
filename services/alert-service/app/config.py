@@ -37,6 +37,10 @@ class Settings:
     escalate_max: int = field(default_factory=lambda: int(os.getenv("ESCALATE_MAX", "3")))
     escalation_check_s: float = field(default_factory=lambda: float(os.getenv("ESCALATION_CHECK_S", "15")))
     escalate_within_s: int = field(default_factory=lambda: int(os.getenv("ESCALATE_WITHIN_S", "3600")))  # recent only
+    # An important alert is only sent again while it's still happening (levels.py): reported again this recently,
+    # or for long_dwell, the phone's latest check-in still within this many metres of where they stopped.
+    escalate_still_detected_s: int = field(default_factory=lambda: int(os.getenv("ESCALATE_STILL_DETECTED_S", "60")))
+    dwell_radius_m: float = field(default_factory=lambda: float(os.getenv("DWELL_RADIUS_M", "30")))
 
     # A trip counts as live until its last check-in is this old (live.py).
     live_window_s: int = field(default_factory=lambda: int(os.getenv("LIVE_WINDOW_S", "1800")))

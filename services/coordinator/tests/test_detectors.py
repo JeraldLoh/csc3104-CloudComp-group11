@@ -5,9 +5,9 @@ import time
 from pathlib import Path
 
 import httpx
+import pytest
 
-from app.detectors import DetectorClient
-from app.selection import parse_urls
+from app.detectors import ALL_DETECTORS, DetectorClient, parse_urls
 
 CONTRACTS = Path(__file__).resolve().parents[3] / "contracts" / "examples"
 REQUEST = json.loads((CONTRACTS / "detector-request.json").read_text())
@@ -151,3 +151,92 @@ def test_abstain_vote_has_the_contract_fields():
     votes, _ = run({"detector-route": raises(httpx.ConnectError("down")), "detector-dwell": answers(vote())}, PAIR)
     assert set(votes[0]) == set(VOTE)
     assert votes[0]["requestId"] == "T-001#17"
+
+
+# --- the connection pool survives slow detectors (a real local server: MockTransport has no pool) --
+
+async def detector_server(delay_s: float):
+    """A detector on a local port that answers `vote()` after delay_s."""
+    async def handle(reader, writer):
+        try:
+            length = 0
+            while (line := await reader.readline()) not in (b"\r\n", b""):
+                if line.lower().startswith(b"content-length:"):
+                    length = int(line.split(b":")[1])
+            await reader.readexactly(length)
+            await asyncio.sleep(delay_s)
+            body = json.dumps(vote()).encode()
+            writer.write(b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n"
+                         b"content-length: %d\r\n\r\n%s" % (len(body), body))
+            await writer.drain()
+        except (ConnectionError, asyncio.IncompleteReadError):
+            pass
+        finally:
+            writer.close()
+    server = await asyncio.start_server(handle, "127.0.0.1", 0)
+    return server, f"http://127.0.0.1:{server.sockets[0].getsockname()[1]}"
+
+
+def test_timed_out_calls_give_their_connection_back():
+    # After a burst of slow answers, a fast detector must still answer in time.
+    async def go():
+        slow, slow_url = await detector_server(delay_s=0.6)
+        fast, fast_url = await detector_server(delay_s=0.0)
+        async with httpx.AsyncClient(limits=httpx.Limits(max_connections=4)) as http:
+            client = DetectorClient(http, {"route-corridor": slow_url, "dwell-time": fast_url}, timeout_s=0.2)
+            for _ in range(3):   # more slow calls at once than the pool has connections
+                burst = await asyncio.gather(*(client.call("route-corridor", REQUEST) for _ in range(8)))
+                assert {v["verdict"] for v in burst} == {"abstain"}
+            await asyncio.sleep(1.0)   # the slow answers have all arrived by now
+            after = await client.call("dwell-time", REQUEST)
+        slow.close()
+        fast.close()
+        return after
+    after = asyncio.run(go())
+    assert after["verdict"] == "normal", after["reason"]
+
+
+def test_a_slow_call_still_abstains_at_the_deadline():
+    async def go():
+        slow, url = await detector_server(delay_s=0.6)
+        async with httpx.AsyncClient() as http:
+            started = time.perf_counter()
+            v = await DetectorClient(http, {"route-corridor": url}, timeout_s=0.2).call("route-corridor", REQUEST)
+            waited = time.perf_counter() - started
+        slow.close()
+        return v, waited
+    v, waited = asyncio.run(go())
+    assert v["verdict"] == "abstain" and v["reason"] == "timeout"
+    assert waited < 0.35   # the vote doesn't wait for the slow answer
+
+
+# --- which detectors exist and where (DETECTOR_URLS) ------------------------------------------
+
+def test_four_detectors_with_route_progress():
+    assert ALL_DETECTORS == ("route-corridor", "heading-speed", "dwell-time", "route-progress")
+
+
+def test_default_urls_use_service_names_from_the_contract():
+    urls = parse_urls("")
+    assert urls == {
+        "route-corridor": "http://detector-route:8000",
+        "heading-speed": "http://detector-heading:8000",
+        "dwell-time": "http://detector-dwell:8000",
+        "route-progress": "http://detector-progress:8000",
+    }
+
+
+def test_override_one_url_and_strip_trailing_slash():
+    urls = parse_urls(" route-corridor = http://localhost:9001/ ")
+    assert urls["route-corridor"] == "http://localhost:9001"
+    assert urls["dwell-time"] == "http://detector-dwell:8000"
+
+
+def test_unknown_detector_in_urls_is_rejected():
+    with pytest.raises(ValueError):
+        parse_urls("speed-detector=http://x:8000")
+
+
+def test_missing_url_is_rejected():
+    with pytest.raises(ValueError):
+        parse_urls("route-corridor=")

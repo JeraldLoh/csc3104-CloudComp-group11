@@ -294,11 +294,13 @@ class Planner:
         # Extra: info on how many stops to ride, which easy-read wording uses, and
         # every stop on the leg: for a train, so check_disruptions() can tell whether an MRT fault falls between
         # the two ends and easy_read() which way it goes; for a bus, the stop before getting off ("After
-        # Block 301, press the bell").
+        # Block 301, press the bell"). With each stop's position, so the traveller app can count the stops left as
+        # the bus passes them (route pack `stops`, apps/traveller/src/lib/guide.ts).
         if step_mode in ("bus", "train"):
             step["stopCount"] = stops
             every = [leg["from"], *(leg.get("intermediateStops") or []), leg["to"]]
-            step["stops"] = [{"code": s.get("stopCode"), "name": pretty(s.get("name"))} for s in every]
+            step["stops"] = [{"code": s.get("stopCode"), "name": pretty(s.get("name")),
+                              "lat": s.get("lat"), "lng": s.get("lon")} for s in every]
         return step                     # easyRead: _option() writes it for the whole route (route_wording)
 
     def _with_bus_service(self, step: dict) -> dict:

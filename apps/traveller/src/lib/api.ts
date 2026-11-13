@@ -26,8 +26,8 @@ export interface Transport {
 export interface HttpTransportOptions {
   baseUrl?: string;
   timeoutMs?: number;
-  /** Returns the login token once Cognito (issue 1.5) exists. */
-  getToken?: () => string | null;
+  /** The login token (Cognito, issue 1.5), or a promise of it (refreshed first). */
+  getToken?: () => string | null | Promise<string | null>;
   fetchImpl?: typeof fetch;
 }
 
@@ -50,7 +50,7 @@ export function classify(status: number): SendResult["kind"] {
 export class HttpTransport implements Transport {
   private baseUrl: string;
   private timeoutMs: number;
-  private getToken: () => string | null;
+  private getToken: () => string | null | Promise<string | null>;
   private fetchImpl: typeof fetch;
 
   constructor(o: HttpTransportOptions = {}) {
@@ -72,7 +72,7 @@ export class HttpTransport implements Transport {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     const headers: Record<string, string> = { "Content-Type": "application/json" };
-    const token = this.getToken();
+    const token = await this.getToken();
     if (token) headers.Authorization = `Bearer ${token}`;
     try {
       const res = await this.fetchImpl(this.baseUrl + path, {

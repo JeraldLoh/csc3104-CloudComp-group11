@@ -31,7 +31,7 @@ from . import easy_read_ai, landmarks
 from .auth import Caller, Forbidden
 from .cache import JsonCache
 from .config import Settings
-from .easy_read import easy_read, with_easy_read
+from .easy_read import easy_read, plain, with_easy_read
 from .lta import LtaClient
 from .onemap import OneMapClient
 from .photos import RoutePhotos
@@ -494,9 +494,16 @@ class JourneyClient(TripChanges):
                 "backup": (step.get("backup") or {}).get("instruction"),
                 # What the wording tells them to look out for, with a photo of each. `sameView`: one with no photo of
                 # its own says which photo shows it ("step", or another landmark's name), so the phone can say so.
+                # Where it is and the spot on the route it is seen from, so the phone shows it as they get near.
                 "landmarks": [{"name": m["name"], "photoUrl": self.photos.photo_url(m.get("photoKey")),
-                               "sameView": m.get("sameView")}
+                               "sameView": m.get("sameView"), "lat": m.get("lat"), "lng": m.get("lng"),
+                               "seenFrom": m.get("seenFrom")}
                               for m in step.get("landmarks") or []],
+                # Every stop of a bus/train ride, first and last included, so the phone can count the stops left
+                # as it passes them. Names as the wording says them; lat/lng null for a route planned before they
+                # were kept (the phone then doesn't count).
+                "stops": [{"name": plain(s.get("name")), "lat": s.get("lat"), "lng": s.get("lng")}
+                          for s in step.get("stops") or []],
             })
         # A changed plan is a new pack version, so the phone (which polls for one) shows "Your trip has changed".
         plan = trip.get("planVersion") or 1

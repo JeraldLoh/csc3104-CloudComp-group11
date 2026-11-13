@@ -7,6 +7,7 @@ import { Sender, type SenderState } from "../lib/sender";
 import { RequestQueue, type RequestQueueState } from "../lib/requests";
 import { RECONNECT_JITTER_MS, Tracker, type Fix, type TrackerProblem } from "../lib/tracker";
 import { HttpTransport } from "../lib/api";
+import { login } from "../auth/current";
 import { isOnline, netsim, withNetsim } from "../lib/netsim";
 import { checkForNewPack, loadPack, type LoadedPack } from "../lib/pack";
 import { DEMO_PACK, DEMO_PACK_CHANGED, DemoWalker } from "../lib/demo";
@@ -95,7 +96,7 @@ export function useCareRoute(session: Session, opts: { demo: boolean }): CareRou
     e.tracker.start();
     void e.wake.enable();
     if (opts.demo) {
-      const walker = new DemoWalker(pack.pack.path);
+      const walker = new DemoWalker(() => ({ pack: pack.pack, stepIndex: stepRef.current }));
       e.tracker.acceptFix(walker.next(Date.now()));
       demoTimer.current = setInterval(() => e.tracker.acceptFix(walker.next(Date.now())), DEMO_TICK_MS);
     }
@@ -115,7 +116,8 @@ export function useCareRoute(session: Session, opts: { demo: boolean }): CareRou
       const db = await openCareRouteDB();
       if (disposed) return db.close();
       startBatteryWatch();
-      const transport = withNetsim(new HttpTransport());
+      // With logins on (issue 1.5), every request carries the signed-in traveller's token
+      const transport = withNetsim(new HttpTransport({ getToken: login.enabled ? login.freshIdToken : undefined }));
       const outbox = new Outbox(db);
       const sender = new Sender({ outbox, transport, isOnline });
       const requests = new RequestQueue(db, transport);

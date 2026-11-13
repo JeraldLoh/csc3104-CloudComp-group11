@@ -1,10 +1,10 @@
-# Demo panel (local only, not committed): adds demo-control to the analysis-dev stack.
+# Demo panel (local only, never deployed): adds demo-control to the analysis-dev stack.
 # Run from the repo root; paths below are relative to services/analysis-dev (the first file):
 #
 #   docker compose -f services/analysis-dev/compose.yaml -f services/demo-control/compose.demo.yaml up --build -d
 #   open http://localhost:8005
 #
-# With the fake detectors too, add -f services/analysis-dev/compose.fakes.yaml.
+# For the Fault switches buttons, add -f evaluation/coordinator/compose.c2.yaml before this file.
 
 services:
   demo-control:
@@ -18,10 +18,9 @@ services:
       REDIS_URL: redis://redis:6379/0
       CHECKINS_QUEUE: careroute-checkins
       ROUTE_FILE: /tools/route.json
-      DASHBOARD_URL: http://localhost:8001/dashboard
+      DASHBOARD_URL: http://localhost:8000/dashboard
       DYNAMODB_ENDPOINT_URL: http://dynamodb:8000   # Reset demo clears the incidents here
-    # The Docker socket lets the panel's Services buttons stop and start containers of this stack
-    # (real outages). Local only: whoever holds the socket controls Docker, hence root.
+    # For the stop/start buttons. Local only: the socket gives control of Docker.
     user: root
     volumes:
       - ../../contracts/examples/route.json:/tools/route.json:ro

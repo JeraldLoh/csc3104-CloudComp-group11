@@ -26,6 +26,11 @@
 set -euo pipefail
 
 STACK_NAME="${STACK_NAME:-careroute-stack-1}"
+COGNITO_STACK_NAME="${COGNITO_STACK_NAME:-careroute-cognito}"
+# The user pool's IDs (logins, issue 1.5), read from the Cognito stack before deploying. --render-only makes no AWS
+# call, so it renders these stand-ins.
+COGNITO_POOL="render-only-pool"
+COGNITO_CLIENT="render-only-client"
 REGION="${REGION:-ap-southeast-1}"
 RESOURCE_PREFIX="${RESOURCE_PREFIX:-}"
 IMAGE_TAG="${IMAGE_TAG:-v1}"
@@ -90,6 +95,7 @@ render_manifest() {  # image redis bucket prefix out-file
   sed -e "s|__IMAGE__|$(sed_value "$1")|g" -e "s|__REDIS_ENDPOINT__|$(sed_value "$2")|g" \
       -e "s|__FILES_BUCKET__|$(sed_value "$3")|g" -e "s|__NAMESPACE__|$(sed_value "$APP_NAMESPACE")|g" \
       -e "s|__REGION__|$(sed_value "$REGION")|g" \
+      -e "s|__COGNITO_USER_POOL_ID__|$(sed_value "$COGNITO_POOL")|g" -e "s|__COGNITO_CLIENT_ID__|$(sed_value "$COGNITO_CLIENT")|g" \
       -e "s|\"careroute-routes\"|\"$(sed_value "$4")-routes\"|g" -e "s|\"careroute-trips\"|\"$(sed_value "$4")-trips\"|g" \
       "$MANIFEST" > "$5"
   local left
@@ -183,7 +189,16 @@ if ! { grep -q '^ONEMAP_API_EMAIL=' "$SECRET_FILE" && grep -q '^ONEMAP_API_PASSW
 fi
 kubectl get namespace "$APP_NAMESPACE" >/dev/null 2>&1 \
   || die "Namespace $APP_NAMESPACE does not exist in the cluster. The platform's deploy script creates it."
-kubectl create secret generic journey-api-keys --from-env-file="$SECRET_FILE" -n "$APP_NAMESPACE" --dry-run=client -o yaml \
+if [ -s "$SECRET_FILE" ]; then
+  FROM_FILE=(--from-env-file="$SECRET_FILE")
+else
+  # No keys at all: an empty Secret, so the service still starts (the manifest reads every key as optional) and a
+  # re-run after removing the keys from .env clears them from the cluster too. Same as the Windows script.
+  info "WARNING: no API keys found in $ENV_FILE. Creating an empty Secret so the Journey Service still starts,"
+  info "         but live LTA data, OneMap route planning and Google step photos need the keys: add them and re-run this script."
+  FROM_FILE=()
+fi
+kubectl create secret generic journey-api-keys ${FROM_FILE[@]+"${FROM_FILE[@]}"} -n "$APP_NAMESPACE" --dry-run=client -o yaml \
   | kubectl apply -f - || die "Could not create the Secret"
 
 # ---------------------------------------------------------------------------
@@ -196,6 +211,14 @@ docker push "$IMAGE"
 
 # ---------------------------------------------------------------------------
 step "Applying the manifest"
+# Logins (issue 1.5): the user pool lives in its own stack, kept between teardowns.
+COGNITO_POOL="$(aws cloudformation describe-stacks --stack-name "$COGNITO_STACK_NAME" --region "$REGION" \
+  --query "Stacks[0].Outputs[?OutputKey=='UserPoolId'].OutputValue" --output text 2>/dev/null || true)"
+COGNITO_CLIENT="$(aws cloudformation describe-stacks --stack-name "$COGNITO_STACK_NAME" --region "$REGION" \
+  --query "Stacks[0].Outputs[?OutputKey=='UserPoolClientId'].OutputValue" --output text 2>/dev/null || true)"
+[ -n "$COGNITO_POOL" ] && [ "$COGNITO_POOL" != "None" ] && [ -n "$COGNITO_CLIENT" ] \
+  || die "The Journey Service needs the Cognito stack $COGNITO_STACK_NAME (logins). Deploy it once: repo README, 'Logins (Cognito)'"
+info "User pool $COGNITO_POOL"
 RENDERED="$WORK_DIR/journey-service.yaml"
 render_manifest "$IMAGE" "$REDIS_ENDPOINT" "$BUCKET" "$RESOURCE_PREFIX" "$RENDERED"
 EXISTED=false

@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager
 import boto3
 import redis
 from botocore.config import Config
-from fastapi import Depends, FastAPI, Header, Request
+from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
@@ -22,6 +22,7 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import aws_resources, metrics
+from .auth import AuthUnavailable, Authenticator, Caller, Unauthorized
 from .config import Settings, settings as default_settings
 from .live_state import LiveState
 from .models import Checkin, CheckinBatch
@@ -60,11 +61,15 @@ def error(status: int, code: str, message: str, details=None) -> JSONResponse:
     return JSONResponse(status_code=status, content=body)
 
 
-class AuthError(Exception):
-    pass
+class Forbidden(Exception):
+    """Logged in, but sending someone else's check-ins."""
 
 
-def create_app(service: CheckinService | None = None, s: Settings = default_settings) -> FastAPI:
+def create_app(service: CheckinService | None = None, s: Settings = default_settings,
+               authenticator: Authenticator | None = None) -> FastAPI:
+    """`authenticator`: tests inject one with their own signing key."""
+    auth = authenticator or Authenticator(s)  # a bad AUTH_MODE / Cognito setting fails here, at startup
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         svc = service or build_service(s)
@@ -89,14 +94,29 @@ def create_app(service: CheckinService | None = None, s: Settings = default_sett
             max_age=600,
         )
 
-    def require_token(authorization: str | None = Header(default=None)) -> None:
-        # TODO(issue 1.5): verify the Cognito JWT and check the traveller owns this trip.
-        if s.auth_required and not (authorization or "").startswith("Bearer "):
-            raise AuthError()
+    def check_sender(request: Request, traveller_id: str) -> None:
+        """Only the traveller sends their check-ins. Nobody is checked with AUTH_MODE=off.
+        (Owning the trip itself isn't checked: the trip's context in Redis comes from these same check-ins.)"""
+        who: Caller | None = auth.authenticate(request.headers)
+        if who is not None and (who.is_caregiver or who.id != traveller_id):
+            raise Forbidden()
 
-    @app.exception_handler(AuthError)
-    async def _auth(_: Request, __: AuthError):
+    @app.exception_handler(Unauthorized)
+    async def _auth(_: Request, e: Unauthorized):
+        log.info("login refused: %s", e)  # the reason is for the log only
         return error(401, "unauthorized", "Missing or invalid login token")
+
+    @app.exception_handler(Forbidden)
+    async def _forbidden(_: Request, __: Forbidden):
+        return error(403, "forbidden", "Only the traveller can send their check-ins")
+
+    @app.exception_handler(AuthUnavailable)
+    async def _auth_unavailable(_: Request, e: AuthUnavailable):
+        log.warning("can't check logins: %s", e)
+        # 503: the phone keeps the check-in and retries, as for any other outage
+        resp = error(503, "unavailable", "Can't check the login right now. Please retry.")
+        resp.headers["Retry-After"] = str(s.retry_after_s)
+        return resp
 
     @app.exception_handler(RequestValidationError)
     async def _invalid(_: Request, e: RequestValidationError):
@@ -150,12 +170,14 @@ def create_app(service: CheckinService | None = None, s: Settings = default_sett
 
     # Plain `def` endpoints: boto3 and redis-py are blocking, so FastAPI runs these in
     # its thread pool and one slow call doesn't stall other requests.
-    @app.post("/api/checkins", status_code=202, dependencies=[Depends(require_token)])
+    @app.post("/api/checkins", status_code=202)
     def post_checkin(body: Checkin, request: Request):
+        check_sender(request, body.travellerId)
         return request.app.state.service.ingest_one(body).body()
 
-    @app.post("/api/checkins/batch", status_code=202, dependencies=[Depends(require_token)])
+    @app.post("/api/checkins/batch", status_code=202)
     def post_batch(body: CheckinBatch, request: Request):
+        check_sender(request, body.travellerId)
         return request.app.state.service.ingest_batch(body.expand(), budget_s=s.batch_budget_ms / 1000).body()
 
     @app.get("/health")

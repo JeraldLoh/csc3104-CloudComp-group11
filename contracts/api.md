@@ -29,14 +29,20 @@ busy server stops a batch after about 1 s; the sender removes those and sends th
 `503` with `{"error": {"code": "overloaded"}}` and a `Retry-After` header (seconds): the replica is at
 capacity and did nothing; retry after that long (plus random extra).
 
-## Coordinator and Aggregator (Member 3)
+## Coordinator (Member 3)
 
-The Coordinator has no public endpoint; it reads from the `careroute-checkins` queue.
+The Coordinator reads check-ins from the `careroute-checkins` queue, asks the detectors, decides
+(rules in `problem-definitions.md`) and sends confirmed problems to the Alert Service
+(`POST /internal/problems`). It used to hand the votes to a separate Aggregator
+(`POST /internal/votes`); that service is gone and the decision happens inside the Coordinator.
 
-| Service | Method | Path | Body | Returns |
-|---|---|---|---|---|
-| Aggregator | POST | `/internal/votes` | `{"requestId": "...", "checkin": {...}, "votes": [detector-vote, ...]}` | `{"decision": "problem" \| "normal", "problemType": "...", "confidence": 0.81}` |
-| Coordinator | GET | `/api/status/travellers` | — | `[{"travellerId": "U-042", "tripId": "T-001", "riskLevel": "elevated", "detectorsUsed": 4}]` |
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| GET | `/api/status/travellers` | — | `[{"travellerId": "U-042", "tripId": "T-001", "riskLevel": "elevated", "detectorsUsed": 4}]` |
+| GET | `/api/decisions?travellerId=U-042&limit=50` | — | Newest decisions first (both parameters optional; `limit` 1–200, default 50): each has `tripId`, `seq`, `k`, `votes`, `decision` (`problem` \| `normal` \| `inconclusive`), `problemType`, `confidence`, `riskBefore`, `riskAfter`, `incidentId` |
+| GET | `/dashboard` | — | The detection dashboard (HTML), built on the two endpoints above |
+
+The dashboard isn't exposed through the load balancer; open it with `kubectl port-forward`.
 
 ## Detectors (Member 4)
 
@@ -49,15 +55,34 @@ Each detector is its own service: `detector-route`, `detector-heading`, `detecto
 
 Must answer within **500 ms**. If a detector can't decide, it returns `"verdict": "abstain"`.
 
+An abstain's `reason` tells "can't judge" from "broken": a detector that failed (caught its own
+exception) starts the reason with `internal error`. The Coordinator records a call that timed out
+as `timeout` and one that errored as `error: ...`. Those three prefixes count as a failure
+(`tracking_lost` when every detector for a type fails, see `problem-definitions.md`); any other
+reason is a normal "can't judge", so don't start one with them.
+
 ## Simulator (Member 4)
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
 | POST | `/api/sim/start` | `{"scenario": "wrong_direction", "travellers": 50}` | `{"runId": "..."}` |
 | POST | `/api/sim/stop` | — | `200` |
-| POST | `/api/sim/faults` | `{"detectorId": "detector-dwell", "mode": "wrong"}` | `200` |
 
 Scenarios: `normal`, `missed_stop`, `wrong_direction`, `long_dwell`, `silence`, `tunnel`, `out_of_order`.
+
+Faulty detectors aren't made by the simulator: see the fault switch below.
+
+## Fault switch (Member 3, evaluation only)
+
+`services/fault-switch`: one in front of each real detector (`evaluation/coordinator/compose.c2.yaml`),
+with the detector's own `/internal/detect`. Never deployed; the demo calls the detectors directly.
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| POST | `/control` | `{"mode": "wrong"}`, `{"mode": "error"}`, `{"mode": "pass", "delayMs": 2000}` | the switch's settings |
+| GET | `/control` | — | the switch's settings |
+
+Modes: `pass` (the real vote), `wrong` (the real vote inverted), `error` (HTTP 500); `delayMs` delays every answer.
 
 
 ## Alert Service (Member 5)
@@ -69,14 +94,14 @@ Scenarios: `normal`, `missed_stop`, `wrong_direction`, `long_dwell`, `silence`, 
 | POST | `/api/incidents/{incidentId}/ack` | — | updated `incident.json` |
 | POST | `/api/incidents/{incidentId}/resolve` | — | updated `incident.json` |
 | GET | `/api/stream` | — | Live events (SSE), each one is `alert-event.json`, `arrival-event.json` or `where-event.json` |
-| POST | `/api/arrived` | `{"tripId": "T-001", "travellerId": "U-042"}` | `{"tripId", "arrivedAt"}`: the traveller pressed "I've arrived". Safe to repeat; only the first call tells caregivers. No login needed until Cognito |
-| POST | `/api/help` | `{"tripId": "T-001", "travellerId": "U-042", "stepIndex": 2, "lat": 1.40, "lng": 103.90}` | `{"incidentId": "..."}`: an urgent `help_requested` incident. Only `tripId` is required; the trip's check-in context fills in the rest. No login needed until Cognito |
+| POST | `/api/arrived` | `{"tripId": "T-001", "travellerId": "U-042"}` | `{"tripId", "arrivedAt"}`: the traveller pressed "I've arrived". Safe to repeat; only the first call tells caregivers. With Cognito, only the traveller |
+| POST | `/api/help` | `{"tripId": "T-001", "travellerId": "U-042", "stepIndex": 2, "lat": 1.40, "lng": 103.90}` | `{"incidentId": "..."}`: an urgent `help_requested` incident. Only `tripId` is required; the trip's check-in context fills in the rest. With Cognito, only the traveller |
 | POST | `/api/travellers/{travellerId}/where-are-you` | — | `202` the question (`requestId`, `askedBy`, `askedAt`, `status`, `answer`, `answeredAt`, `lat`, `lng`). One waits at a time; asking again returns it |
 | GET | `/api/travellers/{travellerId}/where-are-you` | — | the latest question, waiting or answered, or `null` |
-| GET | `/api/where-are-you?travellerId=U-042` | — | from the phone: the question waiting for an answer, or `null`. No login needed until Cognito |
+| GET | `/api/where-are-you?travellerId=U-042` | — | from the phone: the question waiting for an answer, or `null`. With Cognito, only the traveller |
 | POST | `/api/where-are-you/reply` | `{"travellerId", "requestId", "answer": "ok" \| "help", "lat", "lng"}` | the answered question. Safe to repeat: only the first reply counts. "help" is also sent as `POST /api/help` by the phone |
 | POST | `/api/devices` | `{"token": "<firebase token>"}` | `201` `{"registered": true, "pushEnabled": bool}`: a caregiver's browser, for urgent alerts by push. Safe to repeat |
-| POST | `/api/devices/traveller` | `{"travellerId": "U-042", "token": "<firebase token>"}` | `201`, as above: the traveller's phone, for "Where are you?" by push. No login needed until Cognito |
+| POST | `/api/devices/traveller` | `{"travellerId": "U-042", "token": "<firebase token>"}` | `201`, as above: the traveller's phone, for "Where are you?" by push. With Cognito, only the traveller |
 
 ## Profiles (Member 5)
 
@@ -84,7 +109,8 @@ Scenarios: `normal`, `missed_stop`, `wrong_direction`, `long_dwell`, `silence`, 
 |---|---|---|---|
 | GET | `/api/travellers` | — | caregiver's linked travellers |
 | GET | `/api/travellers/live` | — | `{"U-042": {"tripId", "stepIndex", "status", "lastSeenAt", "arrivedAt", "lat", "lng", "accuracyM", "batteryPct", "trail": [[lat, lng], ...]}}`: the caller's travellers with a check-in in the last 30 minutes |
-| POST | `/api/travellers` | `{"name": "Alex", "preferences": {...}}` | `201` traveller (new `U-` id); the caller is linked to them |
+| POST | `/api/travellers` | `{"name": "Alex", "preferences": {...}}` | `201` traveller (new `U-` id); the caller is linked to them. With Cognito also `"login": {"username": "U-1A2B3C", "setupCode": "k7mq-4rtx-9cwe"}` (the phone's login, shown once), or `"login": null` if it couldn't be made |
+| POST | `/api/travellers/{travellerId}/login` | — | `{"username", "setupCode"}`: a new setup code for the traveller's phone; the old one stops working and the traveller is signed out everywhere. A linked caregiver only. `409 logins_off` without Cognito |
 | DELETE | `/api/travellers/{travellerId}` | — | `{"travellerId", "removed": true, "profileDeleted": bool}`: off the caller's list; profile and safe locations deleted if no caregiver is left |
 | GET / POST | `/api/travellers/{travellerId}/safe-locations` | `{"name": "Home", "lat": ..., "lng": ...}` | safe locations / `201` the new one |
 | GET | `/api/travellers/{travellerId}/caregivers` | — | list of caregiver IDs linked to the traveller, sorted; the caller must be one of them |
@@ -97,7 +123,7 @@ can't tell the traveller exists. A link is made when a caregiver adds a travelle
 linked to them (`POST /api/links`), so nobody can attach themselves to a stranger. A traveller can read their
 own safe locations.
 
-**Login:** as for the Journey Service (`AUTH_MODE`): `X-Dev-User: G-003` locally, Cognito later. A browser's
+**Login:** as for the Journey Service (`AUTH_MODE`): `X-Dev-User: G-003` locally, Cognito ID tokens on AWS (issue 1.5, README "Logins (Cognito)"). A browser's
 `EventSource` can't send headers, so `/api/stream` also takes `?devUser=G-003` or `?token=<JWT>`.
 
 ## Journey Service (Member 6)
@@ -174,7 +200,14 @@ Route steps may carry `landmarks: [{name, kind, lat, lng, seenFrom, photoKey, sa
 the traveller to look out for, each with a Street View photo of it taken from `seenFrom`, the traveller's spot on the
 route (`sameView`: no photo of its own, as it would repeat the step's photo, `"step"`, or that landmark's). The
 service keeps only those the step's `easyRead` names; answers add `photoUrl` to each, and the route pack
-has `landmarks: [{name, photoUrl, sameView}]` per step (`sameView` null unless it has no photo of its own).
+has `landmarks: [{name, photoUrl, sameView, lat, lng, seenFrom}]` per step (`sameView` null unless it has no photo of
+its own).
+
+Route pack steps also carry `stops: [{name, lat, lng}]`: every stop of a bus or train ride, the boarding stop first and
+the one to get off at last (`[]` for a walk). Names as the wording says them (short forms spelled out); `lat`/`lng`
+null for a route planned before stop positions were kept. With these and the landmark positions, the traveller app
+shows a bus step one thing at a time as GPS says the bus passes each stop ("5 more stops", "Press the bell now";
+`apps/traveller/src/lib/guide.ts`).
 
 Step photos (Journey Service): saving a route adds a Google Street View photo of where each walk/bus step ends
 (`photoKey`, an S3 key under `media/`; a recent panorama, Google's own first, else a recent upload close by, else an older one under `media/streetview/v2/rough/` for the caregiver to check; a walk to a station shows its nearest exit). `POST /api/routes/{routeId}/photos` (multipart field `photo`, JPEG/PNG/WebP

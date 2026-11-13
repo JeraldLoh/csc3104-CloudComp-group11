@@ -1,0 +1,23 @@
+# C4: a second Coordinator replica on the same queue, as on EKS.
+#
+#   docker compose -f services/analysis-dev/compose.yaml -f evaluation/coordinator/compose.c4.yaml up --build -d
+#
+# Paths are relative to services/analysis-dev (the first file). Same settings as `coordinator`,
+# without its port.
+
+services:
+  coordinator-2:
+    image: careroute-coordinator:dev   # built by the coordinator service
+    environment:
+      AWS_ENDPOINT_URL: http://elasticmq:9324
+      AWS_DEFAULT_REGION: ap-southeast-1
+      AWS_ACCESS_KEY_ID: local
+      AWS_SECRET_ACCESS_KEY: local
+      REDIS_URL: redis://redis:6379/0
+      CHECKINS_QUEUE: careroute-checkins
+      REDUNDANCY_MODE: ${REDUNDANCY_MODE:-fixed4}
+      ALERT_SERVICE_URL: http://alert-service:8000
+    depends_on:
+      coordinator: { condition: service_started }   # so the image exists
+      redis: { condition: service_healthy }
+      elasticmq: { condition: service_started }

@@ -1,7 +1,8 @@
 // Push notifications (issue 5.4): urgent alerts reach the caregiver when the dashboard isn't open. The browser asks
 // for permission once, Firebase gives this browser a token, and the Alert Service keeps it (POST /api/devices).
-// public/firebase-messaging-sw.js shows a notification when no dashboard is open; with one open but hidden, this
-// file shows it. Without firebase-web-config.json push is "off" and nothing here runs.
+// public/firebase-messaging-sw.js shows a notification when no dashboard is open; with one open, this file shows it,
+// even while it's on screen, so an alert isn't missed by a caregiver looking at another traveller.
+// Without firebase-web-config.json push is "off" and nothing here runs.
 import { initializeApp, type FirebaseApp } from "firebase/app";
 import { getMessaging, getToken, isSupported, onMessage } from "firebase/messaging";
 import { call } from "../alerts/api";
@@ -37,13 +38,14 @@ export async function turnOnPush(caregiverId: string): Promise<PushState> {
     const token = await getToken(messaging, { vapidKey, serviceWorkerRegistration: worker });
     if (!listening) {
       listening = true;
-      // A dashboard is open, so Firebase gives the message to the page instead of the service worker.
-      // If it's hidden behind another tab or window, show it anyway.
+      // A dashboard is open, so Firebase gives the message to the page instead of the service worker: show it here,
+      // as the worker would. A reminder has the same tag, so it replaces the earlier one and pops up again (renotify).
       onMessage(messaging, ({ data }) => {
-        if (!data || document.visibilityState === "visible") return; // the dashboard already shows it live
+        if (!data) return;
         void worker.showNotification(data.title ?? "CareRoute", {
-          body: data.body, tag: data.incidentId, requireInteraction: true, data: { url: data.url ?? "/" },
-        });
+          body: data.body, tag: data.incidentId, renotify: true, requireInteraction: true,
+          data: { url: data.url ?? "/" },
+        } as NotificationOptions);
       });
     }
     const saved = await call<{ pushEnabled: boolean }>("/api/devices", caregiverId,

@@ -26,7 +26,8 @@ from app.errors import ApiError
 from app.escalation import Escalator
 from app.events import EVENT_FOR_OUTCOME, AlertPublisher
 from app.incidents import IncidentStore, now_iso
-from app.live import ARRIVED_TTL_S, LiveTrips, arrived_key
+from app.live import ARRIVED_TTL_S, LiveTrips, arrived_key, still_near
+from app.logins import LoginUnavailable, TravellerLogins
 from app.models import (PHONE_TRAVELLER_ID, ArrivalRequest, HelpRequest, Location, NewDevice, NewLink, NewSafeLocation,
                         NewTraveller, ProblemReport, TravellerDevice, WhereReply)
 from app.profiles import ProfileStore
@@ -48,9 +49,28 @@ where = WhereRequests(r)
 publisher = AlertPublisher(r, dynamodb, settings.travellers_table)
 devices = DeviceStore(dynamodb, settings.device_tokens_table)
 notifier = Notifier(devices, profiles.caregivers_of, make_sender(settings.firebase_credentials), publisher.traveller_name)
+
+
+def _still_where_they_stopped(incident: dict, now) -> bool | None:
+    """For a long_dwell alert: is the traveller still within DWELL_RADIUS_M of where it was raised? None = can't tell."""
+    where = incident.get("lastLocation")
+    if not where:
+        return None
+    try:
+        return still_near(r, incident["tripId"], where["lat"], where["lng"], settings.dwell_radius_m,
+                          settings.escalate_still_detected_s, now)
+    except redis.RedisError:
+        return None
+
+
 escalator = Escalator(incidents, publisher, notifier, settings.escalate_after_s, settings.escalate_max,
-                      settings.escalation_check_s, settings.escalate_within_s)
+                      settings.escalation_check_s, settings.escalate_within_s, settings.escalate_still_detected_s,
+                      _still_where_they_stopped)
 authenticator = Authenticator(settings)  # a bad AUTH_MODE / Cognito setting fails here, at startup
+# Travellers' logins (issue 1.5) only exist with Cognito; otherwise the phone is told its traveller by a link.
+logins = (TravellerLogins(boto3.client("cognito-idp", region_name=settings.cognito_region), settings.cognito_user_pool_id,
+                          settings.auth_traveller_group)
+          if settings.auth_mode == "cognito" else None)
 
 
 @asynccontextmanager
@@ -179,8 +199,9 @@ def _trip_context(trip_id: str) -> dict:
 
 
 def _check_phone(request: Request, traveller_id: str) -> None:
-    """Requests from a traveller's phone. Travellers have no login until issue 1.5, and a phone treats a refusal
-    as final and drops the request, so only Cognito checks who is asking."""
+    """Requests from a traveller's phone. Only Cognito checks who is asking (the phone signs in with the setup code
+    its caregiver got, app/logins.py): with AUTH_MODE=dev the phone sends no X-Dev-User, and a phone treats a
+    refusal as final and drops the request."""
     who = authenticator.authenticate(request.headers) if settings.auth_mode == "cognito" else None
     if who and (who.is_caregiver or who.id != traveller_id):
         raise Forbidden("Only the traveller can do that.")
@@ -391,15 +412,42 @@ def add_traveller(body: NewTraveller, who: Caller | None = Depends(caller)):
     me = require_caregiver(who, "add a traveller")
     traveller = profiles.create_traveller(me.id, body.name, body.preferences)
     log.info("%s added traveller %s", me.id, traveller["travellerId"])
+    if logins:
+        # The traveller exists either way: if Cognito fails, the caregiver asks for a setup code again later.
+        try:
+            traveller = {**traveller, "login": logins.issue(traveller["travellerId"])}
+        except LoginUnavailable as e:
+            log.warning("%s", e)
+            traveller = {**traveller, "login": None}
     return traveller
+
+
+@app.post("/api/travellers/{travellerId}/login")
+def new_traveller_login(travellerId: str, who: Caller | None = Depends(caller)):
+    """A new setup code for the traveller's phone (made on first use). The old code stops working and the traveller
+    is signed out everywhere: for a new or lost phone. Shown once; it isn't stored anywhere it can be read back."""
+    me = require_caregiver(who, "set up a traveller's phone")
+    check_access(me, travellerId)
+    if not logins:
+        raise ApiError(409, "logins_off", "Traveller logins need AUTH_MODE=cognito; without it, share the trip link")
+    try:
+        login = logins.issue(travellerId)
+    except LoginUnavailable as e:
+        log.warning("%s", e)
+        raise ApiError(503, "unavailable", "Can't set up the login right now; try again shortly")
+    log.info("%s made a new setup code for %s", me.id, travellerId)
+    return login
 
 
 @app.delete("/api/travellers/{travellerId}")
 def remove_traveller(travellerId: str, who: Caller | None = Depends(caller)):
-    """Take a traveller off the caller's list. If nobody else looks after them, their profile is deleted too."""
+    """Take a traveller off the caller's list. If nobody else looks after them, their profile is deleted too,
+    and so is their login."""
     me = require_caregiver(who, "remove a traveller")
     deleted = profiles.remove_traveller(me.id, travellerId)
     log.info("%s removed traveller %s (profile deleted: %s)", me.id, travellerId, deleted)
+    if deleted and logins:
+        logins.remove(travellerId)
     return {"travellerId": travellerId, "removed": True, "profileDeleted": deleted}
 
 

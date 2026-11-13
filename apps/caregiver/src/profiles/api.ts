@@ -8,6 +8,14 @@ export interface Traveller {
   preferences?: Record<string, unknown>;
   createdBy?: string;
   createdAt?: string;
+  /** Only when just added with logins on (issue 1.5): the phone's login. null if it couldn't be made. */
+  login?: TravellerLogin | null;
+}
+
+/** How the traveller's phone signs in: their ID and a setup code (the password). Shown once. */
+export interface TravellerLogin {
+  username: string;
+  setupCode: string;
 }
 
 export interface SafeLocation {
@@ -59,6 +67,11 @@ export function addTraveller(caregiverId: string, name: string): Promise<Travell
 }
 
 /** Take a traveller off the caller's list. If nobody else looks after them, their profile is deleted too. */
+/** A new setup code for the traveller's phone; the old one stops working (logins on only). */
+export function newSetupCode(caregiverId: string, travellerId: string): Promise<TravellerLogin> {
+  return call(`/api/travellers/${encodeURIComponent(travellerId)}/login`, caregiverId, { method: "POST" });
+}
+
 export function removeTraveller(caregiverId: string, travellerId: string): Promise<{ profileDeleted: boolean }> {
   return call(`/api/travellers/${encodeURIComponent(travellerId)}`, caregiverId, { method: "DELETE" });
 }

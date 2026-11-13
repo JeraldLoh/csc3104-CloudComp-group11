@@ -73,6 +73,5 @@ def test_queue_created_only_when_asked():
 
 
 def test_every_detector_is_asked_by_default(monkeypatch):
-    # Safety first: a missed alert is the unsafe failure, so fixed4 unless the experiment says otherwise.
     monkeypatch.delenv("REDUNDANCY_MODE", raising=False)
     assert Settings().redundancy_mode == "fixed4"

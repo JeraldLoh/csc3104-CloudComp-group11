@@ -22,6 +22,7 @@ def test_first_report_creates_an_open_incident(store, report):
     assert incident["incidentId"] == f"{report['travellerId']}#T-001#off_route#2"
     assert incident["state"] == "open"
     assert incident["severity"] == "normal"
+    assert incident["level"] == "important"  # off route: pushed, sent again only while still happening
     assert incident["detectionCount"] == 1
     assert incident["detectedAt"] == "2026-10-12T08:15:31Z"
     assert store.get(incident["incidentId"])["lastLocation"] == {"lat": 1.4052, "lng": 103.9024}

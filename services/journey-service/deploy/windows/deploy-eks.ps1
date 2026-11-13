@@ -24,6 +24,7 @@
 #>
 param(
   [string]$StackName = 'careroute-stack-1',
+  [string]$CognitoStackName = 'careroute-cognito',
   [string]$Region = 'ap-southeast-1',
   [string]$ResourcePrefix,
   [string]$ImageTag = 'v1',
@@ -38,6 +39,10 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+# The user pool's IDs (logins, issue 1.5), read from the Cognito stack before deploying. -RenderOnly makes no AWS
+# call, so it renders these stand-ins.
+$CognitoPool = 'render-only-pool'
+$CognitoClient = 'render-only-client'
 $ServiceDir = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $RepoRoot = (Resolve-Path (Join-Path $ServiceDir '..\..')).Path
 $Manifest = Join-Path $RepoRoot 'k8s\eks\services\journey-service.yaml'   # the team's, one manifest for every deploy path
@@ -80,6 +85,7 @@ function Get-RenderedManifest([string]$Img, [string]$Redis, [string]$Bkt, [strin
   $text = [IO.File]::ReadAllText($Manifest)
   $text = $text.Replace('__IMAGE__', $Img).Replace('__REDIS_ENDPOINT__', $Redis).Replace('__FILES_BUCKET__', $Bkt)
   $text = $text.Replace('__NAMESPACE__', $AppNamespace).Replace('__REGION__', $Region)
+  $text = $text.Replace('__COGNITO_USER_POOL_ID__', $script:CognitoPool).Replace('__COGNITO_CLIENT_ID__', $script:CognitoClient)
   $text = $text.Replace('"careroute-routes"', "`"$Prefix-routes`"").Replace('"careroute-trips"', "`"$Prefix-trips`"")
   $code = ($text -split "`n" | Where-Object { $_ -notmatch '^\s*#' }) -join "`n"
   $left = [regex]::Match($code, '__[A-Z_]+__')
@@ -176,8 +182,16 @@ try {
   Invoke-Quiet { kubectl get namespace $AppNamespace } | Out-Null
   if ($LASTEXITCODE -ne 0) { throw "Namespace $AppNamespace does not exist in the cluster. The platform's deploy script creates it." }
   $SecretFile = Join-Path $WorkDir 'secret.env'
-  [IO.File]::WriteAllLines($SecretFile, [string[]]($Keys.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }), $Utf8NoBom)
-  $SecretYaml = Invoke-Checked { kubectl create secret generic journey-api-keys --from-env-file=$SecretFile -n $AppNamespace --dry-run=client -o yaml }
+  if ($Keys.Count -eq 0) {
+    # No keys at all: an empty Secret, so the service still starts (the manifest reads every key as optional) and a
+    # re-run after removing the keys from .env clears them from the cluster too.
+    Write-Info "WARNING: no API keys found in $EnvFile. Creating an empty Secret so the Journey Service still starts,"
+    Write-Info '         but live LTA data, OneMap route planning and Google step photos need the keys: add them and re-run this script.'
+    $SecretYaml = Invoke-Checked { kubectl create secret generic journey-api-keys -n $AppNamespace --dry-run=client -o yaml }
+  } else {
+    [IO.File]::WriteAllLines($SecretFile, [string[]]@($Keys.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }), $Utf8NoBom)
+    $SecretYaml = Invoke-Checked { kubectl create secret generic journey-api-keys --from-env-file=$SecretFile -n $AppNamespace --dry-run=client -o yaml }
+  }
   $SecretYaml | kubectl apply -f -
   if ($LASTEXITCODE -ne 0) { throw 'Could not create the Secret' }
 
@@ -190,6 +204,13 @@ try {
 
   # ---------------------------------------------------------------------------
   Write-Step 'Applying the manifest'
+  # Logins (issue 1.5): the user pool lives in its own stack, kept between teardowns.
+  $script:CognitoPool = Invoke-Quiet { aws cloudformation describe-stacks --stack-name $CognitoStackName --region $Region --query "Stacks[0].Outputs[?OutputKey=='UserPoolId'].OutputValue" --output text }
+  $script:CognitoClient = Invoke-Quiet { aws cloudformation describe-stacks --stack-name $CognitoStackName --region $Region --query "Stacks[0].Outputs[?OutputKey=='UserPoolClientId'].OutputValue" --output text }
+  if (-not $script:CognitoPool -or -not $script:CognitoClient -or $script:CognitoPool -eq 'None') {
+    throw "The Journey Service needs the Cognito stack $CognitoStackName (logins). Deploy it once: repo README, 'Logins (Cognito)'"
+  }
+  Write-Info "User pool $script:CognitoPool"
   $Rendered = Join-Path $WorkDir 'journey-service.yaml'
   [IO.File]::WriteAllText($Rendered, (Get-RenderedManifest $Image $RedisEndpoint $Bucket $ResourcePrefix), $Utf8NoBom)
   Invoke-Quiet { kubectl get deployment journey-service -n $AppNamespace } | Out-Null

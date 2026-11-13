@@ -1,0 +1,36 @@
+# C2: a fault switch (services/fault-switch) in front of each real detector.
+#
+#   docker compose -f services/analysis-dev/compose.yaml -f evaluation/coordinator/compose.c2.yaml up --build -d
+#
+# Paths are relative to services/analysis-dev (the first file).
+
+x-switch: &switch
+  build: ../fault-switch
+  image: careroute-fault-switch:dev
+  restart: on-failure
+
+services:
+  coordinator:
+    environment:
+      DETECTOR_URLS: >-
+        route-corridor=http://switch-route:8000,heading-speed=http://switch-heading:8000,dwell-time=http://switch-dwell:8000,route-progress=http://switch-progress:8000
+
+  switch-route:
+    <<: *switch
+    environment: { MODE: pass, UPSTREAM_URL: "http://detector-route:8000", PROBLEM_TYPE: off_route }
+    ports: ["127.0.0.1:9101:8000"]
+
+  switch-dwell:
+    <<: *switch
+    environment: { MODE: pass, UPSTREAM_URL: "http://detector-dwell:8000", PROBLEM_TYPE: long_dwell }
+    ports: ["127.0.0.1:9102:8000"]
+
+  switch-heading:
+    <<: *switch
+    environment: { MODE: pass, UPSTREAM_URL: "http://detector-heading:8000", PROBLEM_TYPE: wrong_direction }
+    ports: ["127.0.0.1:9103:8000"]
+
+  switch-progress:
+    <<: *switch
+    environment: { MODE: pass, UPSTREAM_URL: "http://detector-progress:8000", PROBLEM_TYPE: off_route }
+    ports: ["127.0.0.1:9104:8000"]
