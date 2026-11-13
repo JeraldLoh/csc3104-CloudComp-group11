@@ -24,7 +24,10 @@ planned. To use the live APIs, switch the header's **Data** box to **Live** (sec
 > `services/journey-service/DEMO.md`, and the web app's behaviour is covered by its 88 automated tests
 > (`npm test`). The two halves have **not yet been run together end to end** by whoever wrote this guide, and the
 > app hasn't been looked at in a real browser. Do one dry run before presenting and fix anything that differs.
-> The **AWS** steps are untested too: the deploy scripts have not yet completed a full run against real AWS.
+> The **AWS** steps were run once (2026-11-11, with the app's own demo not included): the platform, the Journey Service
+> and the disruption Lambda deployed, and a pretend breakdown on a started trip put a message on the queue
+> (`services/journey-service/deploy/README.md`). The Easy-read Service and Ollama on AWS, and the Alert Service step,
+> were not run.
 
 ---
 

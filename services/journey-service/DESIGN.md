@@ -187,8 +187,8 @@ only allows that prefix; `deploy/` reads whichever prefix the stack really uses 
 index names and the TTL attribute already match the template.
 
 Ready-made files for putting the service (and the disruption Lambda) on that stack are in `deploy/`; see
-`deploy/README.md` for the order, the names to use, and what has and hasn't been checked (nothing has been run on real
-AWS). One thing the platform's permissions changed in the code: `/ready` checks the DynamoDB tables with a `GetItem`
+`deploy/README.md` for the order, the names to use, and what has and hasn't been checked (the cluster deploy and the disruption Lambda
+were run on real AWS on 2026-11-11; packs, photos and Polly were not). One thing the platform's permissions changed in the code: `/ready` checks the DynamoDB tables with a `GetItem`
 on a key that doesn't exist, not `DescribeTable` (which the platform's role doesn't allow), and a failure names the
 store and the AWS error, e.g. `routes table: AccessDeniedException`. A good result is remembered for `READY_CACHE_S`
 seconds (default 10) so a burst of probes doesn't each call AWS; a failure never is.
@@ -404,7 +404,10 @@ that touches a train step the traveller hasn't finished, it sends one `disruptio
 - The checker watches trips that were started (`POST /api/trips/{id}/start` writes the Redis keys above).
 - LTA being down makes the run fail on purpose, so the outage shows up in CloudWatch.
 - Local one-off run: `docker exec -e CREATE_RESOURCES=true careroute-journey-service-1 python -m app.lambda_handler`
-- Not done: Lambda packaging, the EventBridge rule, IAM permissions, and VPC access to Redis.
+- Packaging, the EventBridge rule (`rate(1 minute)`), the IAM role and VPC access to Redis are in `deploy/lambda/`
+  and were run on real AWS on 2026-11-11 (see "What has and hasn't been checked" in `deploy/README.md`): a run each
+  minute of about 200 ms, and with a started trip plus a pretend NEL breakdown, one message on `careroute-disruptions`
+  and `duplicates: 1` on the runs after it. Not checked there: the Alert Service and push notification after the queue.
 
 ### Demoing a disruption
 

@@ -14,7 +14,7 @@
 # Safe to re-run. It never touches the platform's own manifests, and the API keys are read from .env and go
 # straight into a Kubernetes Secret (a temporary file that is deleted at the end), never into Git or the image.
 #
-# NOT TESTED AGAINST REAL AWS. --render-only checks the manifest without any AWS call.
+# The PowerShell twin was run against real AWS once (2026-11-11), see deploy/README.md; this bash one was not. --render-only checks the manifest without any AWS call.
 #
 # Usage: bash services/journey-service/deploy/macos/deploy-eks.sh
 #          [--region REGION] [--stack-name NAME] [--tag v1] [--namespace careroute]
@@ -92,9 +92,11 @@ sed_value() { printf '%s' "$1" | sed -e 's/[\\|&]/\\&/g'; }
 # GitHub Actions) keeps its __PLACEHOLDERS__; this fills them in and refuses to continue if any is left outside a
 # comment. Its tables are careroute-*; another --resource-prefix renames them.
 render_manifest() {  # image redis bucket prefix out-file
-  sed -e "s|<JOURNEY_IMAGE>|$(sed_value "$1")|g" -e "s|<REDIS_ENDPOINT>|$(sed_value "$2")|g" \
-      -e "s|<PACKS_BUCKET>|$(sed_value "$3")|g" -e "s|<RESOURCE_PREFIX>|$(sed_value "$4")|g" \
-      -e "s|<COGNITO_USER_POOL_ID>|$(sed_value "$COGNITO_POOL")|g" -e "s|<COGNITO_CLIENT_ID>|$(sed_value "$COGNITO_CLIENT")|g" \
+  sed -e "s|__IMAGE__|$(sed_value "$1")|g" -e "s|__REDIS_ENDPOINT__|$(sed_value "$2")|g" \
+      -e "s|__FILES_BUCKET__|$(sed_value "$3")|g" -e "s|__NAMESPACE__|$(sed_value "$APP_NAMESPACE")|g" \
+      -e "s|__REGION__|$(sed_value "$REGION")|g" \
+      -e "s|__COGNITO_USER_POOL_ID__|$(sed_value "$COGNITO_POOL")|g" -e "s|__COGNITO_CLIENT_ID__|$(sed_value "$COGNITO_CLIENT")|g" \
+      -e "s|\"careroute-routes\"|\"$(sed_value "$4")-routes\"|g" -e "s|\"careroute-trips\"|\"$(sed_value "$4")-trips\"|g" \
       "$MANIFEST" > "$5"
   local left
   left="$(grep -v '^[[:space:]]*#' "$5" | grep -Eo '__[A-Z_]+__' | head -n 1 || true)"

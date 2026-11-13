@@ -34,7 +34,7 @@ $Images = [ordered]@{
   "easyread-service" = "services/easyread-service"
   "cloud-detectors"  = "services/detectors"
   "coordinator"      = "services/coordinator"
-  "heartbeat-monitor" = "services/heartbeat-monitor"
+  "heartbeat-monitor" = "services/heartbeat-monitor"   # k8s/local/heartbeat-monitor.yaml runs heartbeat-monitor:local
 }
 # deployments running the images built here
 $Built = @("cloud-fastapi", "checkin-service", "alert-service", "journey-service", "easyread-service",
@@ -280,7 +280,7 @@ if ($Setup) { Build-Images }
 Initialize-Secret
 Start-Stack
 # 127.0.0.1, not localhost: Windows PowerShell tries ::1 first, kind only listens on IPv4, and every check
-# would time out before falling back
+# would time out (2 s each, 60 tries per service) before falling back
 foreach ($port in $Health.Keys) { Wait-Url "http://127.0.0.1:$port/health" $Health[$port] }
 Set-AppLogins
 $app = Start-App

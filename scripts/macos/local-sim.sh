@@ -19,7 +19,7 @@ IMAGES=(
   "easyread-service:services/easyread-service"
   "cloud-detectors:services/detectors"
   "coordinator:services/coordinator"
-  "heartbeat-monitor:services/heartbeat-monitor"
+  "heartbeat-monitor:services/heartbeat-monitor"   # k8s/local/heartbeat-monitor.yaml runs heartbeat-monitor:local
 )
 # deployments running the images built here
 BUILT=(cloud-fastapi checkin-service alert-service journey-service easyread-service coordinator heartbeat-monitor

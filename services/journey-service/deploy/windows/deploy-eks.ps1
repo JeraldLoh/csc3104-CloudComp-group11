@@ -15,7 +15,7 @@
   Safe to re-run. It never touches the platform's own manifests, and the API keys are read from .env and go
   straight into a Kubernetes Secret (a temporary file that is deleted at the end), never into Git or the image.
 
-  NOT TESTED AGAINST REAL AWS. -RenderOnly checks the manifest without any AWS call.
+  Run against real AWS once (2026-11-11): see deploy\README.md. -RenderOnly checks the manifest without any AWS call.
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File services\journey-service\deploy\windows\deploy-eks.ps1
@@ -83,9 +83,12 @@ function Connect-Ecr([string]$Registry) {
 # comment. Its tables are careroute-*; another -ResourcePrefix renames them.
 function Get-RenderedManifest([string]$Img, [string]$Redis, [string]$Bkt, [string]$Prefix) {
   $text = [IO.File]::ReadAllText($Manifest)
-  $text = $text.Replace('<JOURNEY_IMAGE>', $Img).Replace('<REDIS_ENDPOINT>', $Redis).Replace('<PACKS_BUCKET>', $Bkt).Replace('<RESOURCE_PREFIX>', $Prefix)
-  $text = $text.Replace('<COGNITO_USER_POOL_ID>', $script:CognitoPool).Replace('<COGNITO_CLIENT_ID>', $script:CognitoClient)
-  $left = [regex]::Match($text, '<[A-Z_]+>')
+  $text = $text.Replace('__IMAGE__', $Img).Replace('__REDIS_ENDPOINT__', $Redis).Replace('__FILES_BUCKET__', $Bkt)
+  $text = $text.Replace('__NAMESPACE__', $AppNamespace).Replace('__REGION__', $Region)
+  $text = $text.Replace('__COGNITO_USER_POOL_ID__', $script:CognitoPool).Replace('__COGNITO_CLIENT_ID__', $script:CognitoClient)
+  $text = $text.Replace('"careroute-routes"', "`"$Prefix-routes`"").Replace('"careroute-trips"', "`"$Prefix-trips`"")
+  $code = ($text -split "`n" | Where-Object { $_ -notmatch '^\s*#' }) -join "`n"
+  $left = [regex]::Match($code, '__[A-Z_]+__')
   if ($left.Success) { throw "Manifest still has an unfilled placeholder: $($left.Value)" }
   return $text
 }

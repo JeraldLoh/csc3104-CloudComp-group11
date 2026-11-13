@@ -5,9 +5,10 @@ owner's scripts (`scripts/windows/deploy.ps1` or `scripts/macos/deploy.sh`) or t
 infrastructure" steps. They only add things; they never edit the platform's template, manifests or scripts, and they
 only need what the stack already outputs.
 
-> **Status:** the service's manifest has run on real AWS, deployed with the platform's `deploy.ps1 -AllServices`.
-> These `deploy-eks` and Lambda scripts haven't: they're checked offline only. See "What has and hasn't been
-> checked" before their first real run.
+> **Status:** the service has run on real AWS with the platform's `deploy.ps1 -AllServices`, and these `deploy-eks`
+> and Lambda scripts were run once (2026-11-11, then torn down): the cluster deploy and the disruption Lambda worked.
+> That run predates the manifest's Cognito settings and Ingress; pack downloads, step photos, Polly and Simplify with
+> AI were not tried. Deploying costs money and uses your AWS credentials. See "What has and hasn't been checked".
 
 ## Order
 
@@ -102,23 +103,36 @@ against LocalStack, fails with the right messages for a wrong table or bucket, a
 (The automated tests were trimmed to the essentials and no longer cover the DynamoDB and S3 stores or `/ready`; those
 were checked against LocalStack by hand, so re-check them after changing `route_store.py`, `trip_store.py`, `pack_store.py` or `/ready`.)
 
-**Checked on AWS** (deployed with the platform's `deploy.ps1 -AllServices`, not these scripts): both pods became ready,
-so `/ready` returned 200 (the readiness probe calls it), and the service account `cloud-fastapi` gives the pods access
-to the tables and bucket.
+**Checked on AWS, twice:**
+- With the platform's `deploy.ps1 -AllServices` (by a teammate, `AUTH_MODE=cognito`): both pods became ready, so
+  `/ready` returned 200 (the readiness probe calls it), and the service account `cloud-fastapi` gives the pods access
+  to the tables and bucket.
+- With these scripts, 2026-11-11 (platform stack, then `deploy-eks.ps1`, then `deploy-lambda.ps1`; then torn down,
+  and the account was checked to be empty). This was before the manifest had the Cognito placeholders and the
+  Ingress, and ran with `AUTH_MODE=off`:
+  1. the rollout finished and `/ready` returned 200 through the service account `cloud-fastapi`;
+  2. the Lambda deployed (the template is valid: CloudFormation created the stack), and its network interfaces reach
+     Redis and LTA through the NAT gateway: a run each minute from EventBridge, about 200 ms each, returning
+     `{"activeTrips": 0, ...}` on a normal day;
+  3. with a trip started (Punggol to Orchard, saved and approved through the API) and a pretend NEL breakdown
+     (`kubectl set env deployment/journey-service -n careroute DEMO_UI=true`, then `kubectl exec ... python -m
+     app.demo_tools on`), the next run sent one message to `careroute-disruptions` (`affectedStepIndex` 1, the NEL
+     train step) and the runs after it reported `duplicates: 1, sent: 0`. The log is saved in
+     `evaluation/journey-service/results/disruption-lambda-aws-20261111.txt`.
 
-**Not checked**: these scripts against real AWS, and the rest of the service's AWS behaviour. A first real run should
-watch:
-1. `deploy-eks` renders the manifest with every placeholder filled, and the rollout finishes;
-2. a signed-in caregiver's request reaches the service (`AUTH_MODE=cognito`);
-3. the Lambda's network interfaces reach Redis and LTA (private subnets through the NAT gateway) and a run returns
-   `{"activeTrips": 0, ...}` on a normal day;
-4. a message arrives on `careroute-disruptions` when a trip is active and LTA reports a disruption
-   (`python -m app.demo_tools` only works with `DEMO_UI=true`: `kubectl set env deployment/journey-service -n careroute
-   DEMO_UI=true`, then `kubectl exec ... python -m app.demo_tools on`; see `apps/caregiver/DEMO.md` section 2b);
-5. a pack downloads from a browser through the signed link (the CORS rule);
-6. `aws cloudformation validate-template` on `lambda/disruption-lambda.yaml`;
-7. the LTA key is in the Lambda's environment variables (visible to anyone who can read its configuration): move it
+**Still not checked on real AWS:**
+1. `deploy-eks` with the current manifest: the Cognito placeholders filled from the `careroute-cognito` stack, and the
+   Ingress;
+2. a signed-in caregiver's request reaching the service (`AUTH_MODE=cognito`);
+3. a pack downloading from a browser through the signed link (the CORS rule), step photos, and Polly;
+4. what the Alert Service and the push notification do with the disruption message;
+5. the LTA key is in the Lambda's environment variables (visible to anyone who can read its configuration): move it
    to Secrets Manager before this is more than a demo.
+
+**Windows and Docker Desktop:** `docker login` to ECR can fail with "The stub received bad data" (Docker's credential
+store rejects the token). The run above worked by pointing `DOCKER_CONFIG` at a temporary folder whose `config.json`
+has no credential store; the scripts were not changed. It was run as the account's root user, which the team's README
+says not to use.
 
 ## Not covered here (needs the team)
 
