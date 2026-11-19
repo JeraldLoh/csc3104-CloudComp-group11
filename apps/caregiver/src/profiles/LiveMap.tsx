@@ -5,11 +5,11 @@ import * as L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { useEffect, useRef } from "react";
 import { MODE_COLORS } from "../planner/MapView";
+import { drawTraveller } from "../map/traveller";
 import type { LiveTrip } from "./api";
 import type { Leg } from "./useTripPath";
 
 const ZOOM = 16;
-const ALERT_COLOR = "#d97706";   // amber, as the dashboard's "needs attention"
 const SINGAPORE: [number, number] = [1.3521, 103.8198];   // until the route arrives
 
 export function LiveMap({ name, trip, path, legs = [], alert = null }: {
@@ -49,13 +49,8 @@ export function LiveMap({ name, trip, path, legs = [], alert = null }: {
     if (!map.current || !layer.current) return;
     layer.current.clearLayers();
     if (!trip) return;
-    L.polyline(trip.trail, { color: "#0f172a", weight: 4, opacity: 0.5 })   // dark: shows over any step's colour
-   .addTo(layer.current);
-    L.circleMarker([trip.lat, trip.lng], { radius: alert ? 11 : 9, color: "#fff", weight: 3,
-      fillColor: alert ? ALERT_COLOR : "#2563eb", fillOpacity: 1 })
-      .bindTooltip(alert ? `${name}: ${alert}` : name,
-        { permanent: true, direction: "top", offset: [0, -8], className: alert ? "pf__map-alert" : "" })
-      .addTo(layer.current);
+    // as on the Trips tab's map (map/traveller.ts)
+    drawTraveller(layer.current, { lat: trip.lat, lng: trip.lng, trail: trip.trail, label: name, alert });
     map.current.panTo([trip.lat, trip.lng]); // not setView: the caregiver may have zoomed
   }, [name, trip?.lat, trip?.lng, trip?.trail, alert]);
 

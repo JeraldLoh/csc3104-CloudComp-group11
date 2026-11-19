@@ -5,8 +5,8 @@ import { DashboardPage } from "../src/profiles/DashboardPage";
 import type { MyTravellers } from "../src/profiles/useMyTravellers";
 
 vi.mock("../src/profiles/LiveMap", () => ({ // Leaflet needs a real browser; tested there
-  LiveMap: ({ name, path }: { name: string; path: [number, number][] | null }) =>
-    <div>Map of {name}{path && `, route of ${path.length} points`}</div>,
+  LiveMap: ({ name, path, legs, alert }: { name: string; path: [number, number][] | null; legs?: { mode: string }[]; alert?: string | null }) =>
+    <div>Map of {name}{path && `, route of ${path.length} points`}{legs?.length ? ` in steps: ${legs.map((l) => l.mode).join(", ")}` : ""}{alert && ` (${alert})`}</div>,
 }));
 
 const seenNow = (changes = {}) => ({
@@ -222,6 +222,55 @@ describe("DashboardPage", () => {
     fireEvent.click(await screen.findByRole("button", { name: /Bo/ }));
     expect(await screen.findByRole("heading", { name: "Bo" })).toBeTruthy();
     expect(screen.queryByText(/Map of/)).toBeNull();
+  });
+
+  it("shows the planned route on the map as soon as a trip is under way, before the phone checks in", async () => {
+    answers["/api/travellers/live"] = () => json({});
+    journey.listTrips.mockResolvedValue([{ tripId: "T-NOW", routeId: "R-1", status: "active" } as Trip]);
+    journey.getTrip.mockResolvedValue({ tripId: "T-NOW", routeId: "R-1" } as Trip);
+    journey.getRoute.mockResolvedValue({ path: [[1.4, 103.9], [1.41, 103.91]] } as SavedRoute);
+    show();
+    await screen.findByText("Trip T-NOW under way");
+
+    fireEvent.click(screen.getByRole("button", { name: /Alex/ }));
+    expect(await screen.findByText("Map of Alex, route of 2 points")).toBeTruthy();
+    expect(journey.getTrip).toHaveBeenCalledWith("T-NOW");
+    expect(screen.getByText(/shows here once their phone checks in/)).toBeTruthy();
+  });
+
+  it("draws the route step by step from the trip's current plan when the service gives it", async () => {
+    answers["/api/travellers/live"] = () => json({});
+    journey.listTrips.mockResolvedValue([{ tripId: "T-NOW", routeId: "R-1", status: "active" } as Trip]);
+    const plan = vi.fn().mockResolvedValue({
+      tripId: "T-NOW", planVersion: 1, affected: [],
+      steps: [{ mode: "walk", instruction: "Walk 160 m" }, { mode: "bus", instruction: "Take bus 28" }],
+      stepPaths: [[[1.32, 103.93], [1.321, 103.931]], [[1.321, 103.931], [1.316, 103.892]]],
+    });
+    render(<DashboardPage caregiverId="G-1" my={my([alex])} journey={{ ...journey, tripPlan: plan }} onOpenProfile={vi.fn()} />);
+    await screen.findByText("Trip T-NOW under way");
+
+    fireEvent.click(screen.getByRole("button", { name: /Alex/ }));
+    expect(await screen.findByText("Map of Alex, route of 4 points in steps: walk, bus")).toBeTruthy();
+    expect(plan).toHaveBeenCalledWith("T-NOW");
+    expect(journey.getRoute).not.toHaveBeenCalled();               // the plan is enough
+  });
+
+  it("marks the traveller on the map while an off-route alert is open, and not for other alerts", async () => {
+    answers["/api/travellers/live"] = () => json({ "U-1": seenNow({ tripId: "T-1" }) });
+    answers["/api/incidents"] = () => json([{ ...offRoute, tripId: "T-1" }]);
+    show();
+    await screen.findByText("Step 3 · seen just now");
+    fireEvent.click(screen.getByRole("button", { name: /Alex/ }));
+    expect(await screen.findByText("Map of Alex (May have gone off route)")).toBeTruthy();
+  });
+
+  it("an off-route alert from an earlier trip doesn't mark this one", async () => {
+    answers["/api/travellers/live"] = () => json({ "U-1": seenNow({ tripId: "T-2" }) });
+    answers["/api/incidents"] = () => json([{ ...offRoute, tripId: "T-1" }]);
+    show();
+    await screen.findByText("Step 3 · seen just now");
+    fireEvent.click(screen.getByRole("button", { name: /Alex/ }));
+    expect(await screen.findByText("Map of Alex")).toBeTruthy();
   });
 
   // planned route under the trail so a detour shows

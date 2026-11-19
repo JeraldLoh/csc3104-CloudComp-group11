@@ -1,0 +1,8 @@
+/* The traveller's label on either map while an alert about where they are is open (map/traveller.ts) */
+.leaflet-tooltip.map-traveller--alert {
+  background: #fef3c7;
+  border-color: #d97706;
+  color: #78350f;
+  font-weight: 700;
+}
+.leaflet-tooltip.map-traveller--alert::before { border-top-color: #d97706; }

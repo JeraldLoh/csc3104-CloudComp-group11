@@ -6,6 +6,7 @@ import { formatTime, problemTitle, type WhereRequest } from "../alerts/incidents
 import { askWhere, latestWhere } from "./api";
 import type { TripsApi } from "../journey/api";
 import { PushToggle } from "../push/PushToggle";
+import { locationAlert } from "../map/traveller";
 import { LiveMap } from "./LiveMap";
 import { buildRows, seenAgo, summarise, type Health, type TravellerRow } from "./overview";
 import { Avatar } from "./TravellersPage";
@@ -14,9 +15,6 @@ import { isCaregiverId, type MyTravellers } from "./useMyTravellers";
 import { useTravellerFacts } from "./useTravellerFacts";
 import { useTripPath, type PathApi } from "./useTripPath";
 import "./profiles.css";
-
-// Alerts about where the traveller is: while one is open, their dot on the map turns amber and says what it is
-const ON_THE_MAP = new Set(["off_route", "wrong_direction", "missed_stop"]);
 
 interface Props {
   caregiverId: string;
@@ -116,7 +114,7 @@ export function DashboardPage({ caregiverId, my, journey, onOpenProfile, linked 
             {open.live && (
               <div className="pf__tcard pf__open">
                 <LiveMap key={open.live.tripId} name={open.traveller.name} trip={open.live} path={line.path} legs={line.legs}
-                  alert={mapAlert(open)} />
+                  alert={locationAlert(open.unresolved, open.live.tripId)} />
                 <p className="pf__muted">
                   Last seen {seenAgo(open.live.lastSeenAt)}
                   {open.live.batteryPct != null && ` · battery ${Math.round(open.live.batteryPct)}%`}
@@ -353,10 +351,4 @@ function TravellerCard({ row, failed, liveKnown, onOpen }: CardProps) {
       </div>
     </li>
   );
-}
-
-/** The open alert about where they are on this trip, as the map says it ("May have gone off route"), or null. */
-function mapAlert({ unresolved, live }: TravellerRow): string | null {
-  const found = unresolved.find((i) => ON_THE_MAP.has(i.problemType) && (!i.tripId || !live || i.tripId === live.tripId));
-  return found ? problemTitle(found.problemType) : null;
 }

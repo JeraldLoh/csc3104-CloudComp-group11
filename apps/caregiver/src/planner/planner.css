@@ -201,7 +201,7 @@
 .rp__notice { margin-bottom: 14px; padding: 10px 12px; border: 1px solid var(--rp-selected-line); border-radius: 10px;
   background: var(--rp-selected); color: var(--rp-fg); font-size: 13px; }
 .rp__notice--error { border-color: #fecaca; background: #fef2f2; color: #991b1b; }
-.rp__live-card { border-left: 4px solid var(--rp-ok); }
+.rp__live-card { border-left: 4px solid var(--rp-ok); cursor: pointer; }   /* a click shows it on the map */
 .rp__live-card--shown { box-shadow: 0 0 0 3px rgba(21, 128, 61, 0.12); }
 .rp__live-top, .rp__live-actions { display: flex; align-items: center; gap: 8px; }
 .rp__live-top > *, .rp__pill { white-space: nowrap; }

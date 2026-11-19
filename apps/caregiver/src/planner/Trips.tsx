@@ -144,14 +144,13 @@ function ActiveTrip({ trip, trips, routes, routesLoaded, travellerAppUrl, disrup
   const onMap = trips.followed?.tripId === trip.tripId;
   const link = travellerAppUrl && !problem ? travellerLink(travellerAppUrl, trip) : null;
   return (
-    <section className={"rp__card rp__live-card" + (onMap ? " rp__live-card--shown" : "")} aria-label={`Trip ${trip.tripId}, under way`}>
+    // The map follows the trip clicked (or tabbed into) last: no button to press
+    <section className={"rp__card rp__live-card" + (onMap ? " rp__live-card--shown" : "")} aria-label={`Trip ${trip.tripId}, under way`}
+      aria-current={onMap ? "true" : undefined}
+      onClick={() => trips.follow(trip.tripId)} onFocusCapture={() => trips.follow(trip.tripId)}>
       <div className="rp__live-top">
         <span className="rp__pill rp__pill--live"><span className="rp__pulse" aria-hidden="true" />Under way</span>
         <span className="rp__meta">{trip.startedAt ? `since ${clock(trip.startedAt)}` : day(trip.date)}</span>
-        <button type="button" className="rp__btn rp__btn--secondary rp__btn--small rp__push" aria-pressed={onMap}
-          onClick={() => trips.follow(trip.tripId)}>
-          {onMap ? "On the map" : "Show on the map"}
-        </button>
       </div>
       <div className="rp__trip-title">{routeName(trip, routes)}</div>
       <div className="rp__meta">{trip.tripId}</div>

@@ -1,4 +1,5 @@
 // A map view of a planned route, using Leaflet and OneMap tiles
+import { drawTraveller, type Traveller } from "../map/traveller";
 import { useEffect, useRef } from "react";
 import * as L from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -50,14 +51,7 @@ export interface Affected {
 }
 const NONE: Affected[] = [];
 
-export interface Traveller {
-  lat: number;
-  lng: number;
-  trail: [number, number][];
-  label: string;
-  /** Not from a check-in (where their step starts): drawn greyed out. */
-  guessed?: boolean;
-}
+export type { Traveller } from "../map/traveller";
 
 // A map view of a planned route, using Leaflet and OneMap tiles. 
 // The route is either a saved one (with one joined path) or a plan option (with one path per step). 
@@ -156,11 +150,8 @@ export function MapView({ from, to, option, saved = null, focus, onMapClick, pin
     if (!l) return;
     l.traveller.clearLayers();
     if (!traveller) return;
-    const color = traveller.guessed ? MODE_COLORS.walk : "#2563eb";
-    if (traveller.trail.length > 1) L.polyline(traveller.trail, { color, weight: 4, opacity: 0.6 }).addTo(l.traveller);
-    L.circleMarker([traveller.lat, traveller.lng], { radius: 9, color: "#fff", weight: 3, fillColor: color, fillOpacity: 1 })
-      .bindTooltip(text(traveller.label), { permanent: true, direction: "top", offset: [0, -8] }).addTo(l.traveller);
-  }, [traveller?.lat, traveller?.lng, traveller?.trail, traveller?.label, traveller?.guessed]);
+    drawTraveller(l.traveller, traveller);               // as on the dashboard's map (map/traveller.ts)
+  }, [traveller?.lat, traveller?.lng, traveller?.trail, traveller?.label, traveller?.guessed, traveller?.alert]);
 
   // Only a focus asked for while this map is shown: one from before (the map is made again when its tab is
   // opened again) would undo fitting the route.

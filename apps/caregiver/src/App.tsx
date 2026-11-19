@@ -194,7 +194,7 @@ function Shell({ signedIn }: { signedIn: Session | null }) {
             { id: "trips", label: "Trips", count: trips.trips.length,
               content: <Trips trips={trips} routes={saved.routes} routesLoaded={saved.loaded} travellerAppUrl={TRAVELLER_APP_URL}
                 disruptions={disruptions} onReroute={(t) => void planReroute(t)} onOpenRoute={openRoute} />,
-              stage: <TripMap trips={trips} routes={saved.routes} /> },
+              stage: <TripMap trips={trips} routes={saved.routes} caregiverId={caregiverId} /> },
           ]}
         />}
       </main>

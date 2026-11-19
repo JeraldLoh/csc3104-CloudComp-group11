@@ -4,6 +4,7 @@
 // the trip (not sent yet) can be switched to and back. Clicking the map changes nothing.
 import { useEffect, useMemo, useState } from "react";
 import type { SavedRoute, TripLocation } from "../journey/types";
+import { useLocationAlert } from "../map/traveller";
 import { MapView, type Traveller } from "./MapView";
 import type { Point } from "./usePlanner";
 import type { TripsState } from "./useTrips";
@@ -32,7 +33,7 @@ function changeLabel(trips: TripsState): string | null {
   return null;
 }
 
-export function TripMap({ trips, routes }: { trips: TripsState; routes: SavedRoute[] }) {
+export function TripMap({ trips, routes, caregiverId = "" }: { trips: TripsState; routes: SavedRoute[]; caregiverId?: string }) {
   const trip = trips.followed;
   const route = trip ? routes.find((r) => r.routeId === trip.routeId) ?? null : null;
   const where = trip ? trips.locations[trip.tripId] : undefined;
@@ -51,11 +52,14 @@ export function TripMap({ trips, routes }: { trips: TripsState; routes: SavedRou
   useEffect(() => setShowNew(false), [reroute?.routeId, trip?.tripId]);
   const newRoute = showNew ? reroute : null;
 
+  // An open alert about where they are on this trip: the dot turns amber and says so, as on the dashboard
+  const alert = useLocationAlert(caregiverId, trip?.travellerId, trip?.tripId);
   const at = where?.lat != null && where.lng != null ? where : null;
+  const checkedIn = where?.source === "checkin";
   const traveller: Traveller | null = at && {
     lat: at.lat!, lng: at.lng!, trail: where?.trail ?? [],
-    label: where?.source === "checkin" ? "Traveller is here" : "Traveller (no check-in yet)",
-    guessed: where?.source !== "checkin",
+    label: alert ? "Traveller" : checkedIn ? "Traveller is here" : "Traveller (no check-in yet)",
+    guessed: !checkedIn, alert,
   };
   const end = route?.destination;
   const to: Point | null = end?.lat != null && end.lng != null ? { lat: end.lat, lng: end.lng, label: end.name ?? "Destination" } : null;
