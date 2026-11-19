@@ -15,6 +15,9 @@ import { useTravellerFacts } from "./useTravellerFacts";
 import { useTripPath, type PathApi } from "./useTripPath";
 import "./profiles.css";
 
+// Alerts about where the traveller is: while one is open, their dot on the map turns amber and says what it is
+const ON_THE_MAP = new Set(["off_route", "wrong_direction", "missed_stop"]);
+
 interface Props {
   caregiverId: string;
   my: MyTravellers;
@@ -34,7 +37,10 @@ export function DashboardPage({ caregiverId, my, journey, onOpenProfile, linked 
   useEffect(() => {
     if (linked?.travellerId) setOpenId(linked.travellerId);
   }, [linked]);
-  const path = useTripPath(journey, openId ? live[openId]?.tripId : undefined);
+  // The trip on the map: the one the phone checks in for, else one the Journey Service says is under way (its planned
+  // route shows before the first check-in)
+  const mapTrip = openId ? live[openId]?.tripId ?? facts[openId]?.activeTrip?.tripId : undefined;
+  const line = useTripPath(journey, mapTrip);
 
   if (!isCaregiverId(caregiverId)) {
     return (
@@ -99,9 +105,18 @@ export function DashboardPage({ caregiverId, my, journey, onOpenProfile, linked 
                 latest={alerts.where[open.traveller.travellerId]} onNote={alerts.noteWhere}
                 onEdit={() => onOpenProfile(open.traveller.travellerId)} />
             </div>
+            {!open.live && open.facts?.activeTrip && (
+              <div className="pf__tcard pf__open">
+                <LiveMap key={open.facts.activeTrip.tripId} name={open.traveller.name} trip={null} path={line.path} legs={line.legs} />
+                <p className="pf__muted">
+                  {`Trip ${open.facts.activeTrip.tripId} is under way. Where ${open.traveller.name} is shows here once their phone checks in.`}
+                </p>
+              </div>
+            )}
             {open.live && (
               <div className="pf__tcard pf__open">
-                <LiveMap key={open.live.tripId} name={open.traveller.name} trip={open.live} path={path} />
+                <LiveMap key={open.live.tripId} name={open.traveller.name} trip={open.live} path={line.path} legs={line.legs}
+                  alert={mapAlert(open)} />
                 <p className="pf__muted">
                   Last seen {seenAgo(open.live.lastSeenAt)}
                   {open.live.batteryPct != null && ` · battery ${Math.round(open.live.batteryPct)}%`}
@@ -338,4 +353,10 @@ function TravellerCard({ row, failed, liveKnown, onOpen }: CardProps) {
       </div>
     </li>
   );
+}
+
+/** The open alert about where they are on this trip, as the map says it ("May have gone off route"), or null. */
+function mapAlert({ unresolved, live }: TravellerRow): string | null {
+  const found = unresolved.find((i) => ON_THE_MAP.has(i.problemType) && (!i.tripId || !live || i.tripId === live.tripId));
+  return found ? problemTitle(found.problemType) : null;
 }

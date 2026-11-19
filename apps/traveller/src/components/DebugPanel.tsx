@@ -8,6 +8,16 @@ const inS = (t: number | null) => (t ? `in ${Math.max(0, Math.round((t - Date.no
 /** For the team and the demo video (?debug=1). Not shown to travellers. */
 export function DebugPanel({ app, guide }: { app: CareRoute; guide?: Guide }) {
   const [, tick] = useState(0);
+  // What "Check in now" did: it can only check in with a position
+  const [checkIn, setCheckIn] = useState<string | null>(null);
+  const travelling = app.phase === "travelling";
+  const checkInNow = async () => {
+    const sent = await app.checkInNow();
+    setCheckIn(sent ? "Checked in."
+      : !travelling ? "No position: start the trip first."
+      : app.problem === "location-denied" ? "No position: location is blocked for this page. Allow it, or tick Pretend GPS."
+      : "No position yet: allow location, or tick Pretend GPS.");
+  };
   useEffect(() => {
     const t = setInterval(() => tick((n) => n + 1), 1000); // keep "x s ago" current
     return () => clearInterval(t);
@@ -50,10 +60,15 @@ export function DebugPanel({ app, guide }: { app: CareRoute; guide?: Guide }) {
         <label>
           <input type="checkbox" checked={app.offlineSim} onChange={(e) => app.setOfflineSim(e.target.checked)} /> Pretend no signal
         </label>
-        <button onClick={() => void app.checkInNow()}>Check in now</button>
+        <label title={travelling ? "Walks this trip's route, a check-in every few seconds" : "Start the trip first"}>
+          <input type="checkbox" checked={app.pretendGps} disabled={!travelling}
+            onChange={(e) => app.setPretendGps(e.target.checked)} /> Pretend GPS
+        </label>
+        <button onClick={() => void checkInNow()}>Check in now</button>
         <button onClick={app.simulateRouteChange} disabled={app.phase !== "travelling"} title="Start the trip first">Change route</button>
         <button onClick={() => void app.resetDemo()}>Reset demo</button>
       </div>
+      {checkIn && <p className="debug__note" role="status">{checkIn}</p>}
     </details>
   );
 }

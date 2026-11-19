@@ -638,10 +638,20 @@
 }
 
 .pf__map {
-  height: 280px;
+  /* Big enough to see the whole route and where the traveller is on it; grows with the window, within limits */
+  height: clamp(380px, 60vh, 620px);
   border-radius: 10px;
   z-index: 0; /* keep Leaflet's panes under the shell's header */
 }
+
+/* The traveller's label on the map while an alert about where they are is open */
+.pf__map .leaflet-tooltip.pf__map-alert {
+  background: #fef3c7;
+  border-color: #d97706;
+  color: #78350f;
+  font-weight: 700;
+}
+.pf__map .leaflet-tooltip.pf__map-alert::before { border-top-color: #d97706; }
 
 .pf__tcard-top .pf__person-text {
   flex: 1;
@@ -715,6 +725,7 @@
 
 @media (max-width: 600px) {
   .pf__head--split { flex-direction: column; }
+  .pf__map { height: clamp(300px, 50vh, 420px); }   /* a phone: leave room to scroll past it */
 }
 
 @media (prefers-reduced-motion: no-preference) {

@@ -65,7 +65,11 @@ export interface CareRoute {
   answerWhere(answer: WhereAnswer): Promise<void>;
   finish(): Promise<void>;
   setOfflineSim(on: boolean): void;
-  checkInNow(): Promise<void>;
+  /** Debug: a pretend GPS walks this trip's own route (always on with ?demo=1), for a laptop with no GPS. */
+  pretendGps: boolean;
+  setPretendGps(on: boolean): void;
+  /** False when there is no position yet to check in with. */
+  checkInNow(): Promise<boolean>;
 }
 
 const DEMO_TICK_MS = 3000;
@@ -92,22 +96,36 @@ export function useCareRoute(session: Session, opts: { demo: boolean }): CareRou
   const [routeChangedAt, setRouteChangedAt] = useState<number | null>(null);
   const [wakeLock, setWakeLock] = useState<WakeLockState>("off");
 
+  // The pack a pretend GPS walks: the latest one, so it follows a changed route too
+  const walkPack = useRef<LoadedPack | null>(null);
+  const [pretendGpsOn, setPretendGpsOn] = useState(false);
+
+  // Pretend GPS (lib/demo.ts, DemoWalker): walks the route's own path, stops and step ends, one fix every few seconds
+  const walk = useCallback((e: Engine, pack: LoadedPack) => {
+    if (demoTimer.current) return;
+    walkPack.current = pack;
+    const walker = new DemoWalker(() => ({ pack: walkPack.current?.pack ?? pack.pack, stepIndex: stepRef.current }));
+    e.tracker.acceptFix(walker.next(Date.now()));
+    demoTimer.current = setInterval(() => e.tracker.acceptFix(walker.next(Date.now())), DEMO_TICK_MS);
+  }, []);
+
+  const stopWalking = useCallback(() => {
+    if (demoTimer.current) clearInterval(demoTimer.current);
+    demoTimer.current = null;
+  }, []);
+
   const startTracking = useCallback((e: Engine, pack: LoadedPack) => {
     e.tracker.start();
     void e.wake.enable();
-    if (opts.demo) {
-      const walker = new DemoWalker(() => ({ pack: pack.pack, stepIndex: stepRef.current }));
-      e.tracker.acceptFix(walker.next(Date.now()));
-      demoTimer.current = setInterval(() => e.tracker.acceptFix(walker.next(Date.now())), DEMO_TICK_MS);
-    }
-  }, [opts.demo]);
+    if (opts.demo) walk(e, pack);
+  }, [opts.demo, walk]);
 
   const stopTracking = useCallback((e: Engine) => {
     e.tracker.stop();
     void e.wake.disable();
-    if (demoTimer.current) clearInterval(demoTimer.current);
-    demoTimer.current = null;
-  }, []);
+    stopWalking();
+    setPretendGpsOn(false);
+  }, [stopWalking]);
 
   useEffect(() => {
     let disposed = false;
@@ -168,6 +186,7 @@ export function useCareRoute(session: Session, opts: { demo: boolean }): CareRou
       /** Switch to a (new) version of the route. */
       const applyPack = (p: LoadedPack, announce: boolean) => {
         currentPack = p;
+        walkPack.current = p;                 // a pretend GPS follows the new route
         packRef.routeVersion = p.pack.routeVersion; // check-ins now report the new version
         setLoaded(p);
         const last = p.pack.steps.length - 1;
@@ -386,8 +405,14 @@ export function useCareRoute(session: Session, opts: { demo: boolean }): CareRou
     start, next, back, askForHelp, finish, answerWhere,
     closeHelp: () => setHelpAskedAt(null),
     setOfflineSim: (on) => netsim.set(on),
-    checkInNow: async () => {
-      await engine.current?.tracker.checkInNow();
+    pretendGps: opts.demo || pretendGpsOn,
+    setPretendGps: (on) => {
+      const e = engine.current;
+      if (opts.demo || !e || !loaded || phase !== "travelling") return;   // the demo always walks; a trip must be under way
+      setPretendGpsOn(on);
+      if (on) walk(e, loaded);
+      else stopWalking();
     },
+    checkInNow: async () => (await engine.current?.tracker.checkInNow()) ?? false,
   };
 }
