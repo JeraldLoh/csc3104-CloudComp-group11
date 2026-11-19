@@ -125,6 +125,7 @@ export function RouteEditor({ route, affectedTrips, saving, maxChars, suggested,
           mode={route.steps[previewAt].mode}
           text={fromBulletLines(easyRead[previewAt])}
           photoUrl={photos[previewAt].url}
+          landmarks={shownLandmarks[previewAt]}
           backup={route.steps[previewAt].backup?.instruction}
           index={previewAt}
           total={route.steps.length}

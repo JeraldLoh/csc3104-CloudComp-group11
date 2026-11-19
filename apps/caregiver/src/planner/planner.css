@@ -309,6 +309,8 @@
 .rp__phone-screen { flex: 1; min-height: 0; max-height: 560px; overflow: auto; display: flex; flex-direction: column; gap: 10px;
   padding: 26px 10px 10px; border-radius: 27px; background: #eef2f5; color: #10213a;
   font-family: "Atkinson Hyperlegible", system-ui, sans-serif; font-size: 13px; line-height: 1.45; }
+/* Full height, so a long step makes the screen scroll; the card's overflow: hidden would let it shrink and clip */
+.rp__phone-screen > * { flex-shrink: 0; }
 
 /* Inside the phone: the traveller app's own look (apps/traveller, styles.css), at phone scale. */
 .tv-sign { --tv-band: #0e6f86; overflow: hidden; border-radius: 14px; background: #fff;
@@ -326,6 +328,13 @@
 .tv-sign__photo { width: 100%; aspect-ratio: 16 / 10; object-fit: contain; border-radius: 9px; background: #eef2f5; }
 .tv-sign__text { margin: 0; font-size: 1.45em; line-height: 1.28; font-weight: 700; }
 .tv-sign__text--auto { font-size: 1em; font-weight: 400; font-style: italic; color: #3d4f68; }
+/* As the traveller app (apps/traveller/src/styles.css, .sign__points and .sign__landmarks), scaled to the preview */
+.tv-sign__points { margin: 0; padding-left: 1.1em; display: flex; flex-direction: column; gap: 5px; font-size: 1.25em; }
+.tv-sign__points li::marker { color: var(--tv-band); }
+.tv-sign__landmarks { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; }
+.tv-sign__landmark { margin: 0; display: flex; flex-direction: column; gap: 4px; }
+.tv-sign__landmark-photo { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 8px; background: #eef2f5; }
+.tv-sign__landmark figcaption, .tv-sign__landmark-note { margin: 0; font-size: 0.9em; line-height: 1.3; font-weight: 700; }
 .tv-sign__backup { margin: 0; padding: 7px 9px; border-radius: 8px; background: #eef2f5; color: #3d4f68; font-size: 0.9em; }
 .tv-btn { display: flex; align-items: center; justify-content: center; min-height: 40px; border-radius: 12px;
   font-weight: 700; font-size: 1.05em; user-select: none; }

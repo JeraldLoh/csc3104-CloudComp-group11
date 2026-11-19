@@ -33,7 +33,9 @@ describe("StepCard", () => {
     await waitFor(() => expect(photos(container)).toHaveLength(2));
     expect(photos(container)[0]).toContain("1.39350_103.89620.jpg");
     expect(photos(container)[1]).toContain("1.40260_103.91280_from_");
-    expect(screen.getByText("Look for Oasis Terraces")).toBeTruthy();
+    // The wording already says "Look out for Oasis Terraces", so its photo has no line under it saying it again
+    expect(screen.getByRole("img", { name: "Oasis Terraces" })).toBeTruthy();
+    expect(screen.queryByText("Look for Oasis Terraces")).toBeNull();
     // The pack says which photo (sameView "step"), so the line names it
     expect(screen.getByText("Look for Block 221: it is in the step photo above.")).toBeTruthy();
   });
@@ -43,7 +45,7 @@ describe("StepCard", () => {
     const { container } = render(<StepCard step={step} loaded={demo} index={2} total={4} tripId="T-1" />);
     await waitFor(() => expect(photos(container)).toHaveLength(2));
     expect(photos(container)[1]).toContain("demo-media/waterway-point.svg");
-    expect(screen.getByText("Look for Waterway Point")).toBeTruthy();
+    expect(screen.getByRole("img", { name: "Waterway Point" })).toBeTruthy();
     expect(screen.getByText("Look for Block 221: it is in the step photo above.")).toBeTruthy();
   });
 
@@ -70,7 +72,8 @@ describe("StepCard", () => {
       const step = fromJourneyService.pack.steps[1];
       render(<StepCard step={step} loaded={fromJourneyService} index={1} total={2} tripId="T-1" />);
       fireEvent.click(screen.getByRole("button", { name: /listen/i }));
-      expect(said).toEqual([`${step.easyRead} Look for Oasis Terraces. Look for Block 221: it is in the step photo above.`]);
+      // Oasis Terraces is in the wording already; Block 221's line says where to look, so it is read
+      expect(said).toEqual([`${step.easyRead} Look for Block 221: it is in the step photo above.`]);
     } finally {
       vi.unstubAllGlobals();
     }

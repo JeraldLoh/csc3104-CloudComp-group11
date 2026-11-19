@@ -75,11 +75,13 @@ function useListen(text: string, audioSrc: string | null, after = "") {
 }
 
 /** A photo from the pack: the stored copy if there is one; hidden if it can't be shown (the words still guide). */
-function Photo({ tripId, loaded, path, className }: { tripId: string; loaded: LoadedPack; path: string | null; className: string }) {
+function Photo({ tripId, loaded, path, className, alt = "" }: {
+  tripId: string; loaded: LoadedPack; path: string | null; className: string; alt?: string;
+}) {
   const src = useStoredMedia(tripId, mediaUrl(loaded, path), loaded.pack.packVersion);
   const [ok, setOk] = useState(true);
   useEffect(() => setOk(true), [src]);
-  return src && ok ? <img className={className} src={src} alt="" onError={() => setOk(false)} /> : null;
+  return src && ok ? <img className={className} src={src} alt={alt} onError={() => setOk(false)} /> : null;
 }
 
 const withStop = (line: string) => (/[.!?]$/.test(line) ? line : `${line}.`);
@@ -102,11 +104,14 @@ export function StepCard({ step, loaded, index, total, tripId, guide }: {
   const withPhoto = landmarks.filter(({ m }) => m.photoUrl);
   const withoutPhoto = landmarks.filter(({ m }) => !m.photoUrl);
   const points = guided ? guide!.lines.map((l) => l.text) : easyReadPoints(step.easyRead);
-  // The landmark lines as shown, read after the step: with a photo first, then those without, as on screen. When
-  // guided, a landmark the shown lines already name ("Look out for Oasis Terraces on your right") isn't read twice.
+  // A landmark the lines already name ("Look out for Oasis Terraces on your right") isn't said again: its photo has
+  // no "Look for Oasis Terraces" under it, and Listen doesn't read that twice. A line saying which photo shows it
+  // ("it is in the step photo above") does say more, so it stays, except when guided (one thing at a time).
   const named = (name: string) => points.some((p) => p.toLowerCase().includes(name.toLowerCase()));
+  const repeats = ({ m }: { m: (typeof landmarks)[number]["m"] }) => named(m.name) && (guided || !!m.photoUrl);
+  // The landmark lines as shown, read after the step: with a photo first, then those without, as on screen.
   const landmarkLines = [...withPhoto, ...withoutPhoto]
-    .filter(({ m }) => !guided || !named(m.name))
+    .filter((x) => !repeats(x))
     .map(({ m }) => withStop(landmarkCaption(m, !!step.photoUrl)))
     .join(" ");
   // Listen reads what is on screen: guided, the prompt and the lines shown now, in the phone's voice (the recording
@@ -152,15 +157,15 @@ export function StepCard({ step, loaded, index, total, tripId, guide }: {
             {withPhoto.map(({ m, i }) => (
               <li key={`${m.name}-${i}`}>
                 <figure className="sign__landmark">
-                  <Photo tripId={tripId} loaded={loaded} path={m.photoUrl} className="sign__landmark-photo" />
-                  <figcaption>{landmarkCaption(m, !!step.photoUrl)}</figcaption>
+                  <Photo tripId={tripId} loaded={loaded} path={m.photoUrl} className="sign__landmark-photo" alt={m.name} />
+                  {!named(m.name) && <figcaption>{landmarkCaption(m, !!step.photoUrl)}</figcaption>}
                 </figure>
               </li>
             ))}
           </ul>
         )}
         {/* Guided, a note for a landmark the lines already name ("Get off at Block 221") would say it twice */}
-        {withoutPhoto.filter(({ m }) => !guided || !named(m.name)).map(({ m, i }) => (
+        {withoutPhoto.filter((x) => !repeats(x)).map(({ m, i }) => (
           <p key={`${m.name}-${i}`} className="sign__landmark-note">{landmarkCaption(m, !!step.photoUrl)}</p>
         ))}
         {showBackup && <p className="sign__backup">{step.backup}</p>}

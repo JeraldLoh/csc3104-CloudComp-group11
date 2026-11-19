@@ -165,7 +165,9 @@ export function SavedRoutes({ saved, trips, disruptions }: Props) {
           </div>
           {editing ? (
             <RouteEditor
-              key={suggestion ? "suggested" : "saved"}   // new AI wording starts the editor afresh
+              // A new editor for another route, version or AI wording: its state is per route, and keeping it for
+              // a route with fewer steps read past the end of them (a blank page)
+              key={`${opened.routeId}-v${opened.version}-${suggestion ? "suggested" : "saved"}`}
               route={opened}
               affectedTrips={affectedTrips}
               saving={saved.saving}

@@ -48,6 +48,18 @@ export function namedLandmarks<T extends { name: string }>(landmarks: T[] | null
   return (landmarks ?? []).filter((m) => words.includes(m.name.toLowerCase()));
 }
 
+/**
+ * The words under a landmark on the traveller's phone (the same as apps/traveller/src/lib/easyRead.ts,
+ * landmarkCaption): "Look for City Plaza" under its own photo; without one, where it is seen instead.
+ */
+export function landmarkCaption(m: { name: string; photoUrl?: string | null; sameView?: string | null }, stepHasPhoto: boolean): string {
+  const look = `Look for ${m.name}`;
+  if (m.photoUrl) return look;
+  if (m.sameView === "step") return stepHasPhoto ? `${look}: it is in the step photo above.` : `${look}.`;
+  if (m.sameView) return `${look}: it is in the photo of ${m.sameView}.`;
+  return stepHasPhoto ? `${look}: it is in the photo above.` : `${look}.`;
+}
+
 export function landmarkSeenIn(m: { name: string; sameView?: string | null }): string {
   return m.sameView === "step"
     ? `Look for ${m.name}: it is in the step photo above.`

@@ -1,7 +1,9 @@
-// Preview of a step as it appears on the traveller's phone, with the mode pictogram, photo, and text.
+// Preview of a step as it appears on the traveller's phone, laid out as the traveller app's StepCard
+// (apps/traveller/src/components/StepCard.tsx): the photo, one action per line, then the landmarks to look out for.
 import { createContext, useContext, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import type { StepMode } from "../journey/types";
+import type { Landmark, StepMode } from "../journey/types";
+import { easyReadPoints, landmarkCaption } from "./format";
 
 export const PreviewSlot = createContext<HTMLElement | null>(null);
 
@@ -11,6 +13,8 @@ interface Props {
   mode: StepMode;
   text: string;
   photoUrl: string | null;
+  /** The landmarks the wording names, as they are saved with the step. */
+  landmarks?: Landmark[];
   backup?: string | null;
   index: number;
   total: number;
@@ -19,9 +23,14 @@ interface Props {
   onHide: () => void;
 }
 
-export function PhonePreview({ mode, text, photoUrl, backup, index, total, onPrev, onNext, onHide }: Props) {
+export function PhonePreview({ mode, text, photoUrl, landmarks = [], backup, index, total, onPrev, onNext, onHide }: Props) {
   const slot = useContext(PreviewSlot);
   const last = index === total - 1;
+  const points = easyReadPoints(text);
+  const withPhoto = landmarks.filter((m) => m.photoUrl);
+  const withoutPhoto = landmarks.filter((m) => !m.photoUrl);
+  // As the traveller app: a photo's "Look for City Plaza" is left out when the points already name it
+  const named = (name: string) => points.some((p) => p.toLowerCase().includes(name.toLowerCase()));
   const preview: ReactNode = (
     <aside className="rp__preview" aria-label={`How step ${index + 1} looks on the traveller's phone`}>
       <div className="rp__phone">
@@ -37,9 +46,27 @@ export function PhonePreview({ mode, text, photoUrl, backup, index, total, onPre
             </ol>
             <div className="tv-sign__body">
               {photoUrl && <img className="tv-sign__photo" src={photoUrl} alt="" />}
-              {text
-                ? <p className="tv-sign__text">{text}</p>
-                : <p className="tv-sign__text tv-sign__text--auto">The automatic wording is used when you save.</p>}
+              {/* One action per line, as the traveller app shows them; a single sentence stays a sentence */}
+              {points.length > 1 ? (
+                <ul className="tv-sign__text tv-sign__points">{points.map((p, i) => <li key={`${p}-${i}`}>{p}</li>)}</ul>
+              ) : points.length === 1 ? (
+                <p className="tv-sign__text">{text}</p>
+              ) : (
+                <p className="tv-sign__text tv-sign__text--auto">The automatic wording is used when you save.</p>
+              )}
+              {withPhoto.length > 0 && (
+                <ul className="tv-sign__landmarks" aria-label="Things to look out for">
+                  {withPhoto.map((m) => (
+                    <li key={m.name}>
+                      <figure className="tv-sign__landmark">
+                        <img className="tv-sign__landmark-photo" src={m.photoUrl!} alt={m.name} />
+                        {!named(m.name) && <figcaption>{landmarkCaption(m, !!photoUrl)}</figcaption>}
+                      </figure>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {withoutPhoto.map((m) => <p key={m.name} className="tv-sign__landmark-note">{landmarkCaption(m, !!photoUrl)}</p>)}
               {backup && <p className="tv-sign__backup">{backup}</p>}
               <span className="tv-btn tv-btn--quiet">Listen</span>
             </div>
