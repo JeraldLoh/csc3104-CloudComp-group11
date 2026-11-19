@@ -60,6 +60,15 @@ to the traveller's phone, through Firebase Cloud Messaging (`app/push.py`). Repe
 Sending happens on a background thread, so an alert never waits for Firebase, and tokens Firebase reports as gone are
 deleted.
 
+**A push is never lost, even if the replica dies.** The push is kept on the incident as an outbox: the same write that
+saves an alert (or a reminder) marks its push `pushPending`, with a lease (`pushLease`) held by that replica. The
+sender claims the lease with a conditional write, sends, then marks it sent (`pushedAt`). Every replica checks every
+5 s (`PUSH_RETRY_CHECK_S`) for pushes whose lease is over 15 s old (`PUSH_LEASE_S`) and still not sent, because their
+replica died or Firebase failed, and sends them. Claiming is conditional, so exactly one replica takes each one over.
+A push is tried at most 5 times (`PUSH_MAX_ATTEMPTS`). The one gap left: if a replica dies in the few milliseconds
+between Firebase accepting a push and marking it sent, it's sent again, and the browser shows it as the same
+notification, because both have the same tag. Measured in `evaluation/alert-service` (A1).
+
 The service needs the Firebase service account key. Without it, push is off and everything else works.
 
 - Locally: save it as `secrets/firebase-service-account.json` (Git ignores `secrets/`), then

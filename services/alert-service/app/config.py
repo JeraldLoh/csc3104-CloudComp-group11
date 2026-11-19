@@ -29,6 +29,11 @@ class Settings:
 
     # The Firebase service account key file (push.py). Empty or missing = no push notifications.
     firebase_credentials: str = field(default_factory=lambda: os.getenv("FIREBASE_CREDENTIALS", ""))
+    # The push outbox (push.py): a push not marked sent this long after its lease was taken is sent by another
+    # replica, checked every PUSH_RETRY_CHECK_S, at most PUSH_MAX_ATTEMPTS times.
+    push_lease_s: float = field(default_factory=lambda: float(os.getenv("PUSH_LEASE_S", "15")))
+    push_retry_check_s: float = field(default_factory=lambda: float(os.getenv("PUSH_RETRY_CHECK_S", "5")))
+    push_max_attempts: int = field(default_factory=lambda: int(os.getenv("PUSH_MAX_ATTEMPTS", "5")))
 
     # Escalation (escalation.py): an urgent alert still open this long after it opened, or after its last
     # escalation, is sent again, up to ESCALATE_MAX times. Checked every ESCALATION_CHECK_S.
