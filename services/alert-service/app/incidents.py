@@ -7,7 +7,13 @@ succeeds and the others update that incident instead of creating a duplicate.
 
 States: open -> acknowledged -> resolved. Each change is a conditional update too, so two
 caregivers (or two replicas) acting at the same time can't both win.
+
+Each alert's push is kept on the incident too, as an outbox (push.py): the write that creates, reopens or escalates
+an incident also marks a push as pending (pushPending), with a lease (pushLease) held by the replica that made it.
+Whoever sends the push claims the lease first (claim_push) and marks it sent afterwards (push_sent). If that replica
+dies first, the lease runs out and another replica claims it and sends it (pending_pushes), so a push is never lost.
 """
+import secrets
 import time
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -35,6 +41,16 @@ def iso(dt: datetime) -> str:
 
 def now_iso() -> str:
     return iso(datetime.now(timezone.utc))
+
+
+def lease_time(dt: datetime) -> str:
+    """To the microsecond, so leases taken in the same second still differ and compare in time order."""
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def new_lease() -> str:
+    """A push lease: when it was taken, then a random part so two replicas' leases are never equal."""
+    return f"{lease_time(datetime.now(timezone.utc))}#{secrets.token_hex(4)}"
 
 
 def incident_id(traveller_id: str, trip_id: str, problem_type: str, step: int | str) -> str:
@@ -127,6 +143,10 @@ class IncidentStore:
             "lastDetectedAt": detected_at,
             "createdAt": now,
             "updatedAt": now,
+            # The push for this alert, still to be sent (the outbox, push.py)
+            "pushPending": True,
+            "pushLease": new_lease(),
+            "pushAttempts": 0,
             **details,
         }
         try:
@@ -175,6 +195,7 @@ class IncidentStore:
     def _reopen(self, iid: str, seen_resolved_at: str, now: str) -> dict | None:
         expr, names, vals = _set_clause({
             "state": "open", "escalationLevel": 0, "acknowledgedBy": None, "updatedAt": now, "reopenedAt": now,
+            "pushPending": True, "pushLease": new_lease(), "pushAttempts": 0,  # pushed again, as a new alert
         })
         for name in ("resolvedAt", "resolvedBy", "acknowledgedAt", "expiresAt", "lastEscalatedAt"):
             names[f"#{name}"] = name
@@ -245,11 +266,15 @@ class IncidentStore:
             attrs = self.db.update_item(
                 TableName=self.table,
                 Key=_key(iid),
-                UpdateExpression="SET escalationLevel = :next, lastEscalatedAt = :now, updatedAt = :now",
+                # The reminder's push goes in the outbox in the same write, so a replica dying now can't lose it
+                UpdateExpression="SET escalationLevel = :next, lastEscalatedAt = :now, updatedAt = :now, "
+                                 "pushPending = :pending, pushLease = :lease, pushAttempts = :zero",
                 ConditionExpression="#state = :open AND escalationLevel = :seen",
                 ExpressionAttributeNames={"#state": "state"},
                 ExpressionAttributeValues={":open": {"S": "open"}, ":seen": {"N": str(seen_level)},
-                                           ":next": {"N": str(seen_level + 1)}, ":now": {"S": now}},
+                                           ":next": {"N": str(seen_level + 1)}, ":now": {"S": now},
+                                           ":pending": {"BOOL": True}, ":lease": {"S": new_lease()},
+                                           ":zero": {"N": "0"}},
                 ReturnValues="ALL_NEW",
             )["Attributes"]
             return _from_dynamo(attrs)
@@ -257,6 +282,58 @@ class IncidentStore:
             if not _condition_failed(e):
                 raise
             return None
+
+    # ------------------------------------------------------------------ the push outbox (push.py)
+    def claim_push(self, iid: str, seen_lease: str) -> dict | None:
+        """Takes over the pending push, only if its lease is still `seen_lease`: of several replicas trying with the
+        same lease, exactly one wins. Returns the incident with the new lease, or None if someone else has it, or it
+        was sent already."""
+        try:
+            attrs = self.db.update_item(
+                TableName=self.table,
+                Key=_key(iid),
+                UpdateExpression="SET pushLease = :lease, pushAttempts = if_not_exists(pushAttempts, :zero) + :one",
+                ConditionExpression="pushPending = :pending AND pushLease = :seenLease",
+                ExpressionAttributeValues={":pending": {"BOOL": True}, ":seenLease": {"S": seen_lease},
+                                           ":lease": {"S": new_lease()}, ":zero": {"N": "0"}, ":one": {"N": "1"}},
+                ReturnValues="ALL_NEW",
+            )["Attributes"]
+            return _from_dynamo(attrs)
+        except ClientError as e:
+            if not _condition_failed(e):
+                raise
+            return None
+
+    def push_sent(self, iid: str, lease: str) -> None:
+        """The push is done (sent, or no longer needed). Only while this lease still holds it: if another replica
+        took it over in the meantime, it's theirs to finish."""
+        try:
+            self.db.update_item(
+                TableName=self.table,
+                Key=_key(iid),
+                UpdateExpression="SET pushedAt = :now REMOVE pushPending, pushLease",
+                ConditionExpression="pushLease = :lease",
+                ExpressionAttributeValues={":lease": {"S": lease}, ":now": {"S": now_iso()}},
+            )
+        except ClientError as e:
+            if not _condition_failed(e):
+                raise
+
+    def pending_pushes(self, stale_before: str, max_attempts: int) -> list[dict]:
+        """Pushes whose lease was taken before `stale_before` (lease_time) and still aren't sent: the replica holding
+        it died, or Firebase failed. Tried at most `max_attempts` times. A filtered Scan, like open_of_types."""
+        found, kwargs = [], {
+            "TableName": self.table,
+            "FilterExpression": "pushPending = :pending AND pushLease < :stale AND pushAttempts < :most",
+            "ExpressionAttributeValues": {":pending": {"BOOL": True}, ":stale": {"S": stale_before},
+                                          ":most": {"N": str(max_attempts)}},
+        }
+        while True:
+            resp = self.db.scan(**kwargs)
+            found += [_from_dynamo(item) for item in resp["Items"]]
+            if "LastEvaluatedKey" not in resp:
+                return found
+            kwargs["ExclusiveStartKey"] = resp["LastEvaluatedKey"]
 
     # ------------------------------------------------------------------ state changes
     def acknowledge(self, iid: str, user_id: str | None) -> dict:

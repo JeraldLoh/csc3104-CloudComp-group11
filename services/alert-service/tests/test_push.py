@@ -1,13 +1,16 @@
 """Push notifications (issue 5.4): who gets one, and when. Firebase is replaced by a fake sender."""
 import json
 import uuid
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
 
 import app.main as service
+from app.incidents import lease_time
 from app.main import app
-from app.push import make_sender
+from app.push import PushRetry, make_sender
 from tests.conftest import new_caregiver
 
 
@@ -196,6 +199,142 @@ def test_push_off_sends_nothing_and_says_so(client, monkeypatch):
 def test_registering_needs_a_caregiver(client):
     assert client.post("/api/devices", json={"token": token()}).status_code == 401
     assert client.post("/api/devices", json={"token": token()}, headers=as_("U-42")).status_code == 403
+
+
+# ---------------------------------------------------------------------------- the outbox: a push is never lost
+class OnlyTraveller:
+    """The incident store, but finding only this test's pending pushes: the shared LocalStack keeps other runs'."""
+
+    def __init__(self, traveller_id: str):
+        self.traveller_id = traveller_id
+
+    def pending_pushes(self, stale_before, max_attempts):
+        return [i for i in service.incidents.pending_pushes(stale_before, max_attempts)
+                if i["travellerId"] == self.traveller_id]
+
+
+def retry(traveller_id: str, max_attempts: int = 5) -> PushRetry:
+    return PushRetry(OnlyTraveller(traveller_id), service.notifier, lease_s=15, max_attempts=max_attempts)
+
+
+def later(seconds: float) -> datetime:
+    return datetime.now(timezone.utc) + timedelta(seconds=seconds)
+
+
+def dies(monkeypatch):
+    """The replica dies before its background thread sends anything."""
+    monkeypatch.setattr(service.notifier, "run", lambda fn, *args: None)
+
+
+def sends(monkeypatch):
+    monkeypatch.setattr(service.notifier, "run", lambda fn, *args: fn(*args))
+
+
+def incident(iid: str) -> dict:
+    return service.incidents.get(iid)
+
+
+def test_a_sent_push_is_marked_sent(client, push):
+    me = new_caregiver()
+    alex = traveller_with(client, me)
+    register(client, me)
+
+    iid = client.post("/internal/problems", json=problem(alex)).json()["incidentId"]
+
+    saved = incident(iid)
+    assert "pushPending" not in saved and saved["pushedAt"]
+    assert retry(alex).run_once(later(60)) == []  # nothing left for another replica
+
+
+def test_a_push_lost_with_its_replica_is_sent_by_another_once_the_lease_runs_out(client, push, monkeypatch):
+    me = new_caregiver()
+    alex = traveller_with(client, me)
+    register(client, me)
+    dies(monkeypatch)
+    iid = client.post("/internal/problems", json=problem(alex, "off_route")).json()["incidentId"]
+    assert push.sent == [] and incident(iid)["pushPending"] is True
+    sends(monkeypatch)
+
+    assert retry(alex).run_once(later(5)) == []  # the lease still holds: it may be on its way
+    assert retry(alex).run_once(later(20)) == [iid]
+
+    assert len(push.sent) == 1
+    assert push.sent[0][1]["title"] == "Check on Alex"
+    assert "pushPending" not in incident(iid)
+    assert retry(alex).run_once(later(60)) == []
+
+
+def test_two_replicas_taking_over_the_same_push_send_it_once(client, push, monkeypatch):
+    me = new_caregiver()
+    alex = traveller_with(client, me)
+    register(client, me)
+    dies(monkeypatch)
+    client.post("/internal/problems", json=problem(alex))
+    sends(monkeypatch)
+    [stale] = OnlyTraveller(alex).pending_pushes(lease_time(later(20)), 5)  # both replicas read it at once
+
+    with ThreadPoolExecutor(8) as pool:
+        list(pool.map(lambda _: service.notifier.resend(stale), range(8)))
+
+    assert len(push.sent) == 1
+
+
+def test_a_reminder_lost_with_its_replica_is_sent_as_a_reminder(client, push, monkeypatch):
+    me = new_caregiver()
+    alex = traveller_with(client, me)
+    register(client, me)
+    iid = client.post("/internal/problems", json=problem(alex)).json()["incidentId"]
+    assert service.incidents.claim_escalation(iid, 0)  # escalated, then the replica died before pushing
+
+    assert retry(alex).run_once(later(20)) == [iid]
+
+    assert [data["title"] for _, data in push.sent] == ["Urgent: Alex", "Still not answered: Alex"]
+
+
+def test_an_alert_acknowledged_before_its_push_isnt_pushed(client, push, monkeypatch):
+    me = new_caregiver()
+    alex = traveller_with(client, me)
+    register(client, me)
+    dies(monkeypatch)
+    iid = client.post("/internal/problems", json=problem(alex)).json()["incidentId"]
+    client.post(f"/api/incidents/{iid.replace('#', '%23')}/ack", headers=as_(me))
+    sends(monkeypatch)
+
+    retry(alex).run_once(later(20))
+
+    assert push.sent == []
+    assert "pushPending" not in incident(iid)
+
+
+def test_a_push_firebase_refused_is_tried_again(client, push, monkeypatch):
+    me = new_caregiver()
+    alex = traveller_with(client, me)
+    register(client, me)
+
+    def down(tokens, data):
+        raise RuntimeError("Firebase is down")
+
+    monkeypatch.setattr(push, "send", down)
+    iid = client.post("/internal/problems", json=problem(alex)).json()["incidentId"]
+    assert incident(iid)["pushPending"] is True
+    monkeypatch.undo()
+    monkeypatch.setattr(service.notifier, "sender", push)
+    sends(monkeypatch)
+
+    assert retry(alex).run_once(later(20)) == [iid]
+    assert len(push.sent) == 1
+
+
+def test_a_push_firebase_keeps_refusing_is_given_up(client, push, monkeypatch):
+    me = new_caregiver()
+    alex = traveller_with(client, me)
+    register(client, me)
+    monkeypatch.setattr(push, "send", lambda tokens, data: (0, []))  # every browser refused it
+    iid = client.post("/internal/problems", json=problem(alex)).json()["incidentId"]  # attempt 1
+
+    assert retry(alex, max_attempts=2).run_once(later(20)) == [iid]  # attempt 2
+    assert retry(alex, max_attempts=2).run_once(later(40)) == []  # given up
+    assert incident(iid)["pushAttempts"] == 2
 
 
 # ---------------------------------------------------------------------------- the traveller's phone

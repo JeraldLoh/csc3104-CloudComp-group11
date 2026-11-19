@@ -31,7 +31,7 @@ from app.logins import LoginUnavailable, TravellerLogins
 from app.models import (PHONE_TRAVELLER_ID, ArrivalRequest, HelpRequest, Location, NewDevice, NewLink, NewSafeLocation,
                         NewTraveller, ProblemReport, TravellerDevice, WhereReply)
 from app.profiles import ProfileStore
-from app.push import DeviceStore, Notifier, make_sender
+from app.push import DeviceStore, Notifier, PushRetry, make_sender
 from app.stream import event_stream
 from app.where import WhereRequests
 
@@ -48,7 +48,10 @@ live = LiveTrips(r, settings.live_window_s)
 where = WhereRequests(r)
 publisher = AlertPublisher(r, dynamodb, settings.travellers_table)
 devices = DeviceStore(dynamodb, settings.device_tokens_table)
-notifier = Notifier(devices, profiles.caregivers_of, make_sender(settings.firebase_credentials), publisher.traveller_name)
+notifier = Notifier(devices, profiles.caregivers_of, make_sender(settings.firebase_credentials), publisher.traveller_name,
+                    incidents)
+push_retry = PushRetry(incidents, notifier, settings.push_lease_s, settings.push_retry_check_s,
+                       settings.push_max_attempts, settings.escalate_within_s)
 
 
 def _still_where_they_stopped(incident: dict, now) -> bool | None:
@@ -85,7 +88,10 @@ async def lifespan(app: FastAPI):
         consumer.start()
     if settings.escalation_enabled:
         escalator.start()
+    if notifier.enabled:
+        push_retry.start()  # pushes a replica that died didn't send (push.py)
     yield
+    push_retry.stop()
     escalator.stop()
     if consumer:
         consumer.stop()
