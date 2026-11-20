@@ -13,7 +13,8 @@ interface Props {
   fresh: ReadonlySet<string>;
   /** Keeps an alert the service just changed. */
   merge: (updated: Incident) => void;
-  onError: (message: string) => void;
+  /** A failed acknowledge or resolve, for the page's banner; null once one works again. */
+  onError: (message: string | null) => void;
 }
 
 export function AlertList({ caregiverId, incidents, known, fresh, merge, onError }: Props) {
@@ -24,8 +25,10 @@ export function AlertList({ caregiverId, incidents, known, fresh, merge, onError
     setBusy(incidentId);
     try {
       merge(await action(incidentId, caregiverId));
+      onError(null); // it worked, so an earlier failure no longer applies
     } catch (e) {
-      onError((e as Error).message);
+      const verb = action === acknowledge ? "acknowledge" : "resolve";
+      onError(`Couldn't ${verb} the alert: ${(e as Error).message}. Try again.`);
     } finally {
       setBusy(null);
     }

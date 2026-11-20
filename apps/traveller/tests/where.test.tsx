@@ -15,6 +15,12 @@ describe("fetchQuestion", () => {
     expect(fetchImpl.mock.calls[0][0]).toContain("/api/where-are-you?travellerId=U-042");
   });
 
+  it("asks only for this trip's question, so one from an earlier trip isn't shown", async () => {
+    const fetchImpl = vi.fn(reply(null));
+    await fetchQuestion("U-042", fetchImpl, 5000, "T-7");
+    expect(fetchImpl.mock.calls[0][0]).toContain("/api/where-are-you?travellerId=U-042&tripId=T-7");
+  });
+
   it("returns null when nobody is asking", async () => {
     expect(await fetchQuestion("U-042", reply(null))).toBeNull();
   });

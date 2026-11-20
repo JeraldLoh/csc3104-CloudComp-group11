@@ -8,7 +8,7 @@ import type { TripsApi } from "../journey/api";
 import { PushToggle } from "../push/PushToggle";
 import { locationAlert } from "../map/traveller";
 import { LiveMap } from "./LiveMap";
-import { buildRows, seenAgo, summarise, type Health, type TravellerRow } from "./overview";
+import { buildRows, seenAgo, summarise, tripInProgress, whereStillCurrent, type Health, type TravellerRow } from "./overview";
 import { Avatar } from "./TravellersPage";
 import { useLiveTrips } from "./useLiveTrips";
 import { isCaregiverId, type MyTravellers } from "./useMyTravellers";
@@ -57,6 +57,7 @@ export function DashboardPage({ caregiverId, my, journey, onOpenProfile, linked 
   const totals = summarise(rows, liveKnown);
   const problem = alerts.error ?? my.error;
   const open = rows.find((r) => r.traveller.travellerId === openId) ?? null; // gone if they were just removed
+  const openTrip = open ? tripInProgress(open.live, open.facts) : null; // "Where are you?" belongs to this trip
   const nameOf = (id: string) => my.travellers.find((t) => t.travellerId === id)?.name;
 
   return (
@@ -98,8 +99,10 @@ export function DashboardPage({ caregiverId, my, journey, onOpenProfile, linked 
                 <HealthBadge health={open.health} failed={!!alerts.error} />
               </div>
               <Facts row={open} liveKnown={liveKnown} />
-              <WhereAreYou key={open.traveller.travellerId} caregiverId={caregiverId}
-                travellerId={open.traveller.travellerId} name={open.traveller.name}
+              {/* keyed by the trip too, so a trip ending starts it afresh */}
+              <WhereAreYou key={`${open.traveller.travellerId}:${openTrip ?? ""}`} caregiverId={caregiverId}
+                travellerId={open.traveller.travellerId} name={open.traveller.name} tripId={openTrip}
+                stillCurrent={(q) => whereStillCurrent(q, openTrip, open.live, open.facts)}
                 latest={alerts.where[open.traveller.travellerId]} onNote={alerts.noteWhere}
                 onEdit={() => onOpenProfile(open.traveller.travellerId)} />
             </div>
@@ -164,14 +167,20 @@ interface WhereProps {
   caregiverId: string;
   travellerId: string;
   name: string;
+  /** The trip under way (tripInProgress), or null. */
+  tripId: string | null;
+  /** Whether a question still belongs on screen (whereStillCurrent): it ends with its trip. */
+  stillCurrent: (q: WhereRequest) => boolean;
   latest: WhereRequest | undefined;
   onNote: (travellerId: string, request: WhereRequest) => void;
   onEdit: () => void;
 }
 
 // "Where are you?" (issue 5.5): the question appears on the traveller's phone while the app is open there, and
-// their answer arrives here over the live stream.
-function WhereAreYou({ caregiverId, travellerId, name, latest, onNote, onEdit }: WhereProps) {
+// their answer arrives here over the live stream. A question belongs to the trip it was asked on, so once that trip
+// ends it's no longer shown and the button is back to "Where are you?".
+function WhereAreYou({ caregiverId, travellerId, name, tripId, stillCurrent, latest: newest, onNote, onEdit }: WhereProps) {
+  const latest = newest && stillCurrent(newest) ? newest : undefined;
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
@@ -191,7 +200,7 @@ function WhereAreYou({ caregiverId, travellerId, name, latest, onNote, onEdit }:
     setBusy(true);
     setFailed(null);
     try {
-      onNote(travellerId, await askWhere(caregiverId, travellerId));
+      onNote(travellerId, await askWhere(caregiverId, travellerId, tripId));
       setNow(Date.now());
     } catch (e) {
       setFailed(`Couldn't ask ${name}: ${(e as Error).message}`);

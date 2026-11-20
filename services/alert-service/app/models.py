@@ -62,6 +62,13 @@ class TravellerDevice(NewDevice):
     travellerId: str = Field(pattern=PHONE_TRAVELLER_ID, max_length=64)
 
 
+class WhereAsk(BaseModel):
+    """POST /api/travellers/{travellerId}/where-are-you: the trip the caregiver sees under way, so the question
+    ends with it. No body, or no tripId, for a traveller with no trip."""
+
+    tripId: str | None = Field(default=None, min_length=1, max_length=64)
+
+
 class WhereReply(BaseModel):
     """POST /api/where-are-you/reply, from the traveller's phone. "help" also goes through POST /api/help on the phone,
     so this only tells the caregiver what they answered. lat and lng aren't range checked, as for Help."""

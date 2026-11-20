@@ -19,6 +19,9 @@ async function factsFor(caregiverId: string, travellerId: string,
     safeLocations: places.status === "fulfilled" ? places.value.length : null,
     caregivers: caregivers.status === "fulfilled" ? caregivers.value.length : null,
     activeTrip: trips.status === "fulfilled" ? trips.value.find((t) => t.status === "active") ?? null : null,
+    endedTripIds: trips.status === "fulfilled" ? trips.value.filter((t) => t.status === "completed").map((t) => t.tripId) : [],
+    lastEndedAt: trips.status === "fulfilled"
+      ? trips.value.map((t) => t.endedAt).filter((t): t is string => !!t).sort().at(-1) ?? null : null,
     tripsKnown: trips.status === "fulfilled",
   };
 }

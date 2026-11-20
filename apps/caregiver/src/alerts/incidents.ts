@@ -47,6 +47,8 @@ export interface WhereRequest {
   askedBy: string;
   askedAt: string;
   status: "asked" | "answered";
+  /** The trip it was asked on: it's shown only while that trip is under way (null: asked with no trip). */
+  tripId?: string | null;
   answer: "ok" | "help" | null;
   answeredAt: string | null;
   lat: number | null;

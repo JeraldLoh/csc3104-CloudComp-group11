@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Incident } from "../src/alerts/incidents";
 import type { LiveTrip } from "../src/profiles/api";
-import { buildRows, seenAgo, summarise, type TravellerFacts } from "../src/profiles/overview";
+import { buildRows, seenAgo, summarise, tripInProgress, whereStillCurrent, type TravellerFacts } from "../src/profiles/overview";
 import type { Trip } from "../src/journey/types";
 
 const alex = { travellerId: "U-1", name: "Alex" };
@@ -90,5 +90,58 @@ describe("seenAgo", () => {
     expect(seenAgo("2026-10-12T07:59:30Z", now)).toBe("just now");
     expect(seenAgo("2026-10-12T07:58:00Z", now)).toBe("2 min ago");
     expect(seenAgo("2026-10-12T05:30:00Z", now)).toBe("2 h ago");
+  });
+});
+
+describe("tripInProgress: the trip a \"Where are you?\" belongs to", () => {
+  const live = (tripId: string, arrivedAt: string | null = null) =>
+    ({ tripId, stepIndex: 1, status: "travelling", lastSeenAt: "2026-10-12T08:00:00Z", arrivedAt }) as LiveTrip;
+
+  it("is the phone's trip while it checks in, even before the Journey Service list is reloaded", () => {
+    expect(tripInProgress(live("T-1"), known)).toBe("T-1");
+  });
+
+  it("is the Journey Service's active trip before the phone's first check-in", () => {
+    expect(tripInProgress(null, { ...known, activeTrip: trip })).toBe("T-1");
+  });
+
+  it("ends when the traveller presses I've arrived, though the trip list still says active", () => {
+    expect(tripInProgress(live("T-1", "2026-10-12T08:30:00Z"), { ...known, activeTrip: trip })).toBeNull();
+  });
+
+  it("ends when the Journey Service says the trip is over (ended by the caregiver)", () => {
+    expect(tripInProgress(live("T-1"), { ...known, endedTripIds: ["T-1"] })).toBeNull();
+  });
+
+  it("moves to the next trip", () => {
+    const next = { tripId: "T-2", status: "active" } as Trip;
+    expect(tripInProgress(live("T-1", "2026-10-12T08:30:00Z"), { ...known, activeTrip: next })).toBe("T-2");
+  });
+
+  it("is null with no trip at all", () => {
+    expect(tripInProgress(null, known)).toBeNull();
+    expect(tripInProgress(undefined, undefined)).toBeNull();
+  });
+});
+
+describe("whereStillCurrent: a question ends with its trip", () => {
+  const live = (tripId: string, arrivedAt: string | null = null) =>
+    ({ tripId, stepIndex: 1, status: "travelling", lastSeenAt: "2026-10-12T08:00:00Z", arrivedAt }) as LiveTrip;
+  const asked = (tripId: string | null) => ({ tripId, askedAt: "2026-10-12T08:46:47Z" });
+
+  it("one asked on a trip lasts while that trip is under way", () => {
+    expect(whereStillCurrent(asked("T-1"), "T-1", live("T-1"), known)).toBe(true);
+    expect(whereStillCurrent(asked("T-1"), null, live("T-1", "2026-10-12T08:50:00Z"), known)).toBe(false);
+    expect(whereStillCurrent(asked("T-1"), "T-2", live("T-2"), known)).toBe(false);
+  });
+
+  it("one asked before the dashboard knew the trip ends when the traveller arrives", () => {
+    expect(whereStillCurrent(asked(null), null, live("T-1"), known)).toBe(true);
+    expect(whereStillCurrent(asked(null), null, live("T-1", "2026-10-12T08:46:52Z"), known)).toBe(false);
+  });
+
+  it("or when the Journey Service says a trip ended after it was asked", () => {
+    expect(whereStillCurrent(asked(null), null, null, { ...known, lastEndedAt: "2026-10-12T08:47:00Z" })).toBe(false);
+    expect(whereStillCurrent(asked(null), null, null, { ...known, lastEndedAt: "2026-10-12T08:00:00Z" })).toBe(true);
   });
 });

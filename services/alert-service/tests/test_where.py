@@ -48,14 +48,66 @@ def published(redis_client):
     pubsub.close()
 
 
-def ask(client, me, alex):
-    return client.post(f"/api/travellers/{alex}/where-are-you", headers=as_(me))
+def ask(client, me, alex, trip=None):
+    body = {"tripId": trip} if trip else None
+    return client.post(f"/api/travellers/{alex}/where-are-you", headers=as_(me), json=body)
 
 
-def phone_sees(client, alex):
-    resp = client.get("/api/where-are-you", params={"travellerId": alex})  # the phone has no login
+def phone_sees(client, alex, trip=None):
+    params = {"travellerId": alex, **({"tripId": trip} if trip else {})}
+    resp = client.get("/api/where-are-you", params=params)  # the phone has no login
     assert resp.status_code == 200, resp.text
     return resp.json()
+
+
+def latest(client, me, alex):
+    return client.get(f"/api/travellers/{alex}/where-are-you", headers=as_(me)).json()
+
+
+def arrive(client, alex, trip):
+    resp = client.post("/api/arrived", json={"tripId": trip, "travellerId": alex})
+    assert resp.status_code == 200, resp.text
+
+
+# ---------------------------------------------------------------------------- a question ends with its trip
+def test_a_question_belongs_to_the_trip_it_was_asked_on(client, setup):
+    me, alex = setup
+
+    question = ask(client, me, alex, "T-1").json()
+
+    assert question["tripId"] == "T-1"
+    assert phone_sees(client, alex, "T-1")["requestId"] == question["requestId"]
+    assert phone_sees(client, alex, "T-2") is None  # the phone on another trip isn't asked
+
+
+def test_arriving_ends_the_trips_question_answered_or_not(client, setup):
+    me, alex = setup
+    waiting = ask(client, me, alex, "T-1").json()
+    reply(client, alex, waiting["requestId"])
+
+    arrive(client, alex, "T-1")
+
+    assert latest(client, me, alex) is None  # the dashboard's "Sally answered" note goes
+    assert ask(client, me, alex, "T-2").json()["status"] == "asked"  # a fresh question on the next trip
+
+
+def test_arriving_on_another_trip_leaves_the_question(client, setup):
+    me, alex = setup
+    question = ask(client, me, alex, "T-2").json()
+
+    arrive(client, alex, "T-1")
+
+    assert latest(client, me, alex)["requestId"] == question["requestId"]
+
+
+def test_asking_on_a_new_trip_replaces_one_still_waiting_from_the_last(client, setup):
+    me, alex = setup
+    old = ask(client, me, alex, "T-1").json()
+
+    new = ask(client, me, alex, "T-2").json()
+
+    assert new["requestId"] != old["requestId"] and new["tripId"] == "T-2"
+    assert ask(client, me, alex, "T-2").json()["requestId"] == new["requestId"]  # same trip: still one question
 
 
 def reply(client, alex, request_id, answer="ok", lat=1.4, lng=103.9):

@@ -332,7 +332,7 @@ export function useCareRoute(session: Session, opts: { demo: boolean }): CareRou
     if (phase !== "travelling") return;
     let stopped = false;
     const check = async () => {
-      const found = await fetchQuestion(session.travellerId);
+      const found = await fetchQuestion(session.travellerId, fetch, undefined, session.tripId);   // this trip's only
       const queued = engine.current?.requests.state.pending
         .some((r) => r.label === "where reply" && (r.body as { requestId?: string }).requestId === found?.requestId);
       if (stopped || !found || answered.current.has(found.requestId) || queued) return;
