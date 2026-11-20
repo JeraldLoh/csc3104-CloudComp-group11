@@ -24,8 +24,8 @@ that problem already has an incident. **Retrying is safe**: send again if a requ
 | GET | `/ready` | Redis and DynamoDB reachable |
 | POST | `/internal/problems` | See above |
 | POST | `/api/help` | The traveller pressed Help: an urgent incident. Only Cognito checks who is asking (not `dev`), because a refused request for help is worse than a false alarm |
-| POST | `/api/arrived` | The traveller pressed "I've arrived": tells their caregivers once. Not an incident |
-| POST / GET | `/api/travellers/{travellerId}/where-are-you` | A caregiver asks "Where are you?" / the latest question and answer (`app/where.py`) |
+| POST | `/api/arrived` | The traveller pressed "I've arrived": tells their caregivers once, and clears that trip's "Where are you?". Not an incident |
+| POST / GET | `/api/travellers/{travellerId}/where-are-you` | A caregiver asks "Where are you?" on the trip under way / the latest question and answer. A question ends with its trip (`app/where.py`) |
 | GET / POST | `/api/where-are-you`, `/api/where-are-you/reply` | From the traveller's phone: the waiting question / their answer |
 | POST | `/api/devices`, `/api/devices/traveller` | A caregiver's browser / the traveller's phone, for push notifications (`app/push.py`) |
 | GET | `/api/incidents?travellerId=U-042` | Newest first |
@@ -55,8 +55,9 @@ safe locations, incidents and live alerts. Anyone else gets `404 not_found`.
 
 ## Push notifications (issue 5.4)
 
-New and reopened **urgent** alerts are pushed to every caregiver of the traveller, and a new "Where are you?" question
-to the traveller's phone, through Firebase Cloud Messaging (`app/push.py`). Repeat detections don't push again.
+Every new and reopened alert, whatever its level (see Escalation below), is pushed to every caregiver of the traveller,
+and a new "Where are you?" question to the traveller's phone, through Firebase Cloud Messaging (`app/push.py`).
+Repeat detections don't push again.
 Sending happens on a background thread, so an alert never waits for Firebase, and tokens Firebase reports as gone are
 deleted.
 

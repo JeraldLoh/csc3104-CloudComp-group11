@@ -13,7 +13,7 @@ Journey keys expire **24 hours** after their last update.
 | `trip:{tripId}:recent` | List | Last 10 check-ins (JSON), newest first | Check-in Service (M2) | Detectors (M4), Alert Service (M5), Heartbeat (M1) (last location and battery) |
 | `trip:{tripId}:dwell` | Hash | `lat`, `lng`, `since`: where the traveller stopped and when, so a stop longer than the `recent` window can be timed | Detectors (M4), dwell-time | Detectors (M4), dwell-time |
 | `trip:{tripId}:arrived` | String | When the traveller pressed "I've arrived"; set once, so only the first request tells caregivers | Alert Service (M5) | Alert Service (M5) |
-| `where:{travellerId}` | Hash | The latest "Where are you?" question: `requestId`, `askedBy`, `askedAt`, `status` (`asked`/`answered`), `answer`, `answeredAt`, `lat`, `lng`. Expires after 1 hour | Alert Service (M5) | Alert Service (M5) |
+| `where:{travellerId}` | Hash | The latest "Where are you?" question: `requestId`, `askedBy`, `askedAt`, `status` (`asked`/`answered`), `tripId` (the trip it was asked on, `""` if none), `answer`, `answeredAt`, `lat`, `lng`. Deleted when that trip's traveller presses "I've arrived"; otherwise expires after 1 hour | Alert Service (M5) | Alert Service (M5) |
 | `hb:{tripId}:lastseen` | String | Time of last check-in | Check-in Service (M2) | Heartbeat (M1), Alert Service (M5) |
 | `hb:{tripId}:intervals` | List | Last 100 gaps between single live check-ins, in milliseconds (catch-up batches don't add gaps; they only update lastseen) | Check-in Service (M2) | Heartbeat (M1) |
 | `hb:{tripId}:status` | String | `active` or `backgrounded` | Check-in Service (M2) | Heartbeat (M1) |
