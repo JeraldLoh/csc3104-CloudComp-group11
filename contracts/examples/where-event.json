@@ -7,6 +7,7 @@
     "askedBy": "G-003",
     "askedAt": "2026-10-12T08:20:00Z",
     "status": "answered",
+    "tripId": "T-001",
     "answer": "ok",
     "answeredAt": "2026-10-12T08:20:09Z",
     "lat": 1.4052,

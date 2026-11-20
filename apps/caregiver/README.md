@@ -58,7 +58,9 @@ first, with alerts arriving live. It needs the Alert Service on port 8005 with `
   stays until dismissed. A dashboard that wasn't open still shows "Arrived 5 min ago" on the card, for 30 minutes.
 - **Where are you?** on an opened traveller asks them on their phone (`WhereAreYou` in `DashboardPage.tsx`). The
   phone shows it within about 5 seconds while the traveller app is open, and the answer ("I'm OK" or "I need help",
-  with where they were) appears here live. After 2 minutes with no answer it says to call them.
+  with where they were) appears here live. After 2 minutes with no answer it says to call them. A question belongs to
+  the trip it was asked on: once that trip ends (the traveller presses "I've arrived", or the trip is ended), the
+  answer goes and the button is back to "Where are you?" (`whereStillCurrent` in `src/profiles/overview.ts`).
 - **Get urgent alerts on this computer** (`src/push/`) turns on push notifications, so an urgent alert reaches the
   caregiver with the dashboard closed. It needs `firebase-web-config.json` in the repo root, and is hidden without it.
   Push only works on a secure page: `localhost`, or HTTPS.
