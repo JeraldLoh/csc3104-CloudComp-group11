@@ -14,24 +14,14 @@ Infrastructure is defined as code in `cloudformation/careroute-vpc-eks-standard.
 - [eksctl](https://eksctl.io/installation/) (`winget install -e --id eksctl.eksctl`)
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed and running
 
-## Automated deploy and teardown
+## Deploying to AWS
 
-The scripts in `scripts/` run every step in the sections below, from the
-CloudFormation stack to the `/health` check, and the full teardown. Both are
-safe to re-run. `deploy` creates or updates the stack from the current template,
-so changes to the YAML are applied on the next run. `teardown` looks up S3
-buckets and ECR repositories from the live stack, so resources added to the
-template later are removed too.
+Create the environment with
+"Deploy the infrastructure" below, deploy the services with GitHub Actions (next section), and delete everything with "Teardown" at the end of each session. **The environment costs about $0.30/hour while it exists, even with
+nothing running.**
 
-| | Windows (PowerShell) | macOS (bash) |
-|---|---|---|
-| Deploy | `powershell -ExecutionPolicy Bypass -File scripts\windows\deploy.ps1 -BudgetEmail you@example.com` | `bash scripts/macos/deploy.sh --email you@example.com` |
-| Teardown | `powershell -ExecutionPolicy Bypass -File scripts\windows\teardown.ps1` | `bash scripts/macos/teardown.sh` |
-
-Options: `-ImageTag` / `--tag` (default `v1`), `-StackName` / `--stack-name`,
-`-Region` / `--region`, and `-Yes` / `--yes` to skip the teardown confirmation.
-The deploy scripts fill in the `k8s/eks` placeholders in a temporary copy, so
-the committed manifests stay unchanged.
+If several people use the same AWS account, post in the group chat before creating or tearing down the
+environment, and only tear down once everyone using it has said they're done.
 
 ## Automatic deployment (GitHub Actions)
 
@@ -45,8 +35,115 @@ the committed manifests stay unchanged.
   creating the stack, since merges made while the stack was torn down skip the deploy.
 
 A service is picked up when it has both `services/<name>/Dockerfile` and `k8s/eks/services/<name>.yaml`,
-with the same placeholders as `deploy --service` (see [scripts/README.md](scripts/README.md)).
+following the rules in "Service manifests" below.
 The frontends are not part of this workflow: Amplify builds them from `amplify.yml`.
+
+### Service manifests
+
+A service needs two files, named after it:
+
+```
+services/<name>/Dockerfile          your service's code and Dockerfile
+k8s/eks/services/<name>.yaml        your Kubernetes manifest
+```
+
+The manifest must contain a Deployment called `<name>`, or, if one image runs as several Deployments (like the detectors), give each Deployment the label `app.kubernetes.io/part-of: <name>` and the workflow waits for all of them. Use lowercase letters, digits and
+dashes only (e.g. `coordinator`, `detector-route`).
+
+**Don't paste AWS values into your manifest.** Write these placeholders instead; the workflow fills
+them in from the stack (and never saves the filled-in version to Git):
+
+| Placeholder | Becomes |
+|---|---|
+| `__IMAGE__` | Your image in ECR (repository `careroute-<name>`, created for you) |
+| `__NAMESPACE__` | `careroute` |
+| `__REGION__` | `ap-southeast-1` |
+| `__REDIS_ENDPOINT__` | The Redis address |
+| `__CHECKINS_QUEUE_URL__` | URL of the `careroute-checkins` queue |
+| `__DISRUPTIONS_QUEUE_URL__` | URL of the `careroute-disruptions` queue |
+| `__FILES_BUCKET__` | The shared S3 bucket, `careroute-files-<account id>` |
+| `__ALB_SG_ID__` | The load balancer's security group (for the `alb.ingress.kubernetes.io/security-groups` annotation on your Ingress) |
+| `__ROLE_ARN__` | Your service's own IAM role (see "Your own IAM role" below) |
+| `__COGNITO_USER_POOL_ID__` | The user pool ID from the `careroute-cognito` stack |
+| `__COGNITO_CLIENT_ID__` | The app client ID from the `careroute-cognito` stack |
+
+#### Your own IAM role (optional)
+
+By default, services use the shared `cloud-fastapi` service account. Its role can read and write
+every `careroute-*` table, queue and bucket, but it can't call `DescribeTable`. If you want a
+least-privilege role for your service instead:
+
+1. Create the role in a CloudFormation stack (your own stack, or ask for it to be added to the
+   platform template). Its trust policy must allow the service account
+   `system:serviceaccount:careroute:<name>` through the platform stack's `OidcProviderArn` output.
+2. Give that stack an output named after your service in PascalCase followed by `RoleArn`:
+   `checkin-service` → `CheckinServiceRoleArn`.
+3. In your manifest, add a ServiceAccount and use it in your Deployment:
+
+   ```yaml
+   apiVersion: v1
+   kind: ServiceAccount
+   metadata:
+     name: checkin-service
+     namespace: __NAMESPACE__
+     annotations:
+       eks.amazonaws.com/role-arn: __ROLE_ARN__
+   ---
+   # ...and in the Deployment's pod spec:  serviceAccountName: checkin-service
+   ```
+
+The workflow finds the output in any stack in the region. It stops if no stack has it, or if more
+than one does. Teardown only deletes the platform stack, so **delete your own stack yourself**
+before or after teardown, or its role and anything else in it stay behind.
+
+Example `k8s/eks/services/coordinator.yaml`:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: coordinator                  # must match the service name
+  namespace: __NAMESPACE__
+spec:
+  replicas: 1                        # use 2 for demos and failover tests
+  selector:
+    matchLabels: { app: coordinator }
+  template:
+    metadata:
+      labels: { app: coordinator }
+    spec:
+      serviceAccountName: cloud-fastapi   # shared AWS permissions for now
+      containers:
+        - name: coordinator
+          image: __IMAGE__
+          ports: [{ containerPort: 8000 }]
+          env:
+            - { name: REDIS_URL, value: "redis://__REDIS_ENDPOINT__:6379/0" }
+            - { name: CHECKINS_QUEUE_URL, value: "__CHECKINS_QUEUE_URL__" }
+            - { name: AWS_DEFAULT_REGION, value: "__REGION__" }
+          resources:
+            requests: { cpu: 250m, memory: 512Mi }
+            limits: { cpu: 250m, memory: 512Mi }
+          readinessProbe:
+            httpGet: { path: /health, port: 8000 }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: coordinator                  # other services call http://coordinator:8000
+  namespace: __NAMESPACE__
+spec:
+  selector: { app: coordinator }
+  ports: [{ port: 8000, targetPort: 8000 }]
+```
+
+Useful commands afterwards:
+
+```
+kubectl get pods -n careroute                    # is it running?
+kubectl logs -n careroute deploy/coordinator -f  # see its logs
+kubectl delete deployment,service coordinator -n careroute   # remove one service
+```
 
 ### One-time setup
 
@@ -98,7 +195,7 @@ aws cloudformation describe-stacks --stack-name careroute-cognito --region ap-so
   --query "Stacks[0].Outputs" --output table
 ```
 
-The service deploys (`deploy --service`, GitHub Actions) read the pool ID and client ID from this
+The service deploys (GitHub Actions) read the pool ID and client ID from this
 stack, and refuse to deploy a service that needs them if it doesn't exist. For the **apps**, set
 these environment variables (in Amplify: App settings > Environment variables, then redeploy; locally,
 in `apps/<app>/.env.local`):
@@ -127,10 +224,18 @@ directly. `cloudformation/careroute-api-https.yaml` puts CloudFront in front of 
 every header goes through (the login's `Authorization` included), and `/api/stream` stays open (the Alert Service
 pings every 15 s, inside the 60 s timeout).
 
-The full `deploy` (not `--service`) creates or updates it at the end, pointed at the current ALB, and prints its
-address. It is its own stack, and `teardown` keeps it like the Cognito one, so the address stays the same from one
-deploy to the next and an idle distribution costs nothing. `teardown -DeleteHttps` (`--delete-https`) removes it,
-`deploy -NoHttps` (`--no-https`) skips it. When the ALB has changed, the update takes 5-15 minutes.
+Create or update it once the ALB exists ("Verify" under "Deploy the application"), pointed at the current ALB. It is
+its own stack and the teardown keeps it like the Cognito one, so the address stays the same from one deploy to the
+next and an idle distribution costs nothing. When the ALB has changed, the update takes 5-15 minutes.
+
+```powershell
+$alb = kubectl get ingress cloud-fastapi -n careroute -o jsonpath="{.status.loadBalancer.ingress[0].hostname}"
+aws cloudformation deploy --stack-name careroute-api-https `
+  --template-file cloudformation/careroute-api-https.yaml `
+  --parameter-overrides "AlbDnsName=$alb" --region ap-southeast-1 --no-fail-on-empty-changeset
+```
+
+To remove it, `aws cloudformation delete-stack --stack-name careroute-api-https --region ap-southeast-1`.
 
 The apps then call the API through their own address, so no CORS is needed. Once per Amplify app, add this rewrite
 (App settings > Rewrites and redirects), above any other rule:
@@ -139,7 +244,7 @@ The apps then call the API through their own address, so no CORS is needed. Once
 |---|---|---|
 | `/api/<*>` | `https://<ApiDomain>/api/<*>` | 200 (Rewrite) |
 
-`<ApiDomain>` is the address `deploy` prints, or:
+`<ApiDomain>` is the stack's `ApiDomain` output:
 
 ```bash
 aws cloudformation describe-stacks --stack-name careroute-api-https --region ap-southeast-1 \
@@ -428,7 +533,7 @@ aws cloudformation describe-stack-events --stack-name careroute-stack-1 --region
 
 ### 6. Delete what was made outside the stack
 
-The S3 bucket, the services' ECR repositories (made by GitHub Actions and the service deploys), the controller's IAM
+The S3 bucket, the services' ECR repositories (made by GitHub Actions), the controller's IAM
 policy and the log groups aren't part of the stack, and the repositories and bucket keep costing money.
 
 ```powershell

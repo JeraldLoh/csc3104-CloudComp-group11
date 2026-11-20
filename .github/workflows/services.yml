@@ -5,7 +5,7 @@
 #   manual run    -> Actions > Services > Run workflow, for one service or "all"
 #
 # A service is deployable when it has services/NAME/Dockerfile and
-# k8s/eks/services/NAME.yaml, with the same __PLACEHOLDERS__ as `deploy --service`.
+# k8s/eks/services/NAME.yaml, with the __PLACEHOLDERS__ listed in the README ("Service manifests").
 # Images are tagged with the commit SHA, so every merge rolls out new pods.
 # The platform stack is torn down between sessions: while it's down, deploys are
 # skipped with a notice instead of failing. Run the workflow manually once it's up.
