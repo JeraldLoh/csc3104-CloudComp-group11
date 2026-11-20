@@ -27,8 +27,9 @@ export interface SafeLocation {
 }
 
 /** Asks the traveller "Where are you?" on their phone. A question already waiting is returned, not repeated. */
-export function askWhere(caregiverId: string, travellerId: string): Promise<WhereRequest> {
-  return call(`/api/travellers/${encodeURIComponent(travellerId)}/where-are-you`, caregiverId, { method: "POST" });
+export function askWhere(caregiverId: string, travellerId: string, tripId?: string | null): Promise<WhereRequest> {
+  return call(`/api/travellers/${encodeURIComponent(travellerId)}/where-are-you`, caregiverId,
+    { method: "POST", body: JSON.stringify({ tripId: tripId ?? null }) });   // the question ends with this trip
 }
 
 /** The traveller's latest question, waiting or answered, or null. */

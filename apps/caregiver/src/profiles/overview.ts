@@ -12,7 +12,33 @@ export interface TravellerFacts {
   safeLocations: number | null;
   caregivers: number | null;
   activeTrip: Trip | null;
+  /** Trips the Journey Service says are over (ended by the phone or the caregiver). */
+  endedTripIds?: string[];
+  /** When the latest of those ended. */
+  lastEndedAt?: string | null;
   tripsKnown: boolean;
+}
+
+/** Whether a "Where are you?" question still belongs on screen. One asked on a trip lasts while that trip is under
+ * way (`tripId`: tripInProgress). One asked with no trip known yet (the trip had only just started) lasts until a
+ * trip ends after it was asked: the phone's "I've arrived" or the Journey Service's end of a trip. */
+export function whereStillCurrent(q: { tripId?: string | null; askedAt: string }, tripId: string | null,
+                                  live: LiveTrip | null | undefined, facts: TravellerFacts | null | undefined): boolean {
+  if (q.tripId) return q.tripId === tripId;
+  const asked = Date.parse(q.askedAt);
+  const ends = [live?.arrivedAt, facts?.lastEndedAt].filter((t): t is string => !!t).map(Date.parse);
+  return !ends.some((ended) => ended >= asked);
+}
+
+/** The trip under way, or null once it has ended: the phone pressed "I've arrived", or the Journey Service says it's
+ * over. The phone's latest trip counts first, as it's known as soon as it checks in; the Journey Service's active
+ * trip covers one that hasn't checked in yet. "Where are you?" belongs to this trip. */
+export function tripInProgress(live: LiveTrip | null | undefined, facts: TravellerFacts | null | undefined): string | null {
+  const ended = new Set(facts?.endedTripIds ?? []);
+  if (live?.arrivedAt) ended.add(live.tripId);
+  if (live && !ended.has(live.tripId)) return live.tripId;
+  const active = facts?.activeTrip?.tripId;
+  return active && !ended.has(active) ? active : null;
 }
 
 export interface TravellerRow {

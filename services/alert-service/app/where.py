@@ -5,6 +5,10 @@ Nothing can reach the phone until push notifications exist, so the traveller app
 seconds while a trip is open. Asking again while a question is waiting keeps that question, so the phone never shows
 two. Asking and replying are Lua scripts, so two replicas, two caregivers or a phone retrying its reply can't
 interleave: a question is answered once.
+
+A question belongs to the trip it was asked on (tripId), so it ends with that trip: finishing the trip deletes it
+(clear), a phone on another trip isn't shown it, asking on a new trip replaces one still waiting from an old trip,
+and the dashboard shows it only while that trip is under way.
 """
 import secrets
 
@@ -12,13 +16,26 @@ from app.incidents import now_iso
 
 WHERE_TTL_S = 3600
 
-# KEYS: where key   ARGV: requestId, askedBy, askedAt, ttl
-# Returns 1 if a new question was made, 0 if one is already waiting.
+# KEYS: where key   ARGV: requestId, askedBy, askedAt, ttl, tripId ("" if none)
+# Returns 1 if a new question was made, 0 if one is already waiting on the same trip.
 _ASK = """
-if redis.call('HGET', KEYS[1], 'status') == 'asked' then return 0 end
+if redis.call('HGET', KEYS[1], 'status') == 'asked' and (redis.call('HGET', KEYS[1], 'tripId') or '') == ARGV[5] then
+  return 0
+end
 redis.call('DEL', KEYS[1])
-redis.call('HSET', KEYS[1], 'requestId', ARGV[1], 'askedBy', ARGV[2], 'askedAt', ARGV[3], 'status', 'asked')
+redis.call('HSET', KEYS[1], 'requestId', ARGV[1], 'askedBy', ARGV[2], 'askedAt', ARGV[3], 'status', 'asked',
+           'tripId', ARGV[5])
 redis.call('EXPIRE', KEYS[1], tonumber(ARGV[4]))
+return 1
+"""
+
+# KEYS: where key   ARGV: tripId
+# Deletes the question if it was asked on this trip, or on no trip. Returns 1 if one was deleted.
+_CLEAR = """
+if redis.call('EXISTS', KEYS[1]) == 0 then return 0 end
+local trip = redis.call('HGET', KEYS[1], 'tripId') or ''
+if trip ~= '' and trip ~= ARGV[1] then return 0 end
+redis.call('DEL', KEYS[1])
 return 1
 """
 
@@ -47,6 +64,7 @@ class WhereRequests:
         self.r = redis_client
         self._ask = redis_client.register_script(_ASK)
         self._reply = redis_client.register_script(_REPLY)
+        self._clear = redis_client.register_script(_CLEAR)
 
     def get(self, traveller_id: str) -> dict | None:
         """The traveller's latest question, waiting or answered, or None."""
@@ -56,15 +74,21 @@ class WhereRequests:
         q = {k.decode(): v.decode() for k, v in raw.items()}
         return {
             "requestId": q["requestId"], "askedBy": q["askedBy"], "askedAt": q["askedAt"], "status": q["status"],
+            "tripId": q.get("tripId") or None,
             "answer": q.get("answer") or None, "answeredAt": q.get("answeredAt") or None,
             "lat": _number(q.get("lat")), "lng": _number(q.get("lng")),
         }
 
-    def ask(self, traveller_id: str, caregiver_id: str) -> tuple[dict, bool]:
-        """(the question, whether it's new). A question already waiting is kept, not replaced."""
+    def ask(self, traveller_id: str, caregiver_id: str, trip_id: str | None = None) -> tuple[dict, bool]:
+        """(the question, whether it's new). A question already waiting on the same trip is kept, not replaced."""
         created = self._ask(keys=[where_key(traveller_id)],
-                            args=[f"W-{secrets.token_hex(4).upper()}", caregiver_id, now_iso(), WHERE_TTL_S])
+                            args=[f"W-{secrets.token_hex(4).upper()}", caregiver_id, now_iso(), WHERE_TTL_S,
+                                  trip_id or ""])
         return self.get(traveller_id), bool(created)
+
+    def clear(self, traveller_id: str, trip_id: str) -> bool:
+        """The trip has ended: its question, waiting or answered, goes. One from another trip stays."""
+        return bool(self._clear(keys=[where_key(traveller_id)], args=[trip_id]))
 
     def reply(self, traveller_id: str, request_id: str, answer: str,
               lat: float | None, lng: float | None) -> tuple[dict | None, str]:

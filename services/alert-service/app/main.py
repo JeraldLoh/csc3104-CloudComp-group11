@@ -29,7 +29,7 @@ from app.incidents import IncidentStore, now_iso
 from app.live import ARRIVED_TTL_S, LiveTrips, arrived_key, still_near
 from app.logins import LoginUnavailable, TravellerLogins
 from app.models import (PHONE_TRAVELLER_ID, ArrivalRequest, HelpRequest, Location, NewDevice, NewLink, NewSafeLocation,
-                        NewTraveller, ProblemReport, TravellerDevice, WhereReply)
+                        NewTraveller, ProblemReport, TravellerDevice, WhereAsk, WhereReply)
 from app.profiles import ProfileStore
 from app.push import DeviceStore, Notifier, PushRetry, make_sender
 from app.stream import event_stream
@@ -247,13 +247,14 @@ def _redis_or_503(what: str):
 
 
 @app.post("/api/travellers/{travellerId}/where-are-you", status_code=202)
-def ask_where(travellerId: str, who: Caller | None = Depends(caller)):
-    """A caregiver asks the traveller where they are. The question waits until their phone picks it up, which it
-    does every few seconds while a trip is open; asking again while it waits keeps the same question."""
+def ask_where(travellerId: str, body: WhereAsk | None = None, who: Caller | None = Depends(caller)):
+    """A caregiver asks the traveller where they are, on the trip they see under way (body.tripId). The question
+    waits until their phone picks it up, which it does every few seconds while a trip is open; asking again while it
+    waits on the same trip keeps the same question. It ends with that trip (where.py)."""
     me = require_caregiver(who, "ask where a traveller is")
     check_access(who, travellerId)
     try:
-        question, created = where.ask(travellerId, me.id)
+        question, created = where.ask(travellerId, me.id, body.tripId if body else None)
     except redis.RedisError:
         raise _redis_or_503("ask them")
     if created:
@@ -275,14 +276,18 @@ def latest_where(travellerId: str, who: Caller | None = Depends(caller)):
 
 
 @app.get("/api/where-are-you")
-def question_for_phone(request: Request, travellerId: str = Query(pattern=PHONE_TRAVELLER_ID, max_length=64)):
-    """From the traveller's phone: a question waiting for an answer, or null."""
+def question_for_phone(request: Request, travellerId: str = Query(pattern=PHONE_TRAVELLER_ID, max_length=64),
+                       tripId: str | None = Query(None, min_length=1, max_length=64)):
+    """From the traveller's phone: a question waiting for an answer, or null. With tripId, only one asked on that
+    trip (or on no trip): a question from an earlier trip isn't shown on the next."""
     _check_phone(request, travellerId)
     try:
         found = where.get(travellerId)
     except redis.RedisError:
         raise _redis_or_503("check for questions")
-    return found if found and found["status"] == "asked" else None
+    if not found or found["status"] != "asked":
+        return None
+    return None if tripId and found["tripId"] and found["tripId"] != tripId else found
 
 
 @app.post("/api/where-are-you/reply")
@@ -316,6 +321,11 @@ def traveller_arrived(body: ArrivalRequest, request: Request):
     if first:
         log.info("%s arrived (trip %s)", traveller_id, body.tripId)
         publisher.publish_arrival(traveller_id, body.tripId, arrived_at)
+    if traveller_id:
+        try:
+            where.clear(traveller_id, body.tripId)  # the trip is over, so is its "Where are you?"
+        except redis.RedisError as e:
+            log.warning("can't clear the question of trip %s: %s", body.tripId, e)  # it expires within the hour
     return {"tripId": body.tripId, "arrivedAt": arrived_at}
 
 
